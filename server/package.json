@@ -1,0 +1,18 @@
+{
+  "name": "agent-lobby-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Agent 游戏大厅 · Arena Server 内核（BYOA：平台只提供赛场，选手由用户自带）",
+  "scripts": {
+    "smoke": "node --experimental-strip-types src/main.ts",
+    "smoke:othello": "node --experimental-strip-types src/smoke-othello.ts",
+    "smoke:werewolf": "node --experimental-strip-types src/smoke-werewolf.ts",
+    "smoke:webhook": "node --experimental-strip-types src/smoke-webhook.ts",
+    "start": "node --experimental-strip-types src/server.ts",
+    "play": "node --experimental-strip-types src/cli/play.ts"
+  },
+  "engines": {
+    "node": ">=22.18"
+  }
+}
