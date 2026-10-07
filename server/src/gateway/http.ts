@@ -286,6 +286,10 @@ export class Gateway {
     if (method === "GET" && step) {
       return this.replayStep(step[1], url, res);
     }
+    const stream = /^\/api\/v1\/matches\/([^/]+)\/stream$/.exec(path);
+    if (method === "GET" && stream) {
+      return this.sseStream(stream[1], req, res);
+    }
     const m = /^\/api\/v1\/matches\/([^/]+)\/(view|actions|events|replay)$/.exec(path);
     if (m) return this.matchOp(m[1], m[2], method, url, req, res);
     return this.json(res, 404, { error: "NOT_FOUND", path });
@@ -496,6 +500,69 @@ export class Gateway {
       })
       .catch((e) => console.error("[match error]", match.id, e));
     return match.id;
+  }
+
+  /** SSE 实时推送：GET /matches/:id/stream（观战/参赛者均可用，事件按可见性过滤） */
+  private sseStream(matchId: string, req: IncomingMessage, res: ServerResponse): void {
+    const rm = this.matches.get(matchId);
+    if (!rm) {
+      return this.json(res, 404, { error: "MATCH_NOT_FOUND", match_id: matchId });
+    }
+    const token = req.headers["x-seat-token"];
+    const seat = typeof token === "string" ? rm.seatTokens.get(token) : undefined;
+    const viewer: SeatId | "spectator" = seat ?? "spectator";
+
+    // SSE 头
+    res.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
+      "x-accel-buffering": "no",
+    });
+    res.write(`retry: 3000\n\n`);
+
+    // 初始追赶：发送当前可见的全部事件
+    let lastSeq = -1;
+    for (const ev of rm.match.eventsFor(viewer)) {
+      res.write(`id: ${ev.seq}\ndata: ${JSON.stringify(ev)}\n\n`);
+      lastSeq = ev.seq;
+    }
+
+    // 订阅新事件
+    const unsub = rm.match.subscribe((ev) => {
+      // 按可见性过滤
+      if (ev.visibility !== "all") {
+        if (viewer === "spectator" || !ev.visibility.seats.includes(viewer)) return;
+      }
+      if (ev.seq <= lastSeq) return;
+      lastSeq = ev.seq;
+      try {
+        res.write(`id: ${ev.seq}\ndata: ${JSON.stringify(ev)}\n\n`);
+      } catch {
+        unsub();
+      }
+    });
+
+    // 终局后发 done 并关闭
+    const doneCheck = () => {
+      if (rm.match.isFinished()) {
+        res.write(`event: done\ndata: ${JSON.stringify({ finished: true })}\n\n`);
+        unsub();
+        res.end();
+      }
+    };
+    doneCheck();
+    const doneSub = rm.match.subscribe((ev) => {
+      if (ev.type === "match_ended" || ev.type === "match_failed") {
+        setTimeout(doneCheck, 100);
+      }
+    });
+
+    // 客户端断开
+    req.on("close", () => {
+      unsub();
+      doneSub();
+    });
   }
 
   /** 回放步骤：重放到指定事件序号，返回该时刻任意视角的 AgentView（视角切换回放的服务端基础） */

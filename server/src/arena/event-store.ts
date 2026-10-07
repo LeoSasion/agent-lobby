@@ -7,6 +7,7 @@ import type { MatchEvent, SeatId } from "../protocol.ts";
 
 export class EventStore {
   private events: MatchEvent[] = [];
+  private subscribers = new Set<(event: MatchEvent) => void>();
 
   append(
     type: string,
@@ -15,7 +16,16 @@ export class EventStore {
   ): MatchEvent {
     const ev: MatchEvent = { seq: this.events.length, type, data, visibility };
     this.events.push(ev);
+    for (const cb of this.subscribers) {
+      try { cb(ev); } catch { /* 订阅者异常不影响写入 */ }
+    }
     return ev;
+  }
+
+  /** 订阅新事件（SSE / WS 用），返回取消订阅函数 */
+  subscribe(cb: (event: MatchEvent) => void): () => void {
+    this.subscribers.add(cb);
+    return () => this.subscribers.delete(cb);
   }
 
   all(): readonly MatchEvent[] {

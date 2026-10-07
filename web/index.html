@@ -468,37 +468,63 @@ function renderReport() {
   }).join("");
 }
 
+let mSSE = null;
+
 window.gotoMatch = function (id) {
   if (!id) return;
   M.id = id; MEVS = []; MSINCE = -1;
   $("#m-id").value = id;
   showView("match");
   clearInterval(mtimer); clearInterval(R.timer); R.playing = false;
+  if (mSSE) { mSSE.close(); mSSE = null; }
   $("#m-replay").innerHTML = "";
   $("#m-log").innerHTML = "接入中…";
   $("#m-ttl").textContent = "接入对局…";
-  pollMatch();
-  mtimer = setInterval(pollMatch, 1500);
+  startSSE();
+  refreshMatchView();
+  mtimer = setInterval(refreshMatchView, 3000); // SSE 断线兜底
 };
 
-async function pollMatch() {
+function startSSE() {
+  if (!M.id) return;
+  try { if (mSSE) mSSE.close(); } catch {}
+  mSSE = new EventSource(`/api/v1/matches/${M.id}/stream`);
+  mSSE.onmessage = (msg) => {
+    try {
+      const ev = JSON.parse(msg.data);
+      if (ev.seq > MSINCE) { MEVS.push(ev); MSINCE = ev.seq; }
+      renderLog($("#m-log"), MEVS);
+      refreshMatchView();
+    } catch {}
+  };
+  mSSE.addEventListener("done", () => {
+    if (mSSE) { mSSE.close(); mSSE = null; }
+    clearInterval(mtimer);
+    refreshMatchView();
+  });
+  mSSE.onerror = () => {
+    // SSE 断线，轮询兜底已就位
+  };
+}
+
+async function refreshMatchView() {
   if (!M.id) return;
   try {
     const v = await api(`/matches/${M.id}/view`);
-    const evs = await api(`/matches/${M.id}/events?since=${MSINCE}`);
-    if (evs.events.length) { MEVS.push(...evs.events); MSINCE = evs.events[evs.events.length - 1].seq; }
     $("#m-eyebrow").innerHTML = `「 围 观 」 <span style="letter-spacing:0;color:var(--grn)">● ${esc(M.id)}</span>`;
     $("#m-ttl").textContent = `${GAME_NAMES[v.game] ?? v.game} — ${phaseName(v.phase)}（第 ${v.round} 轮）`;
     renderGame(v, $("#m-game"), false);
     renderLog($("#m-log"), MEVS);
     if (v.phase === "finished") {
       clearInterval(mtimer);
+      if (mSSE) { mSSE.close(); mSSE = null; }
       R = { playing: false, pos: MSINCE, seat: "spectator", timer: null, total: MSINCE };
       renderReplayBar();
     }
   } catch {
     $("#m-ttl").textContent = "对局不存在或服务暂不可达";
     clearInterval(mtimer);
+    if (mSSE) { mSSE.close(); mSSE = null; }
   }
 }
 

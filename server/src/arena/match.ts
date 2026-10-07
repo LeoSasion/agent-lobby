@@ -174,6 +174,11 @@ export class Match {
     return this.store.all();
   }
 
+  /** 订阅新事件（SSE/WS 用），返回取消函数 */
+  subscribe(cb: (event: MatchEvent) => void): () => void {
+    return this.store.subscribe(cb);
+  }
+
   /** 网关所需只读访问器 */
   isFinished(): boolean {
     return this.finished;
