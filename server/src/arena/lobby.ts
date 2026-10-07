@@ -14,6 +14,8 @@ export interface CreateMatchOptions {
   seed?: number;
   id?: string;
   timeoutMs?: number;
+  graceMs?: number;
+  minPhaseMs?: number;
 }
 
 /** 按驱动列表创建比赛（座位号 1..N），校验游戏座位数约束 */
@@ -31,5 +33,7 @@ export function createMatch(opts: CreateMatchOptions): Match {
     drivers: map,
     seed: opts.seed,
     timeoutMs: opts.timeoutMs,
+    graceMs: opts.graceMs,
+    minPhaseMs: opts.minPhaseMs,
   });
 }

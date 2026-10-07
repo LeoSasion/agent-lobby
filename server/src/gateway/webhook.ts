@@ -32,19 +32,20 @@ export class WebhookSeatDriver implements SeatDriver {
     this.timeoutMs = opts.timeoutMs;
   }
 
-  async act(view: AgentView, submit: (a: Action) => SubmitResult): Promise<void> {
+  async act(view: AgentView, submit: (a: Action, opts?: { reasoning?: string; nonce?: string }) => SubmitResult): Promise<void> {
     let payload: Record<string, unknown> = { event: "turn.start", view };
     for (let attempt = 0; attempt < 3; attempt++) {
       const body = JSON.stringify(payload);
       const sig = createHmac("sha256", this.secret).update(body).digest("hex");
-      let json: { action?: Action } | null = null;
+      let json: { action?: Action; reasoning?: string } | null = null;
       try {
         const res = await withTimeout(
           fetch(this.url, {
             method: "POST",
             headers: {
               "content-type": "application/json",
-              "x-arena-event": "turn.start",
+              "x-arena-event": String(payload.event),
+              "x-arena-delivery": "d-" + Math.random().toString(36).slice(2, 12),
               "x-arena-signature": "sha256=" + sig,
             },
             body,
@@ -52,7 +53,7 @@ export class WebhookSeatDriver implements SeatDriver {
           this.timeoutMs,
         );
         if (res.status === 200) {
-          json = (await res.json()) as { action?: Action };
+          json = (await res.json()) as { action?: Action; reasoning?: string };
         } else if (res.status === 202) {
           return;
         } else if (res.status < 500) {
@@ -63,7 +64,9 @@ export class WebhookSeatDriver implements SeatDriver {
         return; // 网络错误/超时：交由超时默认动作兜底
       }
       if (json && json.action) {
-        const r = submit(json.action);
+        const opts: { reasoning?: string } = {};
+        if (typeof json.reasoning === "string") opts.reasoning = json.reasoning.slice(0, 500);
+        const r = submit(json.action, opts.reasoning ? opts : undefined);
         if (r.ok) return;
         payload = { event: "action.rejected", error: r.error, legal_actions: r.legal_actions, view };
         continue;

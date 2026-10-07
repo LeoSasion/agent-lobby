@@ -2,7 +2,7 @@
  * 狼人杀·简化版（werewolf_lite）—— 平台灵魂游戏
  * 6 席：2 狼 / 3 民 / 1 预言家
  * 阶段循环：night（同时相位：狼刀 + 验人）→ day_discuss（顺序发言）
- *   → day_vote（同时相位：投票放逐，平票 seed 随机）→ 下一夜
+ *   → day_vote（同时相位：投票放逐，平票 PK 重投，PK 再平无人出局）→ 下一夜
  * 信息隔离：角色/队友/验人结果仅入 private；狼刀决策事件仅狼可见；
  *   死亡席位保留自身角色视角但不再行动；终局 game_won 公开全部身份
  */
@@ -31,6 +31,10 @@ interface State {
   votes: Map<SeatId, SeatId | null>;
   seerChecks: { target: SeatId; is_wolf: boolean }[];
   winner: "good" | "wolves" | null;
+  stall: number;
+  roundHadKill: boolean;
+  pkCandidates: SeatId[] | null;
+  lastSays: { seat: SeatId; text: string }[];
 }
 
 function aliveSeats(s: State): SeatId[] {
@@ -87,6 +91,7 @@ function tryResolveNight(s: State, events: GameEvent[], rng: Rng): void {
     s.alive.set(target, false);
     events.push({ type: "player_died", data: { seat: target, cause: "night" } });
   }
+  s.roundHadKill = target !== null;
 
   // 预言家验人（当夜被刀也照样出结果：先行动后结算）
   const seer = s.seats.find((t) => s.roles.get(t) === "seer");
@@ -112,7 +117,7 @@ function tryResolveNight(s: State, events: GameEvent[], rng: Rng): void {
   void rng;
 }
 
-function tryResolveVote(s: State, events: GameEvent[], rng: Rng): void {
+function tryResolveVote(s: State, events: GameEvent[]): void {
   for (const seat of aliveSeats(s)) {
     if (!s.votes.has(seat)) return;
   }
@@ -130,16 +135,44 @@ function tryResolveVote(s: State, events: GameEvent[], rng: Rng): void {
       tied.push(t);
     }
   }
-  let exiled: SeatId | null = null;
-  if (max > 0) {
-    exiled = tied.length === 1 ? tied[0] : tied[Math.floor(rng() * tied.length)];
+  if (max > 0 && tied.length > 1 && s.pkCandidates === null) {
+    // 首轮平票 → PK 重投（候选=平票者），本轮不放逐，全员在候选中重投
+    s.pkCandidates = tied;
+    s.votes = new Map();
+    events.push({
+      type: "vote_pk",
+      data: { candidates: tied, tally: Object.fromEntries([...tally.entries()]) },
+    });
+    return;
   }
-  events.push({ type: "vote_result", data: { tally: Object.fromEntries([...tally.entries()]), exiled } });
+  const exiled: SeatId | null = max > 0 && tied.length === 1 ? tied[0] : null; // PK 再平 → 无人出局
+  events.push({
+    type: "vote_result",
+    data: { tally: Object.fromEntries([...tally.entries()]), exiled, pk: s.pkCandidates !== null },
+  });
+  s.pkCandidates = null;
   if (exiled !== null) {
     s.alive.set(exiled, false);
     events.push({ type: "player_died", data: { seat: exiled, cause: "vote" } });
   }
   if (checkWin(s, events)) return;
+  // 停滞治理：整轮无死亡且无放逐（如全员超时/空刀）连续两轮 → 终局，好人胜
+  if (exiled === null && !s.roundHadKill) {
+    s.stall += 1;
+    events.push({ type: "round_stalled", data: { consecutive: s.stall } });
+    if (s.stall >= 2) {
+      s.phase = "finished";
+      s.winner = "good";
+      events.push({
+        type: "game_won",
+        data: { winner: "good", roles: Object.fromEntries([...s.roles.entries()]), reason: "连续两轮无淘汰，好人熬赢" },
+      });
+      return;
+    }
+  } else {
+    s.stall = 0;
+  }
+  s.lastSays = s.todaySays;
   s.round += 1;
   s.phase = "night";
   s.nightActions = new Map();
@@ -173,6 +206,10 @@ export function createWerewolfLite(): GameModule<State> {
         votes: new Map(),
         seerChecks: [],
         winner: null,
+        stall: 0,
+        roundHadKill: false,
+        pkCandidates: null,
+        lastSays: [],
       };
     },
 
@@ -219,8 +256,9 @@ export function createWerewolfLite(): GameModule<State> {
       }
 
       if (alive(seat) !== true) return [];
+      const pool = s.pkCandidates ?? aliveSeats(s);
       return [
-        { type: "vote", schema: { target: "enum", values: aliveSeats(s) } },
+        { type: "vote", schema: { target: "enum", values: pool }, hint: s.pkCandidates ? "PK 重投：仅可投平票候选人" : undefined },
         { type: "pass", hint: "弃票" },
       ];
     },
@@ -268,7 +306,10 @@ export function createWerewolfLite(): GameModule<State> {
       if (action.type === "pass") return { ok: true };
       if (action.type === "vote") {
         const t = action.target as SeatId;
-        if (!alive(t)) return { ok: false, error: "ILLEGAL_ACTION：投票对象须存活" };
+        const pool = s.pkCandidates ?? aliveSeats(s);
+        if (!pool.includes(t)) {
+          return { ok: false, error: s.pkCandidates ? "ILLEGAL_ACTION：PK 阶段只能投平票候选人" : "ILLEGAL_ACTION：投票对象须存活" };
+        }
         return { ok: true };
       }
       return { ok: false, error: "ILLEGAL_ACTION：投票阶段仅可 vote/pass" };
@@ -293,7 +334,7 @@ export function createWerewolfLite(): GameModule<State> {
         }
       } else if (s.phase === "day_vote") {
         s.votes.set(seat, action.type === "vote" ? (action.target as SeatId) : null);
-        tryResolveVote(s, events, rng);
+        tryResolveVote(s, events);
       }
       return { state: s, events };
     },
@@ -305,6 +346,8 @@ export function createWerewolfLite(): GameModule<State> {
         seats: s.seats,
         alive_seats: aliveSeats(s),
         today_says: s.todaySays,
+        last_day_says: s.lastSays,
+        pk_candidates: s.pkCandidates,
       };
       if (viewer === "spectator") return { public: pub, private: {} };
       const role = s.roles.get(viewer);
@@ -319,16 +362,18 @@ export function createWerewolfLite(): GameModule<State> {
       return { public: pub, private: priv };
     },
 
-    timeoutAction(s, seat) {
-      if (s.phase === "night") {
-        if (s.roles.get(seat) === "werewolf") {
-          const t = aliveSeats(s).find((x) => s.roles.get(x) !== "werewolf");
-          if (t !== undefined) return { type: "kill", target: t };
-        }
-        return { type: "pass" };
-      }
+    timeoutAction(s) {
+      // 夜间超时一律 pass（空刀/不验）：绝不替狼队抢刀权；比赛推进由停滞治理兜底
       if (s.phase === "day_discuss") return { type: "say", text: "（沉默）" };
       return { type: "pass" };
+    },
+
+    actionVisibility(s, seat) {
+      if (s.phase !== "night") return "all";
+      const role = s.roles.get(seat);
+      if (role === "werewolf") return { seats: wolfSeats(s) };
+      if (role === "seer") return { seats: [seat] };
+      return "all";
     },
 
     isTerminal(s) {

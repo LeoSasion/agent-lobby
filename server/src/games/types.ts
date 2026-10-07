@@ -46,6 +46,12 @@ export interface GameModule<S> {
   viewOf(state: S, viewer: Viewer): GameSnapshot;
   /** 超时默认动作：必须返回 validate 会通过的动作 */
   timeoutAction(state: S, seat: SeatId): Action;
+  /**
+   * 内核事件脱敏钩子（P0 级隔离契约）：内核为该动作写 acted/timed_out 事件前调用，
+   * 返回可见性（未实现默认 "all"）。在动作应用之前、以动作发生时的状态调用。
+   * 例：狼人杀夜间 kill 仅狼可见、check 仅预言家可见。
+   */
+  actionVisibility?(state: S, seat: SeatId, action: Action): EventVisibility;
   isTerminal(state: S): boolean;
   scores(state: S): Record<SeatId, number>;
 }

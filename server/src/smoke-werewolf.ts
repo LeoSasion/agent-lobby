@@ -56,6 +56,23 @@ check("对局完整结束且有胜方", winnerTeam === "good" || winnerTeam === 
 check("胜方得 1 分、败方 0 分", Object.values(r1.scores).some((v) => v === 1) && Object.values(r1.scores).some((v) => v === 0));
 check("视图信息隔离（角色字段 + history 事件）", violations.length === 0, violations.length ? violations[0] : "0 违规");
 
+// —— 场景 1.5：P0 回归——夜间动作事件脱敏（acted/timed_out 不得以 all 可见性泄漏刀口/验人）——
+const won1 = r1.events.find((e) => e.type === "game_won");
+const roles1 = (won1?.data as { roles?: Record<string, string> } | undefined)?.roles ?? {};
+const nightActs = r1.events.filter((e) => {
+  if (e.type !== "acted" && e.type !== "timed_out") return false;
+  const a = (e.type === "acted" ? e.data.action : e.data.default_action) as { type?: string } | undefined;
+  return a?.type === "kill" || a?.type === "check";
+});
+check("P0 回归：夜间动作事件已脱敏（非 all 可见性）", nightActs.length > 0 && nightActs.every((e) => e.visibility !== "all"), `${nightActs.length} 个夜间动作事件`);
+const plainSeat = [1, 2, 3, 4, 5, 6].find((s) => roles1[String(s)] === "villager");
+const leakedNight = plainSeat === undefined ? -1 : m1.eventsFor(plainSeat).filter((e) => {
+  if (e.type !== "acted" && e.type !== "timed_out") return false;
+  const a = (e.type === "acted" ? e.data.action : e.data.default_action) as { type?: string } | undefined;
+  return a?.type === "kill" || a?.type === "check";
+}).length;
+check("P0 回归：村民视角看不到任何夜间动作", leakedNight === 0, plainSeat !== undefined ? `以 ${plainSeat} 号（村民）验证` : "本局无村民");
+
 // —— 场景 2：事件级隔离（信息隔离专项测试的最小实现，规划 §8 工程纪律）——
 console.log("\n[场景 2] 事件级隔离：私有事件仅授权席位可见");
 let leak = 0;

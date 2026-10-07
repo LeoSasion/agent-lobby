@@ -1,7 +1,7 @@
 /**
- * 规则型 House Bot（吹牛骰）
- * 确定性策略（无随机），便于冒烟测试稳定复现
- * 策略：以"自己手中该面数量 + 他人期望值"评估当前叫价可信度，不可信则质疑，可信则最小加价
+ * 规则型 House Bot（吹牛骰）——概率模型版
+ * 核心策略：二项分布精确计算"当前叫价为真"的概率 P(X≥qty)，
+ * 以 P 阈值驱动质疑/加价决策；加价选期望概率最高的候选
  */
 
 import type { Action, AgentView } from "../protocol.ts";
@@ -15,62 +15,100 @@ interface LDPublic {
   wildcard_ones: boolean;
 }
 
-/** 手中最常见的可叫面（平手取大） */
-function bestFace(dice: number[], min: number): number {
-  const counts = new Map<number, number>();
-  for (const d of dice) if (d >= min) counts.set(d, (counts.get(d) ?? 0) + 1);
-  let best = min;
-  let bestCount = -1;
-  for (const [face, c] of counts) {
-    if (c > bestCount || (c === bestCount && face > best)) {
-      best = face;
-      bestCount = c;
-    }
+/** 二项分布 P(X >= k)，n 次试验每次概率 p */
+function pAtLeast(n: number, k: number, p: number): number {
+  if (k <= 0) return 1;
+  if (n === 0 || k > n) return 0;
+  let sum = 0;
+  for (let i = k; i <= n; i++) {
+    sum += binomial(n, i) * Math.pow(p, i) * Math.pow(1 - p, n - i);
   }
-  return best;
+  return sum;
+}
+
+function binomial(n: number, k: number): number {
+  if (k > n || k < 0) return 0;
+  let r = 1;
+  for (let i = 0; i < k; i++) {
+    r = (r * (n - i)) / (i + 1);
+  }
+  return r;
 }
 
 export function createRuleBot(name: string, aggression = 0.5): SeatDriver {
+  // aggression: 0 = 最谨慎（低质疑阈值，高加价概率），1 = 最激进（高质疑阈值，低加价概率）
+  const challengeThreshold = 0.22 + aggression * 0.16; // 0.22~0.38
+  const bidThreshold = 0.45 + aggression * 0.1; // 0.45~0.55
+
   return {
     name,
     act: async (view: AgentView, submit) => {
-      const pub = view.public as LDPublic;
+      const pub = view.public as unknown as LDPublic;
       const my = (view.private as { my_dice?: number[] }).my_dice ?? [];
       const minFace = pub.wildcard_ones ? 2 : 1;
       const totalDice = pub.players.reduce((a, p) => a + p.dice_count, 0);
       const bid = pub.current_bid;
 
+      /** 评估叫价 (qty, face) 为真的概率：己方确定数量 + 对方二项分布 */
+      const evalBid = (qty: number, face: number): number => {
+        const own = my.filter((d) => d === face).length;
+        const unknown = totalDice - my.length;
+        const deficit = qty - own;
+        return pAtLeast(unknown, deficit, 1 / 6);
+      };
+
       if (!bid) {
-        const qty = Math.max(1, Math.round((totalDice / 6) * 0.7));
-        submitSafe({ type: "bid", qty, face: bestFace(my, minFace) }, bid, submit);
-        return;
+        // 开局：选手中最多的面，叫一个 bidThreshold 以上置信度的量
+        const counts = new Map<number, number>();
+        for (const d of my) {
+          if (d >= minFace) counts.set(d, (counts.get(d) ?? 0) + 1);
+        }
+        let face = minFace;
+        let bestCount = -1;
+        for (const [f, c] of counts) {
+          if (c > bestCount || (c === bestCount && f > face)) {
+            face = f;
+            bestCount = c;
+          }
+        }
+        let qty = 1;
+        while (qty < totalDice && evalBid(qty + 1, face) >= bidThreshold) qty++;
+        return submitSafe({ type: "bid", qty, face }, bid, submit);
       }
 
-      const own = my.filter((d) => d === bid.face).length;
-      const othersExpected = (totalDice - my.length) / 6;
-      const margin = (1 - aggression) * 1.2; // 越谨慎越倾向于质疑
-      const credible = own + othersExpected + margin >= bid.qty;
+      const pTrue = evalBid(bid.qty, bid.face);
+      const pMax = evalBid(bid.qty, 6);
 
-      if (!credible || bid.qty >= totalDice) {
+      // 质疑条件：叫价为真的概率太低，或叫量已达物理极限
+      if (pTrue < challengeThreshold || bid.qty >= totalDice) {
         submit({ type: "challenge" });
         return;
       }
-      let qty = bid.qty;
-      let face = bid.face + 1;
-      if (face > 6) {
-        face = minFace;
-        qty = bid.qty + 1;
+
+      // 加价：在所有合法加价中选期望概率最高的
+      let bestQty = bid.qty;
+      let bestFace = bid.face;
+      let bestP = -1;
+      for (let q = bid.qty; q <= Math.min(bid.qty + 2, 30); q++) {
+        for (let f = minFace; f <= 6; f++) {
+          if (q === bid.qty && f <= bid.face) continue;
+          const p = evalBid(q, f);
+          if (p > bestP) {
+            bestP = p;
+            bestQty = q;
+            bestFace = f;
+          }
+        }
       }
-      if (qty > 30) {
+      if (bestQty > 30 || bestP < challengeThreshold * 0.5) {
         submit({ type: "challenge" });
         return;
       }
-      submitSafe({ type: "bid", qty, face }, bid, submit);
+      return submitSafe({ type: "bid", qty: bestQty, face: bestFace }, bid, submit);
     },
   };
 }
 
-/** 加价被拒时退回质疑（理论上不会触发，属防御性兜底） */
 function submitSafe(
   action: Action,
   bid: LDPublic["current_bid"],

@@ -12,9 +12,10 @@
 
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHmac } from "node:crypto";
 import type { Action, AgentView, SeatId, SubmitResult } from "../protocol.ts";
 import type { GameModule } from "../games/types.ts";
 import { Match, composeAgentView } from "../arena/match.ts";
@@ -25,13 +26,13 @@ import { RatingStore } from "../arena/rating.ts";
 import type { RatingDelta } from "../arena/rating.ts";
 import { houseBotsFor } from "../bots/registry.ts";
 import { WebhookSeatDriver } from "./webhook.ts";
-import { randomId } from "../util.ts";
+import { randomId, withTimeout } from "../util.ts";
 
 /** HTTP Pull 座位驱动：act() 挂起等待，直到 Agent 经 POST /actions 提交（或超时兜底） */
 class HttpSeatDriver implements SeatDriver {
   readonly name: string;
   private pending: {
-    submit: (a: Action) => SubmitResult;
+    submit: (a: Action, opts?: { reasoning?: string; nonce?: string }) => SubmitResult;
     resolve: () => void;
   } | null = null;
 
@@ -39,17 +40,17 @@ class HttpSeatDriver implements SeatDriver {
     this.name = name;
   }
 
-  act(_view: AgentView, submit: (a: Action) => SubmitResult): Promise<void> {
+  act(_view: AgentView, submit: (a: Action, opts?: { reasoning?: string; nonce?: string }) => SubmitResult): Promise<void> {
     return new Promise<void>((resolve) => {
       this.pending = { submit, resolve };
     });
   }
 
-  handleAction(action: Action): SubmitResult {
+  handleAction(action: Action, opts?: { reasoning?: string; nonce?: string }): SubmitResult {
     if (!this.pending) {
       return { ok: false, error: "NOT_YOUR_TURN：当前无待提交回合", legal_actions: [] };
     }
-    const r = this.pending.submit(action);
+    const r = this.pending.submit(action, opts);
     if (r.ok) {
       this.pending.resolve();
       this.pending = null;
@@ -61,11 +62,13 @@ class HttpSeatDriver implements SeatDriver {
 interface RunningMatch {
   match: Match;
   gameId: string;
+  startedAt: number;
   seatTokens: Map<string, SeatId>;
   httpDrivers: Map<SeatId, HttpSeatDriver>;
   seatAgents: Map<SeatId, string>;
   result: MatchResult | null;
   ratings: RatingDelta[] | null;
+  headline: string | null;
 }
 
 export class Gateway {
@@ -75,6 +78,14 @@ export class Gateway {
   private ratings = new RatingStore();
   private agentNames = new Map<string, string>();
   private indexHtml: string | null = null;
+  private dataFile: string;
+  private persistTimer: ReturnType<typeof setInterval> | null = null;
+
+  constructor(dataFile?: string) {
+    const here = dirname(fileURLToPath(import.meta.url));
+    this.dataFile = dataFile ?? join(here, "..", "..", "..", "data", "arena-state.json");
+    this.loadState().catch(() => { /* 首次运行无文件 */ });
+  }
 
   registerGame(game: GameModule<unknown>): void {
     this.games.set(game.meta.id, game);
@@ -91,6 +102,99 @@ export class Gateway {
       });
     });
     server.listen(port, onReady);
+    // 定期持久化（30s）
+    this.persistTimer = setInterval(() => {
+      this.persistState().catch(() => {});
+    }, 30_000);
+    // 进程退出时保存
+    process.on("SIGINT", () => {
+      this.persistState()
+        .catch(() => {})
+        .finally(() => process.exit(0));
+    });
+    process.on("SIGTERM", () => {
+      this.persistState()
+        .catch(() => {})
+        .finally(() => process.exit(0));
+    });
+  }
+
+  /** 持久化到 JSON 文件（ratings + agents + 已结束对局元数据） */
+  async persistState(): Promise<void> {
+    const finishedMatches = [...this.matches.values()]
+      .filter((rm) => rm.match.isFinished())
+      .slice(-100) // 最多保留 100 场
+      .map((rm) => ({
+        match_id: rm.match.id,
+        game: rm.gameId,
+        started_at: rm.startedAt,
+        headline: rm.headline,
+        seats: Object.fromEntries([...rm.seatAgents.entries()].map(([s, a]) => [String(s), a])),
+      }));
+    const data = {
+      saved_at: new Date().toISOString(),
+      ratings: this.ratings.export(),
+      agents: Object.fromEntries([...this.agents.entries()].map(([k, v]) => [k, v])),
+      agentNames: Object.fromEntries([...this.agentNames.entries()]),
+      matches: finishedMatches,
+    };
+    const dir = dirname(this.dataFile);
+    await mkdir(dir, { recursive: true });
+    await writeFile(this.dataFile, JSON.stringify(data), "utf8");
+  }
+
+  /** 从 JSON 文件恢复（ratings + agents + 对局历史元数据） */
+  private async loadState(): Promise<void> {
+    let raw: string;
+    try {
+      raw = await readFile(this.dataFile, "utf8");
+    } catch {
+      return; // 首次运行
+    }
+    try {
+      const data = JSON.parse(raw) as {
+        ratings?: Record<string, Record<string, { rating: number; games: number; wins: number; draws: number; losses: number }>>;
+        agents?: Record<string, { agent_id: string; name: string; callback_url?: string; webhook_secret?: string }>;
+        agentNames?: Record<string, string>;
+        matches?: { match_id: string; game: string; started_at: number; headline: string | null; seats: Record<string, string> }[];
+      };
+      if (data.ratings) this.ratings.import(data.ratings);
+      if (data.agents) {
+        for (const [k, v] of Object.entries(data.agents)) {
+          this.agents.set(k, v);
+        }
+      }
+      if (data.agentNames) {
+        for (const [k, v] of Object.entries(data.agentNames)) {
+          this.agentNames.set(k, v);
+        }
+      }
+      // 恢复历史对局元数据（无 events，仅列表展示；排行榜已由 ratings 覆盖）
+      if (data.matches) {
+        for (const m of data.matches) {
+          if (!this.matches.has(m.match_id)) {
+            const seatAgents = new Map<SeatId, string>();
+            for (const [s, a] of Object.entries(m.seats)) {
+              seatAgents.set(Number(s), a);
+            }
+            this.matches.set(m.match_id, {
+              match: new RestoredMatch(m.match_id),
+              gameId: m.game,
+              startedAt: m.started_at,
+              seatTokens: new Map(),
+              httpDrivers: new Map(),
+              seatAgents,
+              result: null,
+              ratings: null,
+              headline: m.headline,
+            });
+          }
+        }
+      }
+      console.log(`[持久化] 已恢复 ${this.agents.size} 选手 · ${this.matches.size} 对局 · ${Object.keys(data.ratings ?? {}).length} 游戏排行`);
+    } catch (e) {
+      console.error("[持久化] 恢复失败：", e);
+    }
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -123,18 +227,23 @@ export class Gateway {
       const apiKey = "sk_" + randomId("");
       const callbackUrl = typeof body.callback_url === "string" ? body.callback_url : undefined;
       const webhookSecret = callbackUrl ? "whsec_" + randomId("") : undefined;
+      const agentId = "a_" + randomId("");
       this.agents.set(apiKey, {
-        agent_id: "a_" + randomId(""),
+        agent_id: agentId,
         name,
         callback_url: callbackUrl,
         webhook_secret: webhookSecret,
       });
       return this.json(res, 201, {
+        agent_id: agentId,
         api_key: apiKey,
         name,
         callback_url: callbackUrl ?? null,
         webhook_secret: webhookSecret ?? null,
       });
+    }
+    if (method === "POST" && path === "/api/v1/webhook/test") {
+      return this.webhookTest(req, res);
     }
     if (method === "GET" && path === "/api/v1/matches") {
       const list = [...this.matches.values()]
@@ -142,6 +251,8 @@ export class Gateway {
           match_id: rm.match.id,
           game: rm.gameId,
           finished: rm.match.isFinished(),
+          started_at: rm.startedAt,
+          headline: rm.headline,
           seats: [...rm.seatAgents.keys()].sort((a, b) => a - b).map((s) => this.nameOf(rm.seatAgents.get(s)!)),
         }))
         .slice(-20)
@@ -198,7 +309,7 @@ export class Gateway {
     this.agentNames.set(agentId, agentName);
 
     const useWebhook = body.channel === "webhook" && known?.callback_url && known.webhook_secret;
-    const human: SeatDriver = useWebhook
+    const humanDriver = useWebhook
       ? new WebhookSeatDriver({
           name: agentName,
           url: known!.callback_url!,
@@ -206,10 +317,16 @@ export class Gateway {
           timeoutMs: Math.max(1000, game.meta.defaultTimeoutMs - 500),
         })
       : new HttpSeatDriver(agentName);
+    const human: SeatDriver = humanDriver;
     const house = houseBotsFor(gameId, total - 1);
     const drivers: SeatDriver[] = [human, ...house.map((h) => h.driver)];
 
-    const match = createMatch({ game, drivers });
+    const match = createMatch({
+      game,
+      drivers,
+      graceMs: 15000,
+      minPhaseMs: gameId === "werewolf_lite" ? 4000 : 0,
+    });
     const seatToken = "st_" + randomId("");
     const seatAgents = new Map<SeatId, string>();
     seatAgents.set(1, agentId);
@@ -218,21 +335,29 @@ export class Gateway {
       this.agentNames.set(h.agent, h.name);
     });
 
+    const httpDrivers = new Map<SeatId, HttpSeatDriver>();
+    if (humanDriver instanceof HttpSeatDriver) httpDrivers.set(1, humanDriver);
+
     const rm: RunningMatch = {
       match,
       gameId,
+      startedAt: Date.now(),
       seatTokens: new Map([[seatToken, 1]]),
-      httpDrivers: new Map([[1, human]]),
+      httpDrivers,
       seatAgents,
       result: null,
       ratings: null,
+      headline: null,
     };
     this.matches.set(match.id, rm);
     match
       .run()
       .then((r) => {
         rm.result = r;
-        rm.ratings = this.ratings.applyMatch(gameId, seatAgents, r.scores);
+        rm.headline = this.makeHeadline(gameId, r);
+        if (!r.events.some((e) => e.type === "match_failed")) {
+          rm.ratings = this.ratings.applyMatch(gameId, seatAgents, r.scores);
+        }
       })
       .catch((e) => console.error("[match error]", match.id, e));
 
@@ -244,7 +369,9 @@ export class Gateway {
       agent_id: agentId,
       game: gameId,
       seats: total,
-      hint: "轮询 GET view，you.active=true 时 POST actions",
+      hint: useWebhook
+        ? "等待平台把回合推送到你的 callback（x-arena-signature 验签），回 200 + {action, reasoning?}"
+        : "轮询 GET view，you.active=true 时 POST actions（可附 reasoning / nonce）",
     });
   }
 
@@ -252,6 +379,76 @@ export class Gateway {
     const n = this.agentNames.get(agent);
     if (n) return n;
     return agent.startsWith("house:") ? agent.replace("house:", "house·") : agent;
+  }
+
+  /** Webhook 自检：向已注册 callback 发一条带签名的样例推送（Agent 验收通道 B 的最快方式） */
+  private async webhookTest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const auth = typeof req.headers.authorization === "string"
+      ? req.headers.authorization.replace(/^Bearer\s+/i, "")
+      : "";
+    const agent = auth ? this.agents.get(auth) : undefined;
+    if (!agent || !agent.callback_url || !agent.webhook_secret) {
+      return this.json(res, 400, { error: "请先以 callback_url 注册（POST /agents），并携带 Authorization: Bearer <api_key>" });
+    }
+    const body = JSON.stringify({
+      event: "turn.start",
+      view: {
+        protocol: "arena/v0",
+        match_id: "webhook-selftest",
+        game: "selftest",
+        phase: "test",
+        round: 0,
+        deadline_ms: null,
+        you: { seat: 1, active: true },
+        public: { note: "Webhook 自检推送：验签通过后可回 200 {\"action\":{\"type\":\"pass\"}}" },
+        private: {},
+        legal_actions: [{ type: "pass" }],
+        history: [],
+      },
+    });
+    const sig = createHmac("sha256", agent.webhook_secret).update(body).digest("hex");
+    const t0 = Date.now();
+    try {
+      const r = await withTimeout(
+        fetch(agent.callback_url, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-arena-event": "turn.start",
+            "x-arena-delivery": "d-selftest-" + randomId(""),
+            "x-arena-signature": "sha256=" + sig,
+          },
+          body,
+        }),
+        8000,
+      );
+      return this.json(res, 200, { delivered: true, status: r.status, latency_ms: Date.now() - t0 });
+    } catch (e) {
+      return this.json(res, 200, { delivered: false, error: String(e), latency_ms: Date.now() - t0 });
+    }
+  }
+
+  /** 战报标题：异常中断优先，狼人杀报阵营，其余报胜者席位 */
+  private makeHeadline(gameId: string, r: MatchResult): string {
+    if (r.events.some((e) => e.type === "match_failed")) return "异常中断";
+    if (gameId === "werewolf_lite") {
+      const won = r.events.find((e) => e.type === "game_won");
+      const w = (won?.data as { winner?: string } | undefined)?.winner;
+      return w === "good" ? "好人阵营胜" : w === "wolves" ? "狼人阵营胜" : "已结束";
+    }
+    let top: SeatId | null = null;
+    let max = -1;
+    let draw = true;
+    for (const [seat, sc] of Object.entries(r.scores)) {
+      const v = Number(sc);
+      if (v > max) {
+        max = v;
+        top = Number(seat);
+      }
+      if (v !== 0.5) draw = false;
+    }
+    if (draw) return "平局";
+    return top !== null ? `${top} 号位胜` : "已结束";
   }
 
   /** 观战 Web 静态页（零依赖托管） */
@@ -279,18 +476,23 @@ export class Gateway {
     const rm: RunningMatch = {
       match,
       gameId,
+      startedAt: Date.now(),
       seatTokens: new Map(),
       httpDrivers: new Map(),
       seatAgents,
       result: null,
       ratings: null,
+      headline: null,
     };
     this.matches.set(match.id, rm);
     match
       .run()
       .then((r) => {
         rm.result = r;
-        rm.ratings = this.ratings.applyMatch(gameId, seatAgents, r.scores);
+        rm.headline = this.makeHeadline(gameId, r);
+        if (!r.events.some((e) => e.type === "match_failed")) {
+          rm.ratings = this.ratings.applyMatch(gameId, seatAgents, r.scores);
+        }
       })
       .catch((e) => console.error("[match error]", match.id, e));
     return match.id;
@@ -340,6 +542,10 @@ export class Gateway {
     if (!rm) return this.json(res, 404, { error: "MATCH_NOT_FOUND", match_id: matchId });
     const token = req.headers["x-seat-token"];
     const seat = typeof token === "string" ? rm.seatTokens.get(token) : undefined;
+    // seat_token 无效时不静默降级为观战——agent 不易察觉配置错误
+    if (typeof token === "string" && token.length > 0 && seat === undefined && op !== "replay") {
+      return this.json(res, 401, { error: "SEAT_TOKEN_INVALID：token 不匹配该对局的任何席位", match_id: matchId });
+    }
     const viewer: SeatId | "spectator" = seat ?? "spectator";
 
     if (op === "view" && method === "GET") {
@@ -347,13 +553,29 @@ export class Gateway {
     }
     if (op === "actions" && method === "POST") {
       if (seat === undefined) return this.json(res, 403, { error: "SEAT_INVALID" });
+      const driver = rm.httpDrivers.get(seat);
+      if (!driver) {
+        return this.json(res, 403, { error: "SEAT_INVALID：该席位走 Webhook 通道，不经此端点出招" });
+      }
       const body = await readJson(req);
       const action = (body.action ?? body) as Action;
-      const r = rm.httpDrivers.get(seat)!.handleAction(action);
-      return this.json(res, r.ok ? 200 : 422, r);
+      const opts: { reasoning?: string; nonce?: string } = {};
+      if (typeof body.reasoning === "string") opts.reasoning = body.reasoning.slice(0, 500);
+      if (typeof body.nonce === "string") opts.nonce = body.nonce.slice(0, 64);
+      const r = driver.handleAction(action, opts);
+      if (r.ok) {
+        const view = rm.match.viewFor(seat);
+        return this.json(res, 200, { ok: true, view });
+      }
+      const code =
+        ["MATCH_FINISHED", "NOT_YOUR_TURN", "NONCE_REUSED", "ILLEGAL_ACTION", "SEAT_INVALID"].find((c) =>
+          String(r.error).startsWith(c),
+        ) ?? "UNKNOWN";
+      return this.json(res, 422, { ok: false, code, error: r.error, legal_actions: r.legal_actions });
     }
     if (op === "events" && method === "GET") {
-      const since = Number(url.searchParams.get("since") ?? -1);
+      const sinceParam = Number(url.searchParams.get("since"));
+      const since = Number.isFinite(sinceParam) ? sinceParam : -1;
       return this.json(res, 200, { events: rm.match.eventsFor(viewer, since) });
     }
     if (op === "replay" && method === "GET") {
@@ -394,4 +616,28 @@ function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
     });
     req.on("error", reject);
   });
+}
+
+/** 从持久化恢复的对局壳（无游戏状态，仅提供 id / isFinished / 空 events / spectator view） */
+class RestoredMatch extends Match {
+  constructor(id: string) {
+    super({
+      id,
+      game: {
+        meta: { id: "restored", name: "已恢复对局", minSeats: 0, maxSeats: 0, defaultTimeoutMs: 0 },
+        init: () => ({}),
+        phase: () => "finished",
+        round: () => 0,
+        activeSeats: () => [],
+        legalActions: () => [],
+        validate: () => ({ ok: false, error: "MATCH_FINISHED" }),
+        apply: (s) => ({ state: s, events: [] }),
+        viewOf: () => ({ public: { note: "此对局从持久化恢复，无实时状态" }, private: {} }),
+        timeoutAction: () => ({ type: "pass" }),
+        isTerminal: () => true,
+        scores: () => ({}),
+      },
+      drivers: new Map(),
+    });
+  }
 }

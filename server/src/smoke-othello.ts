@@ -29,9 +29,8 @@ const s0 = game.init([1, 2], () => 0.5);
 const opening = game.legalActions(s0, 1);
 const openingCells = (opening[0]?.schema?.values ?? []) as number[];
 check("黑方开局恰有 4 个合法落点", opening.length === 1 && openingCells.length === 4, JSON.stringify(openingCells));
-check("开局棋盘 4 子且轮到黑", game.viewOf(s0, "spectator").public.counts.black === 2
-  && game.viewOf(s0, "spectator").public.counts.white === 2
-  && game.activeSeats(s0)[0] === 1);
+const snap0 = game.viewOf(s0, "spectator").public as unknown as { counts: { black: number; white: number } };
+check("开局棋盘 4 子且轮到黑", snap0.counts.black === 2 && snap0.counts.white === 2 && game.activeSeats(s0)[0] === 1);
 check("有落点时 pass 非法", game.validate(s0, 1, { type: "pass" }).ok === false);
 
 // —— 场景 B：两 bot 完整对局 ——

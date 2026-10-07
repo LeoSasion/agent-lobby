@@ -16,10 +16,11 @@ import { createInterface } from "node:readline";
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ARENA = process.env.ARENA_URL ?? "http://localhost:8787";
-const STATE_FILE = process.env.ARENA_STATE ?? join(HERE, ".mcp-state.json");
+const STATE_FILE = process.env.ARENA_STATE ?? join(homedir(), ".agent-lobby-mcp-state.json");
 
 interface Persisted {
   api_key?: string;
@@ -112,7 +113,7 @@ const tools: Tool[] = [
       const body: Json = { game: String(args.game) };
       if (args.seats !== undefined) body.seats = args.seats;
       const r = await api("/lobby/quickstart", { method: "POST", body });
-      if (r.error) return `加入失败：${JSON.stringify(r)}`;
+      if (r.error) throw new Error(`加入失败：${JSON.stringify(r)}`);
       state.match_id = r.match_id as string;
       state.seat_token = r.seat_token as string;
       if (r.api_key) state.api_key = r.api_key as string;
@@ -126,30 +127,40 @@ const tools: Tool[] = [
     description: "获取当前对局我方视角的完整局面（AgentView JSON，含 public/private 与 legal_actions）。" + INJECTION_NOTE,
     inputSchema: { type: "object", properties: {} },
     async run() {
-      if (!state.match_id) return "尚未加入对局，请先调用 arena_join。";
+      if (!state.match_id) throw new Error("尚未加入对局，请先调用 arena_join。");
       const v = await api(`/matches/${state.match_id}/view`, { seat: true });
-      if (v.error) return `获取失败：${JSON.stringify(v)}`;
+      if (v.error) throw new Error(`获取失败：${JSON.stringify(v)}`);
       return JSON.stringify(v);
     },
   },
   {
     name: "arena_act",
     description:
-      '提交动作。action 必须是当前 legal_actions 中的类型并填参（如 {"type":"bid","qty":2,"face":5}）。非法动作会返回错误与合法动作清单，可修正后重试。',
+      '提交动作。action 必须是当前 legal_actions 中的类型并填参（如 {"type":"bid","qty":2,"face":5}）。可选 reasoning（≤500字）记录决策理由，会进入回放事件流供观战解说。nonce 自动生成（幂等重试安全）。非法动作会返回错误与合法动作清单，可修正后重试。',
     inputSchema: {
       type: "object",
-      properties: { action: { type: "object", description: "动作对象" } },
+      properties: {
+        action: { type: "object", description: "动作对象" },
+        reasoning: { type: "string", description: "决策理由（可选，进入回放）" },
+      },
       required: ["action"],
     },
     async run(args) {
-      if (!state.match_id) return "尚未加入对局，请先调用 arena_join。";
+      if (!state.match_id) throw new Error("尚未加入对局，请先调用 arena_join。");
+      const body: Json = { action: args.action, nonce: "n-" + Math.random().toString(36).slice(2, 10) };
+      if (typeof args.reasoning === "string") body.reasoning = args.reasoning.slice(0, 500);
       const r = await api(`/matches/${state.match_id}/actions`, {
         method: "POST",
         seat: true,
-        body: { action: args.action },
+        body,
       });
-      if (r.ok) return "动作已提交。可调用 arena_view 跟进局势。";
-      return `动作被拒：${r.error}\n当前合法动作：${JSON.stringify(r.legal_actions ?? [])}`;
+      if (r.ok) {
+        const view = r.view as Json | undefined;
+        return view
+          ? "动作已提交。当前局面：\n" + JSON.stringify(view)
+          : "动作已提交。可调用 arena_view 跟进局势。";
+      }
+      throw new Error(`动作被拒 [${r.code ?? "?"}]：${r.error}\n当前合法动作：${JSON.stringify(r.legal_actions ?? [])}`);
     },
   },
   {
@@ -227,7 +238,8 @@ async function dispatch(req: Json): Promise<Json> {
     try {
       return { content: [{ type: "text", text: await tool.run((params.arguments ?? {}) as Json) }] };
     } catch (e) {
-      return { content: [{ type: "text", text: "工具执行失败：" + String(e) }], isError: true };
+      const msg = e instanceof Error ? e.message : String(e);
+      return { content: [{ type: "text", text: msg }], isError: true };
     }
   }
   throw new Error("method not found: " + method);

@@ -1,6 +1,7 @@
 node_modules/
 .workbuddy/
 *.log
+data/
 mcp/.mcp-state.json
 mcp/.smoke-state.json
 .DS_Store

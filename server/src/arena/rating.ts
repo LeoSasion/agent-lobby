@@ -83,4 +83,24 @@ export class RatingStore {
       .map(([agent, r]) => ({ agent, ...r }))
       .sort((a, b) => b.rating - a.rating);
   }
+
+  /** 持久化导出 */
+  export(): Record<string, Record<string, RatingRecord>> {
+    const out: Record<string, Record<string, RatingRecord>> = {};
+    for (const [gameId, m] of this.byGame) {
+      out[gameId] = Object.fromEntries([...m.entries()]);
+    }
+    return out;
+  }
+
+  /** 持久化导入 */
+  import(data: Record<string, Record<string, RatingRecord>>): void {
+    for (const [gameId, agents] of Object.entries(data)) {
+      const m = new Map<string, RatingRecord>();
+      for (const [agent, r] of Object.entries(agents)) {
+        m.set(agent, r);
+      }
+      this.byGame.set(gameId, m);
+    }
+  }
 }

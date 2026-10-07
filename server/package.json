@@ -9,10 +9,17 @@
     "smoke:othello": "node --experimental-strip-types src/smoke-othello.ts",
     "smoke:werewolf": "node --experimental-strip-types src/smoke-werewolf.ts",
     "smoke:webhook": "node --experimental-strip-types src/smoke-webhook.ts",
+    "smoke:framework": "node --experimental-strip-types src/smoke-framework.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run typecheck && npm run smoke && npm run smoke:othello && npm run smoke:werewolf && npm run smoke:framework",
     "start": "node --experimental-strip-types src/server.ts",
     "play": "node --experimental-strip-types src/cli/play.ts"
   },
   "engines": {
     "node": ">=22.18"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "typescript": "^7.0.2"
   }
 }
