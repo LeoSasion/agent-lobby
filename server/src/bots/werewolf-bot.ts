@@ -199,6 +199,7 @@ export function createWerewolfBot(name: string, bias = 0): SeatDriver {
           });
         }
 
+        // 无狼查杀时：散票（集中投票会因 3/5 概率命中村民而恶化局势，66% 为散票基线）
         if (targets.length === 0) return done(submit, { type: "pass" });
         return done(submit, { type: "vote", target: targets[(me + pub.round + bias) % targets.length] });
       }
