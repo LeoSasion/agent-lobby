@@ -363,7 +363,7 @@ export class Gateway {
     }
     const step = /^\/api\/v1\/matches\/([^/]+)\/replay\/step$/.exec(path);
     if (method === "GET" && step) {
-      return this.replayStep(step[1], url, res);
+      return this.replayStep(step[1], url, req, res);
     }
     const stream = /^\/api\/v1\/matches\/([^/]+)\/stream$/.exec(path);
     if (method === "GET" && stream) {
@@ -989,8 +989,8 @@ export class Gateway {
     });
   }
 
-  /** 回放步骤：重放到指定事件序号，返回该时刻任意视角的 AgentView（视角切换回放的服务端基础） */
-  private replayStep(matchId: string, url: URL, res: ServerResponse): void {
+  /** 回放步骤：重放到指定事件序号，返回该时刻指定视角的 AgentView（视角切换回放的服务端基础） */
+  private replayStep(matchId: string, url: URL, req: IncomingMessage, res: ServerResponse): void {
     const rm = this.matches.get(matchId);
     if (!rm) return this.err(res, 404, "MATCH_NOT_FOUND", "对局不存在或已过期", { match_id: matchId });
     const game = this.games.get(rm.gameId);
@@ -1001,7 +1001,17 @@ export class Gateway {
     if (!Number.isFinite(upto)) upto = all.length - 1;
     upto = Math.max(0, Math.min(Math.floor(upto), all.length - 1));
     const seatParam = Number(url.searchParams.get("seat"));
-    const viewer: SeatId | "spectator" = Number.isInteger(seatParam) && seatParam >= 1 ? seatParam : "spectator";
+    let viewer: SeatId | "spectator" = "spectator";
+    if (Number.isInteger(seatParam) && seatParam >= 1) {
+      // 视角鉴权（r8 P0）：?seat=N 仅允许该席位本人的 x-seat-token——private 视角（对手骰子/角色/查验）
+      // 不得无凭证读取（实测：无 token 曾直接返回任意席位 private）；观战请省略 seat 参数
+      const token = req.headers["x-seat-token"];
+      const tokenSeat = typeof token === "string" ? rm.seatTokens.get(token) : undefined;
+      if (tokenSeat !== seatParam) {
+        return this.err(res, 403, "SEAT_INVALID", "回放视角鉴权失败：?seat=N 仅限该席位本人的 x-seat-token；观战请省略 seat 参数", { match_id: matchId });
+      }
+      viewer = seatParam;
+    }
     const { state, terminal } = replayToState(game, all, upto);
     const visible = all.filter(
       (e) =>

@@ -80,6 +80,26 @@ async function main(): Promise<void> {
   check("不存在对局 → 404 MATCH_NOT_FOUND", nf.status === 404 && String(nf.body.error) === "MATCH_NOT_FOUND", "");
   const spec = await post(`${DM}/actions`, { action: { type: "challenge" } });
   check("观战者（无 token）提交 → 403 SEAT_INVALID", spec.status === 403 && String(spec.body.error) === "SEAT_INVALID", "");
+  const rsOther = await api(`${DM}/replay/step?seat=2`);
+  check(
+    "replay/step 视角鉴权：无 token 看他人席位 → 403（r8 P0：曾泄露任意席位 private）",
+    rsOther.status === 403 && String(rsOther.body.code) === "SEAT_INVALID" && String(rsOther.body.error) === "SEAT_INVALID",
+    "",
+  );
+  const rsMine = await api(`${DM}/replay/step?seat=1`, { headers: { "x-seat-token": diceToken } });
+  const mineView = rsMine.body as { view?: { you?: { seat?: number }; private?: Record<string, unknown> } };
+  check(
+    "replay/step 本人 token 看自身视角 → 200 + private",
+    rsMine.status === 200 && mineView.view?.you?.seat === 1 && mineView.view?.private !== undefined,
+    "",
+  );
+  const rsSpec = await api(`${DM}/replay/step`);
+  const specView = rsSpec.body as { view?: { you?: { seat?: number }; private?: Record<string, unknown> } };
+  check(
+    "replay/step 省略 seat → 观战视角（private 恒空）",
+    rsSpec.status === 200 && specView.view?.you?.seat === -1 && (specView.view?.private ? Object.keys(specView.view.private).length === 0 : true),
+    "",
+  );
 
   console.log("\n[矩阵 2] 动作合法性");
   const empty = await post(`${DM}/actions`, {}, diceToken);
