@@ -16,9 +16,9 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHmac } from "node:crypto";
-import type { Action, AgentView, SeatId, SubmitResult } from "../protocol.ts";
+import type { Action, AgentView, MatchEvent, SeatId, SubmitResult } from "../protocol.ts";
 import type { GameModule } from "../games/types.ts";
-import { Match, composeAgentView } from "../arena/match.ts";
+import { Match, composeAgentView, winnersOf } from "../arena/match.ts";
 import type { MatchResult, SeatDriver } from "../arena/match.ts";
 import { createMatch } from "../arena/lobby.ts";
 import { replayToState } from "../arena/replay.ts";
@@ -174,7 +174,7 @@ export class Gateway {
     });
   }
 
-  /** 持久化到 JSON 文件（ratings + agents + 已结束对局元数据） */
+  /** 持久化到 JSON 文件（ratings + agents + 已结束对局全量事件——r9：恢复后 replay 可用，历史不再随重启清零） */
   async persistState(): Promise<void> {
     const finishedMatches = [...this.matches.values()]
       .filter((rm) => rm.match.isFinished())
@@ -185,6 +185,11 @@ export class Gateway {
         started_at: rm.startedAt,
         headline: rm.headline,
         seats: Object.fromEntries([...rm.seatAgents.entries()].map(([s, a]) => [String(s), a])),
+        // r9 自查 P1：此前只存元数据——重启后 replay 空壳 + persistState 的 isFinished 过滤
+        // 把恢复壳（恒报 false）排除在下次落盘之外，历史每重启一代即静默丢失一代（复利丢失）。
+        // 现随元数据一并落盘全量事件与终局比分；rawEvents 已被 RestoredMatch 覆写为透传持久化事件
+        events: rm.match.rawEvents(),
+        scores: rm.match.currentResult()?.scores ?? null,
       }));
     const data = {
       saved_at: new Date().toISOString(),
@@ -211,7 +216,16 @@ export class Gateway {
         ratings?: Record<string, Record<string, { rating: number; games: number; wins: number; draws: number; losses: number }>>;
         agents?: Record<string, { agent_id: string; name: string; callback_url?: string; webhook_secret?: string }>;
         agentNames?: Record<string, string>;
-        matches?: { match_id: string; game: string; started_at: number; headline: string | null; seats: Record<string, string> }[];
+        matches?: {
+          match_id: string;
+          game: string;
+          started_at: number;
+          headline: string | null;
+          seats: Record<string, string>;
+          /** r9：旧状态文件无此二字段（undefined → 空事件回放壳，仅列表展示） */
+          events?: MatchEvent[];
+          scores?: Record<string, number> | null;
+        }[];
       };
       if (data.ratings) this.ratings.import(data.ratings);
       if (data.agents) {
@@ -233,7 +247,7 @@ export class Gateway {
               seatAgents.set(Number(s), a);
             }
             this.matches.set(m.match_id, {
-              match: new RestoredMatch(m.match_id),
+              match: new RestoredMatch(m.match_id, { events: m.events, scores: m.scores }),
               gameId: m.game,
               startedAt: m.started_at,
               seatTokens: new Map(),
@@ -996,6 +1010,11 @@ export class Gateway {
     const game = this.games.get(rm.gameId);
     if (!game) return this.err(res, 500, "GAME_NOT_FOUND", "游戏模块未注册（服务端配置错误）");
     const all = rm.match.rawEvents();
+    // r9：旧版状态文件恢复的对局壳无事件（r9 起落盘全量事件，此后不再出现）——
+    // 空事件喂给 replayToState 会 throw 变 500，显式降级为 410
+    if (all.length === 0) {
+      return this.err(res, 410, "REPLAY_UNAVAILABLE", "该对局的回放数据不可用（旧版状态文件恢复时未持久化事件）；事件列表仍可读 /replay", { match_id: matchId, path: `/api/v1/matches/${matchId}/replay/step` });
+    }
     const toParam = url.searchParams.get("to");
     let upto = toParam === null || toParam === "" ? all.length - 1 : Number(toParam);
     if (!Number.isFinite(upto)) upto = all.length - 1;
@@ -1030,6 +1049,9 @@ export class Gateway {
       .filter((e) => e.seq > anchor && e.seq <= upto && (e.type === "acted" || e.type === "timed_out"))
       .map((e) => e.data.seat as number)
       .filter((s) => Number.isInteger(s));
+    // 终局时刻的回放视图同样携带 result 便捷出口（r9：回放消费者无需再调 /replay 换比分；
+    // 持久化恢复壳经真实游戏模块重放，此处比分亦是对落盘数据的确定性交叉验证）
+    const finalScores = terminal ? game.scores(state) : null;
     const view = composeAgentView({
       game,
       state,
@@ -1039,6 +1061,7 @@ export class Gateway {
       finished: terminal,
       deadlineMs: null,
       submittedSeats,
+      result: finalScores ? { scores: finalScores, winners: winnersOf(finalScores) } : null,
     });
     return this.json(res, 200, { view, upto, total_events: all.length, events: visible.slice(-120) });
   }
@@ -1209,9 +1232,19 @@ function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
   });
 }
 
-/** 从持久化恢复的对局壳（无游戏状态，仅提供 id / isFinished / 空 events / spectator view） */
+/** 从持久化恢复的对局壳（无游戏状态，仅提供 id / isFinished / 持久化事件回放 / 终局比分）。
+ *  r9 自查修复：此前 isFinished() 继承自 Match 私有字段（仅 run()/fail() 置 true），恢复壳从不 run
+ *  → 恒报 false，且 persistState 的 isFinished 过滤把恢复壳排除在下次落盘外——历史每重启丢一代。
+ *  现恒报 finished=true 并透传落盘时的全量事件与比分；旧状态文件无 events 时为空回放壳。
+ *  安全：seatTokens 恒为空 → replay/step?seat=N 恒 403（r8 P0 的安全默认不受影响）。 */
 class RestoredMatch extends Match {
-  constructor(id: string) {
+  private readonly restoredEvents: readonly MatchEvent[];
+  private readonly restoredScores: Record<SeatId, number> | null;
+
+  constructor(
+    id: string,
+    persisted?: { events?: MatchEvent[]; scores?: Record<string, number> | null },
+  ) {
     super({
       id,
       game: {
@@ -1223,12 +1256,48 @@ class RestoredMatch extends Match {
         legalActions: () => [],
         validate: () => ({ ok: false, error: "MATCH_FINISHED" }),
         apply: (s) => ({ state: s, events: [] }),
-        viewOf: () => ({ public: { note: "此对局从持久化恢复，无实时状态" }, private: {} }),
+        viewOf: () => ({ public: { note: "此对局从持久化恢复，无实时状态；事件请读 /replay" }, private: {} }),
         timeoutAction: () => ({ type: "pass" }),
         isTerminal: () => true,
         scores: () => ({}),
       },
       drivers: new Map(),
     });
+    this.restoredEvents = persisted?.events ?? [];
+    const scores = persisted?.scores ?? null;
+    this.restoredScores =
+      scores && typeof scores === "object" && Object.keys(scores).length > 0
+        ? Object.fromEntries(Object.entries(scores).map(([k, v]) => [Number(k), v as number]))
+        : null;
+  }
+
+  /** 恒为已结束（这些记录只可能来自 persistState 的 isFinished 过滤） */
+  override isFinished(): boolean {
+    return true;
+  }
+
+  /** 透传持久化事件：再落盘时不丢（persistState 经 rawEvents 取数） */
+  override rawEvents(): readonly MatchEvent[] {
+    return this.restoredEvents;
+  }
+
+  /** 可见性过滤与 EventStore.visibleTo 同语义；finished=true → reasoning 终局公开（不脱敏） */
+  override eventsFor(viewer: SeatId | "spectator", since = -1): MatchEvent[] {
+    return this.restoredEvents.filter((e) => {
+      if (e.seq <= since) return false;
+      if (e.visibility === "all") return true;
+      if (viewer === "spectator") return false;
+      return e.visibility.seats.includes(viewer);
+    });
+  }
+
+  override currentResult(): MatchResult | null {
+    if (!this.restoredScores) return null;
+    return {
+      matchId: this.id,
+      scores: this.restoredScores,
+      events: this.restoredEvents,
+      gameEvents: [],
+    };
   }
 }

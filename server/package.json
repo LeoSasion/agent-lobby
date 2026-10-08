@@ -13,8 +13,9 @@
     "smoke:gap": "node --experimental-strip-types src/smoke-http-gap.ts",
     "smoke:room": "node --experimental-strip-types src/smoke-room.ts",
     "smoke:errors": "node --experimental-strip-types src/smoke-errors.ts",
+    "smoke:persist": "node --experimental-strip-types src/smoke-persist.ts",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck && npm run smoke && npm run smoke:othello && npm run smoke:werewolf && npm run smoke:framework && npm run smoke:gap && npm run smoke:room && npm run smoke:errors",
+    "test": "npm run typecheck && npm run smoke && npm run smoke:othello && npm run smoke:werewolf && npm run smoke:framework && npm run smoke:gap && npm run smoke:room && npm run smoke:errors && npm run smoke:persist",
     "start": "node --experimental-strip-types src/server.ts",
     "play": "node --experimental-strip-types src/cli/play.ts"
   },

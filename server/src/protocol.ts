@@ -75,6 +75,8 @@ export const ERROR_CODES = {
   METHOD_NOT_ALLOWED: 405,
   ROOM_FULL: 409,
   ROOM_STARTED: 409,
+  /** r9：旧版状态文件恢复的对局无事件（回放数据不可用；r9 起落盘全量事件后不再出现） */
+  REPLAY_UNAVAILABLE: 410,
   NOT_YOUR_TURN: 422,
   ILLEGAL_ACTION: 422,
   NONCE_REUSED: 422,
