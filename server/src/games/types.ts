@@ -27,6 +27,16 @@ export interface GameSnapshot {
   private: Record<string, unknown>;
 }
 
+/**
+ * 内核 → 游戏的视图组装上下文（r7：公开相位进度所需）。
+ * submittedSeats = 本相位已提交动作的座位（含超时默认入账者，按提交顺序）。
+ * 契约：仅可用于公开进度类派生信息（如 day_vote 的 votes_cast）；
+ * 隐藏同时相位（如夜间）暴露提交进度会泄露行动者身份——游戏模块自行负责不越界。
+ */
+export interface ViewContext {
+  submittedSeats: SeatId[];
+}
+
 export type ValidateResult = { ok: true } | { ok: false; error: string };
 
 export interface GameModule<S> {
@@ -42,8 +52,8 @@ export interface GameModule<S> {
   validate(state: S, seat: SeatId, action: Action): ValidateResult;
   /** 应用已验证的动作；原地或返回新状态均可，事件追加返回 */
   apply(state: S, seat: SeatId, action: Action, rng: Rng): { state: S; events: GameEvent[] };
-  /** 信息隔离唯一出口：按 viewer 过滤局面 */
-  viewOf(state: S, viewer: Viewer): GameSnapshot;
+  /** 信息隔离唯一出口：按 viewer 过滤局面；ctx 携带内核侧派生信息（如相位提交进度，可选） */
+  viewOf(state: S, viewer: Viewer, ctx?: ViewContext): GameSnapshot;
   /** 超时默认动作：必须返回 validate 会通过的动作 */
   timeoutAction(state: S, seat: SeatId): Action;
   /**

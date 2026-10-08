@@ -25,8 +25,10 @@ export type EventVisibility = "all" | { seats: SeatId[] };
 /** 追加式事件：回放 = seed + acted 序列重放 */
 export interface MatchEvent {
   seq: number;
-  /** 事件发生时刻（epoch ms）——纯观测性元数据：不参与确定性哈希与回放重放（r6 ot-h1：回放时间压力分析依赖） */
+  /** 事件落库时刻（epoch ms）——纯观测性元数据：不参与确定性哈希与回放重放（r6 ot-h1：回放时间压力分析依赖） */
   ts?: number;
+  /** 该座位动作入账时刻（epoch ms，仅 acted/timed_out）——批量结算的 ts 对同相位全员相同，此字段区分实际提交先后（r7 w7 反馈）；同样不参与哈希与重放 */
+  submitted_at?: number;
   type: string;
   data: Record<string, unknown>;
   visibility: EventVisibility;

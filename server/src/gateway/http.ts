@@ -371,46 +371,31 @@ export class Gateway {
     }
     const m = /^\/api\/v1\/matches\/([^/]+)\/(view|actions|events|replay)$/.exec(path);
     if (m) return this.matchOp(m[1], m[2], method, url, req, res);
-    return this.json(res, 404, this.notFoundHint(path));
+    const hint = this.notFoundHint(path);
+    return this.err(res, 404, "NOT_FOUND", hint, { path, hint });
   }
 
   /** 404 提示按路径分级——定向提示优于通用清单（r6 实测：误导性 hint 让测试者得出"排行榜不存在"的错误结论并反向印证） */
-  private notFoundHint(path: string): { error: string; path: string; hint: string } {
+  private notFoundHint(path: string): string {
     if (path.startsWith("/api/v1/leaderboard")) {
-      return {
-        error: "NOT_FOUND",
-        path,
-        hint: "排行榜需指定游戏：GET /api/v1/leaderboard/{game}（游戏 id 见 GET /api/v1/games）",
-      };
+      return "排行榜需指定游戏：GET /api/v1/leaderboard/{game}（游戏 id 见 GET /api/v1/games）";
     }
     if (path.startsWith("/api/v1/lobby")) {
-      return {
-        error: "NOT_FOUND",
-        path,
-        hint: "大厅端点：GET /lobby/rooms（列表）· POST /lobby/rooms（建房）· POST /lobby/rooms/:id/join|start · GET /lobby/rooms/:id?token= · POST /lobby/quickstart",
-      };
+      return "大厅端点：GET /lobby/rooms（列表）· POST /lobby/rooms（建房）· POST /lobby/rooms/:id/join|start · GET /lobby/rooms/:id?token= · POST /lobby/quickstart";
     }
     if (/^\/api\/v1\/matches\/[^/]+/.test(path)) {
-      return {
-        error: "NOT_FOUND",
-        path,
-        hint: "对局子路径仅支持 view|actions|events|replay（另有 /stream 与 /replay/step）",
-      };
+      return "对局子路径仅支持 view|actions|events|replay（另有 /stream 与 /replay/step）";
     }
     if (path.startsWith("/api/v1/agents") || path.startsWith("/api/v1/webhook")) {
-      return {
-        error: "NOT_FOUND",
-        path,
-        hint: "注册：POST /api/v1/agents；webhook 自检：POST /api/v1/webhook/test（Bearer）",
-      };
+      return "注册：POST /api/v1/agents；webhook 自检：POST /api/v1/webhook/test（Bearer）";
     }
-    return { error: "NOT_FOUND", path, hint: "未知端点；完整清单见 GET /api/v1" };
+    return "未知端点；完整清单见 GET /api/v1";
   }
 
   private quickstart(req: IncomingMessage, body: Record<string, unknown>, res: ServerResponse): void {
     const gameId = String(body.game ?? "liars_dice");
     const game = this.games.get(gameId);
-    if (!game) return this.json(res, 404, { error: "GAME_NOT_FOUND", game: gameId });
+    if (!game) return this.err(res, 404, "GAME_NOT_FOUND", `游戏 ${gameId} 不存在（可用游戏见 GET /api/v1/games）`, { game: gameId });
     const total = clamp(Number(body.seats ?? game.meta.minSeats), game.meta.minSeats, game.meta.maxSeats);
 
     // 选手身份：Bearer api_key（老选手）或自动创建游客（返回 api_key 便于留存身份）
@@ -546,7 +531,7 @@ export class Gateway {
   ):
     | { ok: true; channel: "http" }
     | { ok: true; channel: "webhook"; callback: { url: string; secret: string } }
-    | { ok: false; status: number; error: string } {
+    | { ok: false; status: number; code: string; message: string } {
     if (body.channel !== "webhook") return { ok: true, channel: "http" };
     const auth = typeof req.headers.authorization === "string"
       ? req.headers.authorization.replace(/^Bearer\s+/i, "")
@@ -556,14 +541,16 @@ export class Gateway {
       return {
         ok: false,
         status: 401,
-        error: "WEBHOOK_AUTH_REQUIRED：channel=webhook 需 Authorization: Bearer <api_key>（注册 POST /agents 时须带 callback_url）",
+        code: "WEBHOOK_AUTH_REQUIRED",
+        message: "channel=webhook 需 Authorization: Bearer <api_key>（注册 POST /agents 时须带 callback_url）",
       };
     }
     if (!known.callback_url || !known.webhook_secret) {
       return {
         ok: false,
         status: 400,
-        error: "WEBHOOK_NOT_REGISTERED：该 api_key 注册时未提供 callback_url，无法走 webhook 通道；请重新 POST /agents 并携带 callback_url",
+        code: "WEBHOOK_NOT_REGISTERED",
+        message: "该 api_key 注册时未提供 callback_url，无法走 webhook 通道；请重新 POST /agents 并携带 callback_url",
       };
     }
     return { ok: true, channel: "webhook", callback: { url: known.callback_url, secret: known.webhook_secret } };
@@ -575,7 +562,7 @@ export class Gateway {
       const body = await readJson(req);
       const gameId = String(body.game ?? "");
       const game = this.games.get(gameId);
-      if (!game) return this.json(res, 404, { error: "GAME_NOT_FOUND", game: gameId });
+      if (!game) return this.err(res, 404, "GAME_NOT_FOUND", `游戏 ${gameId} 不存在（可用游戏见 GET /api/v1/games）`, { game: gameId });
       const seats = clamp(Number(body.seats ?? game.meta.minSeats), game.meta.minSeats, game.meta.maxSeats);
       const timeoutMsRaw = Number(body.timeout_ms);
       const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0
@@ -583,7 +570,7 @@ export class Gateway {
         : undefined;
       const name = String(body.name ?? "host-" + randomId(""));
       const ch = this.roomChannelOf(req, body);
-      if (!ch.ok) return this.json(res, ch.status, { error: ch.error });
+      if (!ch.ok) return this.err(res, ch.status, ch.code, ch.message);
       const me = this.identityOf(req, name);
       if (me.name === name && !body.name) this.agentNames.set(me.agentId, name);
       else this.agentNames.set(me.agentId, me.name);
@@ -621,20 +608,20 @@ export class Gateway {
           ? "你是 webhook 通道：开局后回合将推送到你的 callback（x-arena-signature 验签），回 200 + {action, reasoning?}，无需轮询。"
           : "其他人 POST /lobby/rooms/" + room.id + "/join 加入；满员自动开局。轮询 GET 本房间（带 join_token）获取座位分配。",
       });
-    })().catch((e) => this.json(res, 500, { error: "INTERNAL", message: String(e) }));
+    })().catch((e) => this.err(res, 500, "INTERNAL", `服务端内部错误：${String(e)}`));
   }
 
   /** 加入房间（按加入顺序定座） */
   private roomJoin(roomId: string, req: IncomingMessage, res: ServerResponse): void {
     void (async () => {
       const room = this.rooms.get(roomId);
-      if (!room) return this.json(res, 404, { error: "ROOM_NOT_FOUND", room_id: roomId });
-      if (room.players.length >= room.seats) return this.json(res, 409, { error: "ROOM_FULL：房间已满", room_id: roomId });
-      if (room.status === "started") return this.json(res, 409, { error: "ROOM_STARTED：对局已开始", room_id: roomId });
+      if (!room) return this.err(res, 404, "ROOM_NOT_FOUND", "房间不存在或已过期", { room_id: roomId });
+      if (room.players.length >= room.seats) return this.err(res, 409, "ROOM_FULL", "房间已满", { room_id: roomId });
+      if (room.status === "started") return this.err(res, 409, "ROOM_STARTED", "对局已开始，不可加入", { room_id: roomId });
       const body = await readJson(req);
       const name = String(body.name ?? "player-" + randomId(""));
       const ch = this.roomChannelOf(req, body);
-      if (!ch.ok) return this.json(res, ch.status, { error: ch.error });
+      if (!ch.ok) return this.err(res, ch.status, ch.code, ch.message);
       const me = this.identityOf(req, name);
       this.agentNames.set(me.agentId, me.name);
       const joinToken = "jt_" + randomId("");
@@ -660,21 +647,21 @@ export class Gateway {
           ? "你是 webhook 通道：开局后回合将推送到你的 callback，无需轮询。"
           : "轮询 GET /lobby/rooms/" + room.id + "?token=" + joinToken + " 直至 status=started，凭 seat_token 参赛。",
       });
-    })().catch((e) => this.json(res, 500, { error: "INTERNAL", message: String(e) }));
+    })().catch((e) => this.err(res, 500, "INTERNAL", `服务端内部错误：${String(e)}`));
   }
 
   /** 房主强制开局：余位由 house bot 补齐（至少 1 名真人） */
   private roomStart(roomId: string, req: IncomingMessage, res: ServerResponse): void {
     void (async () => {
       const room = this.rooms.get(roomId);
-      if (!room) return this.json(res, 404, { error: "ROOM_NOT_FOUND", room_id: roomId });
+      if (!room) return this.err(res, 404, "ROOM_NOT_FOUND", "房间不存在或已过期", { room_id: roomId });
       const body = await readJson(req);
       if (String(body.join_token ?? "") !== room.creatorToken) {
-        return this.json(res, 403, { error: "ROOM_FORBIDDEN：仅房主可强制开局" });
+        return this.err(res, 403, "ROOM_FORBIDDEN", "仅房主可强制开局");
       }
-      if (room.status === "started") return this.json(res, 409, { error: "ROOM_STARTED：对局已开始" });
+      if (room.status === "started") return this.err(res, 409, "ROOM_STARTED", "对局已开始");
       const ok = this.tryStartRoom(room, true);
-      if (!ok) return this.json(res, 500, { error: "ROOM_START_FAILED" });
+      if (!ok) return this.err(res, 500, "ROOM_START_FAILED", "开局失败（服务端内部错误）");
       const me = room.players[0]!;
       return this.json(res, 200, {
         room_id: room.id,
@@ -684,7 +671,7 @@ export class Gateway {
         seat_token: me.seatToken,
         bots_filled: room.seats - room.players.length,
       });
-    })().catch((e) => this.json(res, 500, { error: "INTERNAL", message: String(e) }));
+    })().catch((e) => this.err(res, 500, "INTERNAL", `服务端内部错误：${String(e)}`));
   }
 
   /** 尝试开局：满员自动开；fillWithBots 时余位补 house bot。开局成功返回 true */
@@ -760,7 +747,7 @@ export class Gateway {
   /** 房间状态：waiting 公开人数；started 凭 join_token 换座位分配 */
   private roomStatus(roomId: string, url: URL, res: ServerResponse): void {
     const room = this.rooms.get(roomId);
-    if (!room) return this.json(res, 404, { error: "ROOM_NOT_FOUND", room_id: roomId });
+    if (!room) return this.err(res, 404, "ROOM_NOT_FOUND", "房间不存在或已过期", { room_id: roomId });
     if (room.status === "waiting") {
       return this.json(res, 200, {
         room_id: room.id,
@@ -826,7 +813,7 @@ export class Gateway {
       : "";
     const agent = auth ? this.agents.get(auth) : undefined;
     if (!agent || !agent.callback_url || !agent.webhook_secret) {
-      return this.json(res, 400, { error: "请先以 callback_url 注册（POST /agents），并携带 Authorization: Bearer <api_key>" });
+      return this.err(res, 400, "WEBHOOK_NOT_REGISTERED", "请先以 callback_url 注册（POST /agents），并携带 Authorization: Bearer <api_key>");
     }
     const body = JSON.stringify({
       event: "turn.start",
@@ -943,7 +930,7 @@ export class Gateway {
   private sseStream(matchId: string, req: IncomingMessage, res: ServerResponse): void {
     const rm = this.matches.get(matchId);
     if (!rm) {
-      return this.json(res, 404, { error: "MATCH_NOT_FOUND", match_id: matchId });
+      return this.err(res, 404, "MATCH_NOT_FOUND", "对局不存在或已过期", { match_id: matchId });
     }
     const token = req.headers["x-seat-token"];
     const seat = typeof token === "string" ? rm.seatTokens.get(token) : undefined;
@@ -1005,9 +992,9 @@ export class Gateway {
   /** 回放步骤：重放到指定事件序号，返回该时刻任意视角的 AgentView（视角切换回放的服务端基础） */
   private replayStep(matchId: string, url: URL, res: ServerResponse): void {
     const rm = this.matches.get(matchId);
-    if (!rm) return this.json(res, 404, { error: "MATCH_NOT_FOUND", match_id: matchId });
+    if (!rm) return this.err(res, 404, "MATCH_NOT_FOUND", "对局不存在或已过期", { match_id: matchId });
     const game = this.games.get(rm.gameId);
-    if (!game) return this.json(res, 500, { error: "GAME_NOT_FOUND" });
+    if (!game) return this.err(res, 500, "GAME_NOT_FOUND", "游戏模块未注册（服务端配置错误）");
     const all = rm.match.rawEvents();
     const toParam = url.searchParams.get("to");
     let upto = toParam === null || toParam === "" ? all.length - 1 : Number(toParam);
@@ -1022,6 +1009,17 @@ export class Gateway {
         (e.visibility === "all" ||
           (typeof e.visibility === "object" && e.visibility.seats.includes(viewer as number))),
     );
+    // 相位提交进度重建（r7）：自最近一次 phase_started / vote_pk 锚点起，
+    // 已 acted/timed_out 的座位即该窗口的提交进度——回放视图与实况 votes_cast 语义一致
+    let anchor = -1;
+    for (const e of all) {
+      if (e.seq > upto) break;
+      if (e.type === "phase_started" || e.type === "vote_pk") anchor = e.seq;
+    }
+    const submittedSeats = all
+      .filter((e) => e.seq > anchor && e.seq <= upto && (e.type === "acted" || e.type === "timed_out"))
+      .map((e) => e.data.seat as number)
+      .filter((s) => Number.isInteger(s));
     const view = composeAgentView({
       game,
       state,
@@ -1030,6 +1028,7 @@ export class Gateway {
       visible,
       finished: terminal,
       deadlineMs: null,
+      submittedSeats,
     });
     return this.json(res, 200, { view, upto, total_events: all.length, events: visible.slice(-120) });
   }
@@ -1043,12 +1042,12 @@ export class Gateway {
     res: ServerResponse,
   ): Promise<void> {
     const rm = this.matches.get(matchId);
-    if (!rm) return this.json(res, 404, { error: "MATCH_NOT_FOUND", match_id: matchId });
+    if (!rm) return this.err(res, 404, "MATCH_NOT_FOUND", "对局不存在或已过期", { match_id: matchId });
     const token = req.headers["x-seat-token"];
     const seat = typeof token === "string" ? rm.seatTokens.get(token) : undefined;
     // seat_token 无效时不静默降级为观战——agent 不易察觉配置错误
     if (typeof token === "string" && token.length > 0 && seat === undefined && op !== "replay") {
-      return this.json(res, 401, { error: "SEAT_TOKEN_INVALID：token 不匹配该对局的任何席位", match_id: matchId });
+      return this.err(res, 401, "SEAT_TOKEN_INVALID", "seat_token 不匹配该对局的任何席位", { match_id: matchId });
     }
     const viewer: SeatId | "spectator" = seat ?? "spectator";
 
@@ -1061,15 +1060,15 @@ export class Gateway {
       return this.json(res, 200, v);
     }
     if (op === "actions" && method === "POST") {
-      if (seat === undefined) return this.json(res, 403, { error: "SEAT_INVALID" });
+      if (seat === undefined) return this.err(res, 403, "SEAT_INVALID", "观战视角不可提交动作（请求缺少 x-seat-token）");
       const driver = rm.httpDrivers.get(seat);
       if (!driver) {
-        return this.json(res, 403, { error: "SEAT_INVALID：该席位走 Webhook 通道，不经此端点出招" });
+        return this.err(res, 403, "SEAT_INVALID", "该席位走 Webhook 通道，不经此端点出招");
       }
       // 未轮到的席位立即拒绝（保留即时反馈）；相位间隙（active=true 但 step 未开）
       // 交给驱动缓冲——新回合开启时自动入账，消除轮询型 Agent 的 NOT_YOUR_TURN 窗口
       if (rm.match.isFinished()) {
-        return this.json(res, 422, { ok: false, code: "MATCH_FINISHED", error: "MATCH_FINISHED", legal_actions: [] });
+        return this.err(res, 422, "MATCH_FINISHED", "对局已结束，不再接受动作", { ok: false, legal_actions: [] });
       }
       const body0 = await readJson(req);
       const nonce0 = typeof body0.nonce === "string" ? body0.nonce.slice(0, 64) : undefined;
@@ -1087,18 +1086,14 @@ export class Gateway {
       }
       const probe = rm.match.viewFor(seat);
       if (probe.you.submitted) {
-        return this.json(res, 422, {
+        return this.err(res, 422, "DUPLICATE_ACTION", "本回合已接受你的动作，请等待结算（幂等重试请带同一 nonce）", {
           ok: false,
-          code: "DUPLICATE_ACTION",
-          error: "DUPLICATE_ACTION：本回合已接受你的动作，请等待结算（幂等重试请带同一 nonce）",
           legal_actions: probe.legal_actions,
         });
       }
       if (!probe.you.active) {
-        return this.json(res, 422, {
+        return this.err(res, 422, "NOT_YOUR_TURN", "当前不轮到该席位行动", {
           ok: false,
-          code: "NOT_YOUR_TURN",
-          error: "NOT_YOUR_TURN：当前不轮到该席位行动",
           legal_actions: probe.legal_actions,
         });
       }
@@ -1127,7 +1122,7 @@ export class Gateway {
         ["MATCH_FINISHED", "NOT_YOUR_TURN", "NONCE_REUSED", "NONCE_EXPIRED", "DUPLICATE_ACTION", "ILLEGAL_ACTION", "SEAT_INVALID"].find(
           (c) => String(r.error).startsWith(c),
         ) ?? "UNKNOWN";
-      return this.json(res, 422, { ok: false, code, error: r.error, legal_actions: r.legal_actions });
+      return this.err(res, 422, code, String(r.error), { ok: false, legal_actions: r.legal_actions });
     }
     if (op === "events" && method === "GET") {
       const sinceParam = Number(url.searchParams.get("since"));
@@ -1154,12 +1149,27 @@ export class Gateway {
         events: rm.match.eventsFor(viewer),
       });
     }
-    return this.json(res, 405, { error: "METHOD_NOT_ALLOWED", method });
+    return this.err(res, 405, "METHOD_NOT_ALLOWED", `不支持的方法（${method}）`, { method });
   }
 
   private json(res: ServerResponse, status: number, body: unknown): void {
     res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
     res.end(JSON.stringify(body));
+  }
+
+  /**
+   * 统一错误体（r7 dc7-d1：错误响应形状不一——401 裸中文、403/404 缺 code、部分 404 无 hint）。
+   * 约定：code=机器可读稳定码；error=code 的别名（兼容旧客户端按 error 判断的用法）；
+   * message=人读文本（可中文）；422 额外带 ok:false + legal_actions；404 额外带 path + hint。
+   */
+  private err(
+    res: ServerResponse,
+    status: number,
+    code: string,
+    message?: string,
+    extra: Record<string, unknown> = {},
+  ): void {
+    this.json(res, status, { error: code, code, message: message ?? code, ...extra });
   }
 }
 

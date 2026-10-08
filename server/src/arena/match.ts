@@ -57,9 +57,15 @@ export function composeAgentView(opts: {
   deadlineMs: number | null;
   /** 本席位本回合是否已提交（防重复提交的即时信号） */
   youSubmitted?: boolean;
+  /** 本相位已提交（含超时默认）的座位——viewOf ctx 的数据源（r7：day_vote votes_cast 曾因读 s.votes 恒空） */
+  submittedSeats?: SeatId[];
   result?: { scores: Record<SeatId, number>; winners: SeatId[] } | null;
 }): AgentView {
-  const snap = opts.game.viewOf(opts.state, opts.viewer);
+  const snap = opts.game.viewOf(
+    opts.state,
+    opts.viewer,
+    opts.submittedSeats ? { submittedSeats: opts.submittedSeats } : undefined,
+  );
   const active = opts.finished ? [] : opts.game.activeSeats(opts.state);
   return {
     protocol: "arena/v0",
@@ -113,6 +119,8 @@ export class Match {
   private lastPhaseKey = "";
   private received = new Map<SeatId, Action>();
   private reasons = new Map<SeatId, string>();
+  /** 每座位动作入账时刻（epoch ms）：写入 acted.submitted_at——观测定时分析（r7 w7 反馈：批量结算的 ts 全相同，区分不了先后提交） */
+  private submittedAt = new Map<SeatId, number>();
   /** nonce → {seat, turn}：幂等重试绑定回合——跨回合重试不再是隐式成功 */
   private nonceOwners = new Map<string, { seat: SeatId; turn: number }>();
   /** 回合序号：每次 step() 递增，用于 nonce 与回合绑定 */
@@ -188,6 +196,9 @@ export class Match {
       finished: this.finished,
       deadlineMs: this.turnDeadline,
       youSubmitted: viewer !== "spectator" && this.received.has(viewer),
+      // 相位提交进度（公开相位派生信息的唯一正确数据源）：received 是实时缓冲，
+      // 游戏侧 s.votes 等要到批量 apply 才写入——窗口期读它恒为空（r7 P0 教训）
+      submittedSeats: [...this.received.keys()],
       result: this.finished && scores ? { scores, winners: winnersOf(scores) } : null,
     });
   }
@@ -257,6 +268,7 @@ export class Match {
           return;
         }
         this.received.set(seat, action);
+        this.submittedAt.set(seat, Date.now());
         this.store.append("timed_out", { seat, default_action: action }, this.eventVisibility(seat, action));
       }
     }
@@ -275,7 +287,8 @@ export class Match {
       this.state = res.state;
       const actedData: Record<string, unknown> = { seat, action };
       if (reasoning) actedData.reasoning = reasoning;
-      this.store.append("acted", actedData, vis);
+      // submitted_at：该座位实际提交时刻（顶层观测元数据，不进 data/哈希——批量结算的 ts 对全员相同）
+      this.store.append("acted", actedData, vis, this.submittedAt.get(seat));
       for (const ev of res.events) {
         this.store.append(ev.type, ev.data ?? {}, ev.visibility ?? "all");
         this.gameEvents.push({ type: ev.type, data: ev.data ?? {} });
@@ -287,6 +300,7 @@ export class Match {
     // 间隙期的视图不再出现 deadline_ms=null 的困惑
     this.received = new Map();
     this.reasons = new Map();
+    this.submittedAt = new Map();
     this.turnDeadline =
       this.finished || this.game.isTerminal(this.state) ? null : Date.now() + this.timeoutMs;
   }
@@ -367,6 +381,7 @@ export class Match {
       };
     }
     this.received.set(seat, action);
+    this.submittedAt.set(seat, Date.now());
     if (opts?.nonce !== undefined) {
       this.nonceOwners.set(opts.nonce, { seat, turn: this.turnSeq });
     }

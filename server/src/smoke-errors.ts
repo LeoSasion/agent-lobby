@@ -2,7 +2,8 @@
  * 冒烟测试：错误码矩阵（网关层全谱——r6 实测零错误码覆盖，r7 造错轮固化）
  * 覆盖：401 SEAT_TOKEN_INVALID / 404 MATCH_NOT_FOUND / 403 SEAT_INVALID /
  *       422 ILLEGAL_ACTION（空 body + 乱类型）/ DUPLICATE_ACTION /
- *       nonce 同回合幂等 / 跨回合 replayed / MATCH_FINISHED / applied+slim 响应
+ *       nonce 同回合幂等 / 跨回合 replayed / MATCH_FINISHED / applied+slim 响应 /
+ *       votes_cast 相位进度实时性（r7 P0 修复回归，矩阵 3c）
  * 时序敏感项（DUPLICATE/replayed/MATCH_FINISHED）用双人黑白棋房：双方均由本测试驱动，窗口稳定
  * 运行：node --experimental-strip-types src/smoke-errors.ts
  */
@@ -100,9 +101,11 @@ async function main(): Promise<void> {
     wJoins.push(String(j.body.join_token));
   }
   const wSeats: string[] = [];
+  const wSeatIds: number[] = [];
   for (const jt of wJoins) {
     const s = (await api(`/lobby/rooms/${wRoom}?token=${jt}`)).body;
     wSeats.push(String(s.seat_token));
+    wSeatIds.push(Number(s.seat_id));
   }
   const wMatch = String((await api(`/lobby/rooms/${wRoom}?token=${wJoins[0]}`)).body.match_id);
   const WM = `/matches/${wMatch}`;
@@ -128,6 +131,84 @@ async function main(): Promise<void> {
       wdup.status === 422 && String(wdup.body.code) === "DUPLICATE_ACTION",
       `seat=${actor + 1} · ${String(wdup.body.error ?? "").slice(0, 30)}`,
     );
+  }
+
+  // —— 矩阵 3c：votes_cast 相位进度实时性（r7 P0 修复回归：内核提交缓冲注入 viewOf ctx）——
+  // 修复前症状：投票窗口期 votes_cast 恒为 []（数据源 s.votes 要等批量 apply 才写入）。
+  // 驱动该 6 人房：夜 → 白天发言 → 投票窗口只投一票，断言三重视角（自/他/观战）实时可见。
+  console.log("\n[矩阵 3c] votes_cast 实时性（r7 P0 修复回归）");
+  if (actor < 0) {
+    check("前置：夜间行动者已找到", false, "跳过");
+  } else {
+    interface WWView {
+      phase?: string;
+      you?: { active?: boolean; submitted?: boolean };
+      legal_actions?: { type: string; schema?: { values?: number[] } }[];
+      public?: { votes_cast?: number[]; pending_voters?: number[] };
+    }
+    const viewOfSeat = async (i: number): Promise<WWView> =>
+      (await api(`${WM}/view`, { headers: { "x-seat-token": wSeats[i]! } })).body as unknown as WWView;
+    let votedOnce = false;
+    let sawDayVote = false;
+    const t0vc = Date.now();
+    while (Date.now() - t0vc < 60000) {
+      let finished = false;
+      for (let s = 0; s < 6; s++) {
+        const v = await viewOfSeat(s);
+        if (v.phase === "finished") {
+          finished = true;
+          break;
+        }
+        if (v.you?.active !== true || v.you.submitted === true) continue;
+        if (v.phase === "night") {
+          await post(`${WM}/actions`, { action: { type: "pass" } }, wSeats[s]!);
+        } else if (v.phase === "day_discuss") {
+          await post(`${WM}/actions`, { action: { type: "say", text: "3c 冒烟发言" } }, wSeats[s]!);
+        } else if (v.phase === "day_vote" && !votedOnce) {
+          sawDayVote = true;
+          votedOnce = true;
+          const mySeat = wSeatIds[s]!;
+          const la = v.legal_actions?.[0];
+          const target = la?.type === "vote" ? (la.schema?.values?.[0] ?? mySeat) : mySeat;
+          const resp = await post(`${WM}/actions`, { action: { type: "vote", target } }, wSeats[s]!);
+          // (a) 提交响应回带的 slim view 即含 votes_cast（修复前恒为 []）
+          const own = resp.body.view as WWView | undefined;
+          check(
+            "votes_cast：提交响应 view 即含本席位",
+            Array.isArray(own?.public?.votes_cast) && (own!.public!.votes_cast as number[]).includes(mySeat),
+            `cast=[${(own?.public?.votes_cast ?? []).join(",")}]`,
+          );
+          // (b) 另一未投票席位视角：cast 含本席位；pending 排除本席位且含观察者
+          let otherOk = false;
+          let pendOk = false;
+          let detail = "";
+          for (let t = 0; t < 6; t++) {
+            if (t === s) continue;
+            const ov = await viewOfSeat(t);
+            if (ov.phase !== "day_vote" || ov.you?.submitted === true) continue;
+            const cast = ov.public?.votes_cast ?? [];
+            const pend = ov.public?.pending_voters ?? [];
+            otherOk = cast.includes(mySeat);
+            pendOk = !pend.includes(mySeat) && pend.includes(wSeatIds[t]!);
+            detail = `cast=[${cast.join(",")}] pend=[${pend.join(",")}]`;
+            break;
+          }
+          check("votes_cast：他人视角实时可见", otherOk, detail);
+          check("pending_voters：排除已投者、含观察者自身", pendOk, detail);
+          // (c) 观战视角（无 token）同样可见——公开字段不得按席位过滤
+          const sv = (await api(`${WM}/view`)).body as unknown as WWView;
+          check(
+            "votes_cast：观战视角可见（公开字段）",
+            (sv.public?.votes_cast ?? []).includes(mySeat),
+            `cast=[${(sv.public?.votes_cast ?? []).join(",")}]`,
+          );
+        }
+        // 投票断言完成后不再驱动其余投票者——本矩阵无需打完整局
+      }
+      if (finished || votedOnce) break;
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    check("到达 day_vote 并完成单票三重断言", sawDayVote && votedOnce, sawDayVote ? "" : "60s 内未到投票相位");
   }
 
   // —— 阶段 C：双人黑白棋房（applied/slim、nonce 幂等、跨回合 replayed、终局）——
@@ -197,12 +278,20 @@ async function main(): Promise<void> {
   const fin = await post(`${OM}/actions`, { action: { type: "pass" } }, hostSeat);
   check("完赛后提交 → 422 MATCH_FINISHED", fin.status === 422 && String(fin.body.code) === "MATCH_FINISHED", "");
   const rep = await api(`${OM}/replay`, { headers: { "x-seat-token": hostSeat } });
-  const repBody = rep.body as { finished?: boolean; scores?: unknown; seat_names?: Record<string, string>; events?: { ts?: number }[] };
+  const repBody = rep.body as { finished?: boolean; scores?: unknown; seat_names?: Record<string, string>; events?: { ts?: number; type?: string; submitted_at?: number }[] };
   const tsOk = (repBody.events ?? []).every((e) => typeof e.ts === "number");
+  // r7：acted/timed_out 顶层 submitted_at（实际入账时刻）——批量结算 ts 全同，靠它区分提交先后
+  const actedEvents = (repBody.events ?? []).filter((e) => e.type === "acted" || e.type === "timed_out");
+  const submittedAtOk = actedEvents.length > 0 && actedEvents.every((e) => typeof e.submitted_at === "number");
   check(
     "终局 replay：finished + scores + seat_names + 事件含 ts",
     repBody.finished === true && repBody.scores !== null && Object.keys(repBody.seat_names ?? {}).length >= 2 && tsOk,
     `${Object.keys(repBody.seat_names ?? {}).join(",")} · ts=${tsOk ? "OK" : "缺失"}`,
+  );
+  check(
+    "acted/timed_out 含 submitted_at（r7 观测元数据）",
+    submittedAtOk,
+    `${actedEvents.length} 条 acted/timed_out`,
   );
 
   console.log(`\n=== 结果：${failed === 0 ? "全部通过" : failed + " 项失败"} ===`);

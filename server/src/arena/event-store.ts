@@ -13,9 +13,12 @@ export class EventStore {
     type: string,
     data: Record<string, unknown> = {},
     visibility: MatchEvent["visibility"] = "all",
+    submittedAt?: number,
   ): MatchEvent {
-    // ts 为观测性元数据（epoch ms）：hashEvents 只取 type/data/visibility，回放只按 seed+acted 重放——两者均与 ts 正交
+    // ts / submitted_at 均为观测性元数据（epoch ms）：hashEvents 只取 type/data/visibility，
+    // 回放只按 seed+acted 重放——两者均与确定性正交。ts=事件落库时刻，submitted_at=动作入账时刻
     const ev: MatchEvent = { seq: this.events.length, ts: Date.now(), type, data, visibility };
+    if (submittedAt !== undefined) ev.submitted_at = submittedAt;
     this.events.push(ev);
     for (const cb of this.subscribers) {
       try { cb(ev); } catch { /* 订阅者异常不影响写入 */ }

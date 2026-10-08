@@ -65,12 +65,29 @@ export class ArenaApiError extends Error {
   readonly body: Record<string, unknown>;
   constructor(status: number, body: Record<string, unknown>) {
     const code = typeof body.code === "string" ? body.code : undefined;
-    super(`Arena API ${status}${code ? " " + code : ""}: ${String(body.error ?? body.message ?? "请求失败")}`);
+    // r7 统一错误体：message 承载人读文本、error=code 别名——优先取 message（旧 body 无 message 时回落 error）
+    super(`Arena API ${status}${code ? " " + code : ""}: ${String(body.message ?? body.error ?? "请求失败")}`);
     this.name = "ArenaApiError";
     this.status = status;
     this.code = code;
     this.body = body;
   }
+}
+
+/**
+ * fetch 包装：网络层异常（无法连接 / DNS / 超时）→ status=0 的 ArenaApiError（code=TIMEOUT/NETWORK_ERROR），
+ * 绝不裸抛 TypeError——views() 退避重试耗尽后抛出的也应是结构化异常（r7 ot7-h1 离线实测）
+ */
+function fetchGuarded(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  return fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(timeoutMs) }).catch((e: unknown) => {
+    const name = e instanceof Error ? e.name : "";
+    const timedOut = name === "TimeoutError" || name === "AbortError";
+    throw new ArenaApiError(0, {
+      error: timedOut ? "TIMEOUT" : "NETWORK_ERROR",
+      code: timedOut ? "TIMEOUT" : "NETWORK_ERROR",
+      message: `网络请求失败：${e instanceof Error ? e.message : String(e)}`,
+    });
+  });
 }
 
 export class ArenaClient {
@@ -85,10 +102,7 @@ export class ArenaClient {
 
   /** 请求并解析 JSON；非 2xx 抛 ArenaApiError（保留 body 供自纠） */
   private async request(path: string, opts: RequestInit = {}): Promise<{ status: number; body: Record<string, unknown> }> {
-    const res = await fetch(this.url + "/api/v1" + path, {
-      ...opts,
-      signal: opts.signal ?? AbortSignal.timeout(this.requestTimeoutMs),
-    });
+    const res = await fetchGuarded(this.url + "/api/v1" + path, opts, this.requestTimeoutMs);
     let body: Record<string, unknown>;
     try {
       body = (await res.json()) as Record<string, unknown>;
@@ -154,7 +168,12 @@ export class ArenaClient {
     }));
   }
 
-  /** 挂载进行中/已结束的对局（从房间流程或外部拿到 match_id + seat_token 时使用——r6 ot-h1 反馈：quickstart 曾是唯一入口） */
+  /**
+   * 挂载进行中/已结束的对局（r6 ot-h1 反馈：quickstart 曾是唯一入口）。
+   * @param matchId 对局 id（建房方从房间 status 的 match_id 取；quickstart 从响应取）
+   * @param seatToken 席位凭证（本人 join_token 换出的 seat_token——身份与座位的绑定物）
+   * @param opts.apiKey 可选：涉及本人身份的统计端点需要；仅 view/act/events/replay 可不传
+   */
   attach(matchId: string, seatToken: string, opts?: { apiKey?: string; agentId?: string }): MatchHandle {
     return new MatchHandle(this, {
       matchId,
@@ -208,14 +227,18 @@ export class ArenaClient {
     return (await this.request(`/lobby/rooms/${roomId}${joinToken ? `?token=${joinToken}` : ""}`)).body;
   }
 
-  /** 轮询等待开局，返回座位分配（官方轮询模板——r6 反馈：每个 agent 都在重造这个循环） */
+  /**
+   * 轮询等待开局，返回座位分配（官方轮询模板——r6 反馈：每个 agent 都在重造这个循环）。
+   * 默认超时 5 分钟（r7 ot7-h1：默认 Infinity 会让漏人的房间把参赛进程挂成僵尸）；
+   * 长于默认的等待请显式传 timeoutMs（Number.POSITIVE_INFINITY = 不设限）
+   */
   async waitForStart(
     roomId: string,
     joinToken: string,
     opts?: { pollMs?: number; timeoutMs?: number },
   ): Promise<{ matchId: string; seatId: SeatId; seatToken: string }> {
     const pollMs = opts?.pollMs ?? 2000;
-    const deadline = opts?.timeoutMs !== undefined ? Date.now() + opts.timeoutMs : Number.POSITIVE_INFINITY;
+    const deadline = Date.now() + (opts?.timeoutMs !== undefined ? opts.timeoutMs : 300_000);
     for (;;) {
       const r = await this.roomStatus(roomId, joinToken);
       if (r.status === "started" && typeof r.match_id === "string" && typeof r.seat_token === "string") {
@@ -273,12 +296,11 @@ export class MatchHandle {
     const body: Record<string, unknown> = { action };
     if (opts?.reasoning) body.reasoning = opts.reasoning.slice(0, 500);
     if (opts?.nonce) body.nonce = opts.nonce.slice(0, 64);
-    const res = await fetch(this.client.url + `/api/v1/matches/${this.matchId}/actions`, {
+    const res = await fetchGuarded(this.client.url + `/api/v1/matches/${this.matchId}/actions`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-seat-token": this.seatToken },
-      signal: AbortSignal.timeout(this.client.requestTimeoutMs),
       body: JSON.stringify(body),
-    });
+    }, this.client.requestTimeoutMs);
     let r: Record<string, unknown>;
     try {
       r = (await res.json()) as Record<string, unknown>;

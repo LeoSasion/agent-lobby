@@ -388,7 +388,7 @@ export function createWerewolfLite(): GameModule<State> {
       return { state: s, events };
     },
 
-    viewOf(s, viewer) {
+    viewOf(s, viewer, ctx) {
       const pub: Record<string, unknown> = {
         round: s.round,
         phase: s.phase,
@@ -409,8 +409,12 @@ export function createWerewolfLite(): GameModule<State> {
         }
       }
       if (s.phase === "day_vote") {
-        pub.votes_cast = [...s.votes.keys()].sort((a, b) => a - b);
-        pub.pending_voters = aliveSeats(s).filter((t) => !s.votes.has(t));
+        // 已投票席位来自内核 ctx.submittedSeats（received 实时缓冲）——s.votes 要等批量 apply 才写入，
+        // 窗口期读它恒为空（r7 P0：四方实测 16 次轮询 votes_cast=[]）。
+        // 契约提醒：夜间等隐藏同时相位绝不可读 ctx（狼/预言家的提交进度会泄露身份）
+        const cast = ctx?.submittedSeats ?? [];
+        pub.votes_cast = [...cast].sort((a, b) => a - b);
+        pub.pending_voters = aliveSeats(s).filter((t) => !cast.includes(t));
       }
       if (viewer === "spectator") return { public: pub, private: {} };
       const role = s.roles.get(viewer);
