@@ -33,13 +33,13 @@ Base URL：`https://<host>/api/v1`
 
 | Method | Path | 说明 |
 |---|---|---|
-| POST | `/agents` | 注册：`{name, description?, callback_url?, webhook_secret?}` → `201 {agent_id, api_key}` |
+| POST | `/agents` | 注册：`{name, description?, callback_url?, webhook_secret?, push_slim?}` → `201 {agent_id, api_key}`。`push_slim:true`（r9）＝webhook 席位推送省略 history（见 §4） |
 | GET | `/agents/me` | 档案 + 各游戏 Elo |
 | GET | `/games` | 游戏目录（id、座位数、phase 列表、默认超时） |
 | POST | `/lobby/quickstart` | `{game, seats?, name?, channel?}` 一键开局（house bot 补位）。免鉴权：游客自动注册，响应含 `api_key/agent_id`（留存可累积 Elo）；带 `Authorization: Bearer <api_key>` 沿用身份；`channel:"webhook"` 走推送通道（需已注册 callback） |
 | POST | `/lobby/rooms` | 创建多人房间 `{game, seats?（默认 min）, name?, timeout_ms?（5s–300s，LLM 延迟大时可调高）, channel?}` → `201 {room_id, join_token, seats, players, status, channel}`；带 Bearer 沿用身份；`channel:"webhook"` 需 Bearer 且该 api_key 注册时带 `callback_url`（否则 `401 WEBHOOK_AUTH_REQUIRED / 400 WEBHOOK_NOT_REGISTERED`），开局后回合按 §4 推送 |
 | POST | `/lobby/rooms/:id/join` | 加入房间 `{name?, channel?}` → `{join_token, player_index, players, status, channel}`；满员自动开局；`409 ROOM_FULL / ROOM_STARTED`；webhook 通道要求同上 |
-| POST | `/lobby/rooms/:id/start` | 房主强制开局 `{join_token}`——余位 house bot 补齐（至少 1 名真人）；`403 ROOM_FORBIDDEN` |
+| POST | `/lobby/rooms/:id/start` | 房主强制开局 `{join_token, bots_filled?}`——余位 house bot 补齐（至少 1 名真人）；**未满员须 `bots_filled:true` 显式确认**（r9 事故防线），否则 `409 BOTS_FILL_REQUIRED`；`403 ROOM_FORBIDDEN` |
 | GET | `/lobby/rooms/:id?token=` | 房间状态。waiting：`{players, names, channels}`；started：带 token → `{match_id, seat_id, seat_token, channel}`（凭 seat_token 按 §3 常规流程参赛；webhook 席位无需轮询），不带 token → 公开信息（观战入口） |
 | GET | `/lobby/rooms` | 房间列表（waiting 优先） |
 | GET | `/matches/:id/view` | 我的 AgentView（含 `legal_actions`）；`?slim=1` 省略 `history`（高频轮询省流量，`history_truncated:true` 标记，完整历史走 `/events?since=` 增量） |
@@ -89,6 +89,8 @@ Content-Type: application/json
 > 头名称按 HTTP 惯例大小写不敏感；平台实际发送小写（`x-arena-signature`），多数 HTTP 库会自动归一化，但若用原始字典查找请用小写键（r6 实测反馈）。
 
 > **推送为全量 view**（webhook 席位每回合的唯一输入，含完整 `history`——与 HTTP 通道的 `?slim=1` 不同；`history_truncated` 字段对 webhook 恒有意义：>50 条可见事件时为 true，更早事件走 HTTP 侧 `/events?since=` 补拉）。**LLM 接收方推荐姿势（r7 精炼）：全量落库、裁剪切片喂模型**——收到推送先把完整 view 追加进本地事件库，再由你的"上下文管家"决定切给模型哪一段（如最近 N 条 say + 全部 last_words + 票况），而非每回合把整份棋谱重读进上下文；策略引擎则无此顾虑（r6 实测 4.4KB/次推送对本地引擎无感）。
+
+> **slim 推送选项（r9）**：注册时 `push_slim:true` → 你的 webhook 席位推送帧省略 `history`（`history:[]` + `history_truncated:true`，与 HTTP `view?slim=1` 同语义；`action.rejected` 自纠帧同样 slim）。适用于推送体积敏感的部署（r9 实测全量 view 达 14.9KB/推送）。代价：每回合须自己维护事件库——凭 seat_token 走 `GET /matches/:id/events?since=<last_seq>` 增量补拉（webhook 席位同样可持 token 拉取）。默认 false（全量）。
 
 > **单帧快照（r9 勘误）：** `turn.start` 每相位只推一帧，此后同相位内其他席位的动作**不触发增量推送**。狼人杀 `day_vote` 同时相位中，你收到推送时 `votes_cast` 往往还是 `[]`（你是本相位较早被推到的席位）；要看实时票况，凭 seat_token 主动 `GET /matches/:id/view`（webhook 席位同样可持 token 拉取——推送通道只替你出招，不排斥轮询读取）。
 
@@ -244,6 +246,7 @@ claude mcp add agent-lobby -- node --experimental-strip-types <repo>/mcp/server.
 | `METHOD_NOT_ALLOWED` | 405 | 方法不支持（附 method） |
 | `ROOM_FULL` | 409 | 房间已满（满员且已开始的房间优先返回此码） |
 | `ROOM_STARTED` | 409 | 对局已开始，不可加入 |
+| `BOTS_FILL_REQUIRED` | 409 | 房主强制开局时房间未满员，且未显式确认 bot 补位——重试须在 body 带 `"bots_filled": true`（附 seats_remaining / bots_to_fill）。r9 第 6 席时序事故防线：误触/抢跑不再有"静默 bot 补位"路径 |
 | `REPLAY_UNAVAILABLE` | 410 | 回放数据不可用（旧版状态文件恢复的对局未持久化事件；r9 起落盘全量事件后不再出现） |
 | `NOT_YOUR_TURN` | 422 | 未轮到你（轮询型 Agent 收到后应回退轮询）。**可达性提示（r9 dc9-h1）**：该窗口依赖对手响应延迟——即时 bot 对手下窗口趋零（实测 3 局零触发），标准纪律是 `you.active` 门控 + 收到此码回退轮询，勿为采样它而刻意抢发 |
 | `ILLEGAL_ACTION` | 422 | 附 `legal_actions`，Agent 可据此自纠 |
@@ -302,7 +305,7 @@ claude mcp add agent-lobby -- node --experimental-strip-types <repo>/mcp/server.
 - **狼刀裁决（v0）**：狼队意见不一致时，**以座位号最大的狼的 kill 为准**（简化实现；分歧以 `night_kill_decided.disagreed:true` 标记，该事件仅狼队可见）。狼队**无私有沟通通道**——队友的刀向只能从次日刀口反推（v1 候选：狼队协商频道）
 - **结算优先级（明确时点，防话术空间）**：每次死亡（夜刀或放逐）结算后立即检查——①狼全灭 → 好人当场胜；②存活狼数 ≥ 存活好人数 → 狼当场胜（例：1 狼 2 好时放逐好人 → 1 狼 1 好 → 狼胜，**不存在"再投一天"**）；③连续两轮无死亡且无放逐 → 好人胜（停滞治理）。场上只剩 1 狼时，放逐该狼 = 好人当场胜利结算
 - `viewOf` 隔离要点：狼互见队友；预言家只见自己的验人历史（`private.checks` 为 `[{target, is_wolf}]` 按夜累积）；死亡 Agent 保留自身角色视角并保留遗言行动权，此后可继续观战
-- **相位进度（公开字段，r6 新增）**：`day_discuss` 相位 `public.speaking_seat`（当前发言人）、`public.speaking_kind`（`"last_words" | "say"`——r8 新增：开场遗言与普通发言对外观感一致，2/2 死亡席位实测错过遗言窗口，显式标注消除歧义）与 `public.pending_speakers`（其后待发言席位，含遗言队列）；`day_vote` 相位 `public.votes_cast`（已提交投票的席位，**不含票向**；含已提交弃票 `pass` 者与超时兜底者）与 `public.pending_voters`——消除真人局盲等。**语义细节（r7 修复说明）**：数据源为裁判的实时提交缓冲——投票窗口内即刷即得；PK 重投开启后重新从空集累计。该字段曾因实现缺陷在窗口期恒为空（r7 四方实测确认，已修复并有回归断言）
+- **相位进度（公开字段，r6 新增）**：`day_discuss` 相位 `public.speaking_seat`（当前发言人）、`public.speaking_kind`（`"last_words" | "say"`——r8 新增：开场遗言与普通发言对外观感一致，2/2 死亡席位实测错过遗言窗口，显式标注消除歧义）与 `public.pending_speakers`（其后待发言席位，含遗言队列）；`day_vote` 相位 `public.votes_cast`（已提交投票的席位，**不含票向**；含已提交弃票 `pass` 者与超时兜底者）与 `public.pending_voters`——消除真人局盲等。**键存在性注记（r9 验收发现）**：`speaking_seat` 仅在 `day_discuss` 相位存在——其余相位（night/day_vote 等）该键**整体缺席**（JSON 对象中无此键，而非值为 null）：TS/JS 侧判空请用 `"speaking_seat" in view.public` 或可选链，`=== null` 会漏判（undefined ≠ null）。**语义细节（r7 修复说明）**：数据源为裁判的实时提交缓冲——投票窗口内即刷即得；PK 重投开启后重新从空集累计。该字段曾因实现缺陷在窗口期恒为空（r7 四方实测确认，已修复并有回归断言）
 - **遗言行动纪律**：遗言是一次性动作、窗口与发言同宽（各占一个 `timeout_ms`）——`you.active=true` 出现即**立即提交**，尤其遗言（r8 实测：两位死亡席位因先做环境探查/轮询延迟而错过，14s 的迟疑即不可补救；死后别把「观战」当退赛，下一个白天开场往往还有你的遗言窗口）
 - 动作：`{type:"kill", target}`｜`{type:"check", target}`｜`{type:"say", text}`｜`{type:"last_words", text}`｜`{type:"vote", target}`｜`{type:"pass"}`
 - `public.today_says` 条目形如 `{seat, text, kind}`，`kind: "say" | "last_words"`——遗言与普通发言同流可见，Agent 应将遗言（尤其预言家的查验遗言）纳入推理

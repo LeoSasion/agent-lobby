@@ -104,8 +104,8 @@ interface RoomPlayer {
   name: string;
   agentId: string;
   channel: "http" | "webhook";
-  /** webhook 通道的回调（加入时凭 Bearer api_key 解析） */
-  callback?: { url: string; secret: string };
+  /** webhook 通道的回调（加入时凭 Bearer api_key 解析；slim=推送省略 history） */
+  callback?: { url: string; secret: string; slim?: boolean };
   seat: SeatId | null;
   seatToken: string | null;
 }
@@ -125,7 +125,7 @@ interface Room {
 
 export class Gateway {
   private games = new Map<string, GameModule<unknown>>();
-  private agents = new Map<string, { agent_id: string; name: string; callback_url?: string; webhook_secret?: string }>();
+  private agents = new Map<string, { agent_id: string; name: string; callback_url?: string; webhook_secret?: string; push_slim?: boolean }>();
   private matches = new Map<string, RunningMatch>();
   private rooms = new Map<string, Room>();
   private ratings = new RatingStore();
@@ -214,7 +214,7 @@ export class Gateway {
     try {
       const data = JSON.parse(raw) as {
         ratings?: Record<string, Record<string, { rating: number; games: number; wins: number; draws: number; losses: number }>>;
-        agents?: Record<string, { agent_id: string; name: string; callback_url?: string; webhook_secret?: string }>;
+        agents?: Record<string, { agent_id: string; name: string; callback_url?: string; webhook_secret?: string; push_slim?: boolean }>;
         agentNames?: Record<string, string>;
         matches?: {
           match_id: string;
@@ -288,7 +288,7 @@ export class Gateway {
           "GET  /api/v1/lobby/rooms               多人房间列表",
           "POST /api/v1/lobby/rooms               创建房间 {game, seats?, name?, timeout_ms?, channel?}",
           "POST /api/v1/lobby/rooms/:id/join      加入房间 {name?, channel?}（channel=webhook 需 Bearer + 已注册 callback_url）",
-          "POST /api/v1/lobby/rooms/:id/start     房主强制开局（余位 bot 补位）{join_token}",
+          "POST /api/v1/lobby/rooms/:id/start     房主强制开局（余位 bot 补位）{join_token}——未满员须另带 bots_filled:true 确认（r9 事故防线）",
           "GET  /api/v1/lobby/rooms/:id?token=    房间状态（带 join_token 获取座位分配）",
           "GET  /api/v1/matches                   最近对局列表",
           "GET  /api/v1/matches/:id/view",
@@ -307,12 +307,15 @@ export class Gateway {
       const apiKey = "sk_" + randomId("");
       const callbackUrl = typeof body.callback_url === "string" ? body.callback_url : undefined;
       const webhookSecret = callbackUrl ? "whsec_" + randomId("") : undefined;
+      // r9 backlog：webhook 推送 slim 选项（wh9-h1 实测全量 view 14.9KB/推送）——true 时 turn.start 不带 history
+      const pushSlim = body.push_slim === true;
       const agentId = "a_" + randomId("");
       this.agents.set(apiKey, {
         agent_id: agentId,
         name,
         callback_url: callbackUrl,
         webhook_secret: webhookSecret,
+        push_slim: callbackUrl ? pushSlim : undefined,
       });
       return this.json(res, 201, {
         agent_id: agentId,
@@ -320,6 +323,7 @@ export class Gateway {
         name,
         callback_url: callbackUrl ?? null,
         webhook_secret: webhookSecret ?? null,
+        push_slim: callbackUrl ? pushSlim : null,
       });
     }
     // GET /agents/me：档案 + 各游戏 Elo（r9 dc9-d1/dc9-d2/dc9-h1/w9-s2 四方报告：文档 §3.1 承诺但 404）
@@ -340,6 +344,7 @@ export class Gateway {
         agent_id: known.agent_id,
         name: known.name,
         callback_url: known.callback_url ?? null,
+        push_slim: known.callback_url ? known.push_slim === true : null,
         ratings,
       });
     }
@@ -486,6 +491,7 @@ export class Gateway {
           url: known!.callback_url!,
           secret: known!.webhook_secret!,
           timeoutMs: Math.max(1000, game.meta.defaultTimeoutMs - 500),
+          slim: known!.push_slim === true,
         })
       : new HttpSeatDriver(agentName);
     const human: SeatDriver = humanDriver;
@@ -600,7 +606,7 @@ export class Gateway {
     body: Record<string, unknown>,
   ):
     | { ok: true; channel: "http" }
-    | { ok: true; channel: "webhook"; callback: { url: string; secret: string } }
+    | { ok: true; channel: "webhook"; callback: { url: string; secret: string; slim?: boolean } }
     | { ok: false; status: number; code: string; message: string } {
     if (body.channel !== "webhook") return { ok: true, channel: "http" };
     const auth = typeof req.headers.authorization === "string"
@@ -623,7 +629,7 @@ export class Gateway {
         message: "该 api_key 注册时未提供 callback_url，无法走 webhook 通道；请重新 POST /agents 并携带 callback_url",
       };
     }
-    return { ok: true, channel: "webhook", callback: { url: known.callback_url, secret: known.webhook_secret } };
+    return { ok: true, channel: "webhook", callback: { url: known.callback_url, secret: known.webhook_secret, slim: known.push_slim === true } };
   }
 
   /** 创建多人房间（创建者即 1 号候选人；满员自动开局） */
@@ -730,6 +736,15 @@ export class Gateway {
         return this.err(res, 403, "ROOM_FORBIDDEN", "仅房主可强制开局");
       }
       if (room.status === "started") return this.err(res, 409, "ROOM_STARTED", "对局已开始");
+      // r9 第 6 席时序事故防线（VERDICT-r9 §4 教训 3）：未满员强制开局须显式确认——
+      // 房主误触/抢跑不再有"静默 bot 补位"路径，编排方也能以 409 为信号继续等待
+      const emptySeats = room.seats - room.players.length;
+      if (emptySeats > 0 && body.bots_filled !== true) {
+        return this.err(res, 409, "BOTS_FILL_REQUIRED",
+          `房间未满员（还差 ${emptySeats} 席）——强制开局将以 house bot 补齐，须显式传 {"bots_filled": true} 确认`,
+          { room_id: roomId, seats_remaining: emptySeats, bots_to_fill: emptySeats,
+            hint: '确认补位请重试并在 body 带 {"bots_filled": true}；或等待真人满员自动开局（GET 本房间可看 seats_remaining）' });
+      }
       const ok = this.tryStartRoom(room, true);
       if (!ok) return this.err(res, 500, "ROOM_START_FAILED", "开局失败（服务端内部错误）");
       const me = room.players[0]!;
@@ -762,6 +777,7 @@ export class Gateway {
             url: p.callback.url,
             secret: p.callback.secret,
             timeoutMs: Math.max(1000, (room.timeoutMs ?? game.meta.defaultTimeoutMs) - 500),
+            slim: p.callback.slim === true,
           })
         : new HttpSeatDriver(p.name),
     );

@@ -17,6 +17,8 @@ export interface WebhookDriverOptions {
   url: string;
   secret: string;
   timeoutMs: number;
+  /** r9 backlog：slim 推送——turn.start 不带 history（与 HTTP 通道 view?slim=1 同语义；历史走 /events?since= 补拉） */
+  slim?: boolean;
 }
 
 export class WebhookSeatDriver implements SeatDriver {
@@ -24,16 +26,20 @@ export class WebhookSeatDriver implements SeatDriver {
   private readonly url: string;
   private readonly secret: string;
   private readonly timeoutMs: number;
+  private readonly slim: boolean;
 
   constructor(opts: WebhookDriverOptions) {
     this.name = opts.name;
     this.url = opts.url;
     this.secret = opts.secret;
     this.timeoutMs = opts.timeoutMs;
+    this.slim = opts.slim === true;
   }
 
   async act(view: AgentView, submit: (a: Action, opts?: { reasoning?: string; nonce?: string }) => SubmitResult): Promise<void> {
-    let payload: Record<string, unknown> = { event: "turn.start", view };
+    // slim 席位：推送帧省略 history（wh9-h1 实测全量 14.9KB/推送；完整历史由 Agent 凭 seat_token 走 /events?since= 增量补拉）
+    const pushView: AgentView = this.slim ? { ...view, history: [], history_truncated: true } : view;
+    let payload: Record<string, unknown> = { event: "turn.start", view: pushView };
     // r9 wh9-h2【高】修复：delivery id 必须在 attempt 循环外生成——重试时 id 不变（文档 §4 去重承诺），
     // 原实现写在循环体内导致每次重试换 id，去重键失效
     const deliveryId = "d-" + Math.random().toString(36).slice(2, 12);

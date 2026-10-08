@@ -112,14 +112,21 @@ async function main(): Promise<void> {
   const full = await post(`/lobby/rooms/${roomId}/join`, { name: "late-bird" });
   check("ROOM_FULL 409", full.status === 409 && String(full.body.error).startsWith("ROOM_FULL"), `code=${String(full.body.error ?? "").slice(0, 24)}`);
 
-  // —— 场景 3：房主强制开局，余位 bot 补齐 ——
-  console.log("\n[场景 3] 房主强制开局 · bot 补位");
+  // —— 场景 3：房主强制开局（r9 防线：未满员须显式确认 bot 补位）——
+  console.log("\n[场景 3] 房主强制开局 · bots_filled 确认防线");
   const w = await post("/lobby/rooms", { game: "werewolf_lite", name: "lone-wolf-host" });
   const wRoom = String(w.body.room_id);
   const wToken = String(w.body.join_token);
-  const st = await post(`/lobby/rooms/${wRoom}/start`, { join_token: wToken });
+  const st0 = await post(`/lobby/rooms/${wRoom}/start`, { join_token: wToken });
   check(
-    "1 真人 + 5 bot 强制开局",
+    "未满员 start 无确认 → 409 BOTS_FILL_REQUIRED",
+    st0.status === 409 && String(st0.body.error).startsWith("BOTS_FILL_REQUIRED") &&
+      st0.body.seats_remaining === 5 && st0.body.bots_to_fill === 5,
+    `code=${String(st0.body.error ?? "").slice(0, 20)} · remaining=${String(st0.body.seats_remaining)}`,
+  );
+  const st = await post(`/lobby/rooms/${wRoom}/start`, { join_token: wToken, bots_filled: true });
+  check(
+    "带 bots_filled:true → 1 真人 + 5 bot 强制开局",
     st.status === 200 && st.body.status === "started" && st.body.bots_filled === 5 && st.body.seat_id === 1,
     `bots=${String(st.body.bots_filled)}`,
   );

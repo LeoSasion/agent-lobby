@@ -145,6 +145,46 @@ const timedOut2 = r2res.events.filter((e) => e.type === "timed_out" && (e.data a
 check("flaky 席位无超时兜底（5xx 均被重试救回）", timedOut2 === 0, `${timedOut2} 次`);
 flakyServer.close();
 
+// —— r9 backlog：slim 推送选项——注册 push_slim:true 的席位推送帧省略 history（wh9-h1 实测全量 14.9KB/推送）
+console.log("\n[场景 3] slim 推送（push_slim 席位 history 恒空）");
+let slimFrames = 0;
+let slimViolations = 0; // history 非空或未标 truncated 的帧数
+const slimServer = createServer((req, res) => {
+  const chunks: Buffer[] = [];
+  req.on("data", (c: Buffer) => chunks.push(c));
+  req.on("end", () => {
+    const body = Buffer.concat(chunks).toString("utf8");
+    const payload = JSON.parse(body) as { event?: string; view?: AgentView };
+    if (payload.event === "turn.start" || payload.event === "action.rejected") {
+      slimFrames++;
+      const hist = payload.view?.history ?? [];
+      if (hist.length > 0 || payload.view?.history_truncated !== true) slimViolations++;
+      const action = decideDice(payload.view!);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ action }));
+      return;
+    }
+    res.writeHead(200);
+    res.end("{}");
+  });
+});
+await new Promise<void>((r3) => slimServer.listen(8897, "127.0.0.1", r3));
+const slimDriver = new WebhookSeatDriver({
+  name: "slim-agent",
+  url: "http://127.0.0.1:8897/",
+  secret: SECRET,
+  timeoutMs: 5000,
+  slim: true,
+});
+const r3res = await createMatch({
+  game: createLiarsDice(),
+  drivers: [slimDriver, createRuleBot("对手bot3", 0.5)],
+  seed: 11,
+}).run();
+check("slim 席位推送帧 history 恒空且标记 truncated", slimFrames > 0 && slimViolations === 0, `${slimFrames} 帧全部 slim`);
+check("slim 推送路径对局完整", Object.values(r3res.scores).some((v) => v === 1), "");
+slimServer.close();
+
 agentServer.close();
 console.log(`\n=== 结果：${failed === 0 ? "全部通过" : failed + " 项失败"} ===`);
 if (failed > 0) process.exitCode = 1;

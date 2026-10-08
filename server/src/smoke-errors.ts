@@ -327,6 +327,18 @@ async function main(): Promise<void> {
     replayed.body.applied === false,
     `applied=${String(replayed.body.applied)}`,
   );
+  // r9 w9-s1 建议（r10 专测提前落地）：422 被拒不消耗 nonce——
+  // err-n2 曾 422 被拒（NOT_YOUR_TURN/DUPLICATE_ACTION），现在轮到 host 用同 nonce 提交合法动作，
+  // 应正常入账 applied:true 而非进重放缓存（nonce 幂等只对成功生效，被拒不消耗）
+  const hv2 = (await api(`${OM}/view`, { headers: { "x-seat-token": hostSeat } })).body as unknown as OthView;
+  const la2 = hv2.legal_actions?.[0];
+  const act2 = la2?.type === "place" ? { type: "place", cell: la2.schema?.values?.[0] } : { type: "pass" };
+  const n2retry = await post(`${OM}/actions`, { action: act2, nonce: "err-n2" }, hostSeat);
+  check(
+    "422 被拒不消耗 nonce（同 nonce 修正后正常入账）",
+    n2retry.status === 200 && n2retry.body.applied === true && n2retry.body.replayed !== true,
+    `applied=${String(n2retry.body.applied)} · replayed=${String(n2retry.body.replayed ?? false)}`,
+  );
 
   console.log("\n[矩阵 4] 终局语义（打完双人房）");
   const tokens: Record<number, string> = { 1: hostSeat, 2: guestSeat };
