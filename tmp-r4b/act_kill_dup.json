@@ -1,2 +1,0 @@
-{"ok":false,"code":"ILLEGAL_ACTION","error":"ILLEGAL_ACTION：发言阶段仅可 say","legal_actions":[{"type":"say","schema":{"text":"string 1-500"},"hint":"公开发言"}]}
-HTTP 422
