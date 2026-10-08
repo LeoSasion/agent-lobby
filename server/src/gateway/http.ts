@@ -101,6 +101,9 @@ interface RoomPlayer {
   joinToken: string;
   name: string;
   agentId: string;
+  channel: "http" | "webhook";
+  /** webhook 通道的回调（加入时凭 Bearer api_key 解析） */
+  callback?: { url: string; secret: string };
   seat: SeatId | null;
   seatToken: string | null;
 }
@@ -264,8 +267,8 @@ export class Gateway {
           "GET  /api/v1/games",
           "POST /api/v1/lobby/quickstart",
           "GET  /api/v1/lobby/rooms               多人房间列表",
-          "POST /api/v1/lobby/rooms               创建房间 {game, seats?, name?}",
-          "POST /api/v1/lobby/rooms/:id/join      加入房间 {name?}",
+          "POST /api/v1/lobby/rooms               创建房间 {game, seats?, name?, timeout_ms?, channel?}",
+          "POST /api/v1/lobby/rooms/:id/join      加入房间 {name?, channel?}（channel=webhook 需 Bearer + 已注册 callback_url）",
           "POST /api/v1/lobby/rooms/:id/start     房主强制开局（余位 bot 补位）{join_token}",
           "GET  /api/v1/lobby/rooms/:id?token=    房间状态（带 join_token 获取座位分配）",
           "GET  /api/v1/matches/:id/view",
@@ -471,6 +474,36 @@ export class Gateway {
     return { agentId: "a_" + randomId(""), name: fallbackName };
   }
 
+  /** 房间通道解析：channel="webhook" 需 Bearer api_key 且注册时带 callback_url；缺省 http */
+  private roomChannelOf(
+    req: IncomingMessage,
+    body: Record<string, unknown>,
+  ):
+    | { ok: true; channel: "http" }
+    | { ok: true; channel: "webhook"; callback: { url: string; secret: string } }
+    | { ok: false; status: number; error: string } {
+    if (body.channel !== "webhook") return { ok: true, channel: "http" };
+    const auth = typeof req.headers.authorization === "string"
+      ? req.headers.authorization.replace(/^Bearer\s+/i, "")
+      : "";
+    const known = auth ? this.agents.get(auth) : undefined;
+    if (!known) {
+      return {
+        ok: false,
+        status: 401,
+        error: "WEBHOOK_AUTH_REQUIRED：channel=webhook 需 Authorization: Bearer <api_key>（注册 POST /agents 时须带 callback_url）",
+      };
+    }
+    if (!known.callback_url || !known.webhook_secret) {
+      return {
+        ok: false,
+        status: 400,
+        error: "WEBHOOK_NOT_REGISTERED：该 api_key 注册时未提供 callback_url，无法走 webhook 通道；请重新 POST /agents 并携带 callback_url",
+      };
+    }
+    return { ok: true, channel: "webhook", callback: { url: known.callback_url, secret: known.webhook_secret } };
+  }
+
   /** 创建多人房间（创建者即 1 号候选人；满员自动开局） */
   private roomCreate(req: IncomingMessage, res: ServerResponse): void {
     void (async () => {
@@ -484,6 +517,8 @@ export class Gateway {
         ? clamp(timeoutMsRaw, 5_000, 300_000)
         : undefined;
       const name = String(body.name ?? "host-" + randomId(""));
+      const ch = this.roomChannelOf(req, body);
+      if (!ch.ok) return this.json(res, ch.status, { error: ch.error });
       const me = this.identityOf(req, name);
       if (me.name === name && !body.name) this.agentNames.set(me.agentId, name);
       else this.agentNames.set(me.agentId, me.name);
@@ -493,7 +528,15 @@ export class Gateway {
         game: gameId,
         seats,
         status: "waiting",
-        players: [{ joinToken, name: me.name, agentId: me.agentId, seat: null, seatToken: null }],
+        players: [{
+          joinToken,
+          name: me.name,
+          agentId: me.agentId,
+          channel: ch.channel,
+          callback: ch.channel === "webhook" ? ch.callback : undefined,
+          seat: null,
+          seatToken: null,
+        }],
         creatorToken: joinToken,
         matchId: null,
         createdAt: Date.now(),
@@ -508,7 +551,10 @@ export class Gateway {
         seats,
         players: room.players.length,
         status: started ? "started" : "waiting",
-        hint: "其他人 POST /lobby/rooms/" + room.id + "/join 加入；满员自动开局。轮询 GET 本房间（带 join_token）获取座位分配。",
+        channel: ch.channel,
+        hint: ch.channel === "webhook"
+          ? "你是 webhook 通道：开局后回合将推送到你的 callback（x-arena-signature 验签），回 200 + {action, reasoning?}，无需轮询。"
+          : "其他人 POST /lobby/rooms/" + room.id + "/join 加入；满员自动开局。轮询 GET 本房间（带 join_token）获取座位分配。",
       });
     })().catch((e) => this.json(res, 500, { error: "INTERNAL", message: String(e) }));
   }
@@ -522,10 +568,20 @@ export class Gateway {
       if (room.status === "started") return this.json(res, 409, { error: "ROOM_STARTED：对局已开始", room_id: roomId });
       const body = await readJson(req);
       const name = String(body.name ?? "player-" + randomId(""));
+      const ch = this.roomChannelOf(req, body);
+      if (!ch.ok) return this.json(res, ch.status, { error: ch.error });
       const me = this.identityOf(req, name);
       this.agentNames.set(me.agentId, me.name);
       const joinToken = "jt_" + randomId("");
-      room.players.push({ joinToken, name: me.name, agentId: me.agentId, seat: null, seatToken: null });
+      room.players.push({
+        joinToken,
+        name: me.name,
+        agentId: me.agentId,
+        channel: ch.channel,
+        callback: ch.channel === "webhook" ? ch.callback : undefined,
+        seat: null,
+        seatToken: null,
+      });
       const started = this.tryStartRoom(room, false);
       return this.json(res, 200, {
         room_id: room.id,
@@ -534,7 +590,10 @@ export class Gateway {
         seats: room.seats,
         players: room.players.length,
         status: started ? "started" : "waiting",
-        hint: "轮询 GET /lobby/rooms/" + room.id + "?token=" + joinToken + " 直至 status=started，凭 seat_token 参赛。",
+        channel: ch.channel,
+        hint: ch.channel === "webhook"
+          ? "你是 webhook 通道：开局后回合将推送到你的 callback，无需轮询。"
+          : "轮询 GET /lobby/rooms/" + room.id + "?token=" + joinToken + " 直至 status=started，凭 seat_token 参赛。",
       });
     })().catch((e) => this.json(res, 500, { error: "INTERNAL", message: String(e) }));
   }
@@ -573,7 +632,17 @@ export class Gateway {
     if (bots > 0 && !fillWithBots) return false;
 
     const house = bots > 0 ? houseBotsFor(room.game, bots) : [];
-    const humanDrivers = room.players.map((p) => new HttpSeatDriver(p.name));
+    // 按通道构造驱动：webhook 席位由平台推送回合（拉取超时留 500ms 余量给内核超时裁判）
+    const humanDrivers: SeatDriver[] = room.players.map((p) =>
+      p.channel === "webhook" && p.callback
+        ? new WebhookSeatDriver({
+            name: p.name,
+            url: p.callback.url,
+            secret: p.callback.secret,
+            timeoutMs: Math.max(1000, (room.timeoutMs ?? game.meta.defaultTimeoutMs) - 500),
+          })
+        : new HttpSeatDriver(p.name),
+    );
     const drivers: SeatDriver[] = [...humanDrivers, ...house.map((h) => h.driver)];
     const match = createMatch({
       game,
@@ -596,7 +665,9 @@ export class Gateway {
     const seatTokens = new Map<string, SeatId>();
     for (const p of room.players) seatTokens.set(p.seatToken!, p.seat!);
     const httpDrivers = new Map<SeatId, HttpSeatDriver>();
-    humanDrivers.forEach((d, i) => httpDrivers.set(i + 1, d));
+    humanDrivers.forEach((d, i) => {
+      if (d instanceof HttpSeatDriver) httpDrivers.set(i + 1, d);
+    });
 
     const rm: RunningMatch = {
       match,
@@ -628,6 +699,7 @@ export class Gateway {
         seats: room.seats,
         players: room.players.length,
         names: room.players.map((p) => p.name),
+        channels: room.players.map((p) => p.channel),
       });
     }
     const token = url.searchParams.get("token");
@@ -648,6 +720,7 @@ export class Gateway {
       match_id: room.matchId,
       seat_id: me.seat,
       seat_token: me.seatToken,
+      channel: me.channel,
       seats: room.seats,
     });
   }
@@ -663,6 +736,7 @@ export class Gateway {
       status: r.status,
       match_id: r.matchId,
       names: r.players.map((p) => p.name),
+      channels: r.players.map((p) => p.channel),
     });
     const waiting = all.filter((r) => r.status === "waiting").slice(0, 20);
     const started = all.filter((r) => r.status === "started").slice(0, 10);
