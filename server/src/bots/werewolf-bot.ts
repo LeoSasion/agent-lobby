@@ -1,9 +1,13 @@
 /**
- * 狼人杀角色感知 House Bot —— 社交推理版
- * 升级点：
- *   1. 解析 today_says 中的预言家报查验，据此投票（村民跟查杀、狼人反跳）
- *   2. 狼人夜间优先刀已跳预言家的人
- *   3. 预言家报查验更清晰，投票带推理
+ * 狼人杀角色感知 House Bot —— 社交推理 + 人格化发言版
+ * 能力：
+ *   1. 人格化发言：6 人格（冷静/活跃/沉默/激进/温和/谨慎，与 registry WW_NAMES 对齐）
+ *      发言 = 情境语义核心（角色 × 场上态势 × 回合上下文）× 人格语气（垫语/句式/长短）
+ *   2. 遗言：预言家遗言公开全部查验（好人信息补偿）；村民/狼各有遗言话术
+ *   3. 解析 today_says 的报查验（含遗言中的查验），村民跟查杀、狼人反跳/搅局
+ *   4. 狼人夜间优先刀已跳预言家的人
+ * 确定性：所有模板选择走 hash(seat:round:情境) —— 不用 Math.random，同 seed 回放逐字一致
+ * 正则契约：报查验句式「验了 N 号，是狼人/是好人」；自证句式必含「不是狼」——不得拆散改写
  */
 
 import type { Action, AgentView } from "../protocol.ts";
@@ -20,7 +24,7 @@ interface WWPublic {
   round: number;
   phase: string;
   alive_seats: number[];
-  today_says: { seat: number; text: string }[];
+  today_says: { seat: number; text: string; kind?: string }[];
   last_day_says: { seat: number; text: string }[];
   pk_candidates: number[] | null;
 }
@@ -30,6 +34,18 @@ interface SeerClaim {
   checked: number;
   isWolf: boolean;
 }
+
+/** ---------- 确定性选择器（FNV-1a；同 key 恒同结果，保回放确定性） ---------- */
+function pick<T>(arr: T[], key: string): T {
+  let h = 2166136261;
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return arr[Math.abs(h) % arr.length];
+}
+
+/** ---------- 解析 ---------- */
 
 function parseSeerClaims(says: { seat: number; text: string }[]): SeerClaim[] {
   const claims: SeerClaim[] = [];
@@ -59,6 +75,61 @@ function hasCounterClaim(claims: SeerClaim[]): boolean {
   return false;
 }
 
+/** ---------- 人格语气库（index = bias % 6，与 registry WW_NAMES 对齐） ---------- */
+
+interface Persona {
+  /** 无信息填充话术：round 1 / round 2+ 各一组——这是最重复的场景，人格分化主战场 */
+  fillerR1: string[];
+  fillerR2: string[];
+  /** 语气垫语（可叠加在语义核心前；留空占比高，避免句句带帽子） */
+  openers: string[];
+}
+
+const PERSONAS: Persona[] = [
+  {
+    // 冷静：分析腔
+    fillerR1: ["我是平民。目前公开信息有限，我倾向听完所有人发言再做判断。", "平民。第一天没有查验就是最大的信息，谁急着带节奏谁才可疑。"],
+    fillerR2: ["我是平民。局面在收敛，我把昨天的发言和今天的遗言对照过了，暂时不站边。", "平民视角：存活人数越少，每一票越重。我不投没有证据的人。"],
+    openers: ["从场面看，", "理性地说，", ""],
+  },
+  {
+    // 活跃：热场腔
+    fillerR1: ["大家好呀，我是普通村民！第一晚信息还很少，期待预言家站出来给信息！", "村民报到！昨晚的事大家都看到了吧，谁有查验赶紧说，别憋着！"],
+    fillerR2: ["我是村民！场上人越来越少了，都别藏着掖着，有信息快摊开讲！", "嗨，还在的各位！我是好人，这轮必须投出个狼来，别再空过一天！"],
+    openers: ["说真的，", "我直讲了啊——", ""],
+  },
+  {
+    // 沉默：短句腔
+    fillerR1: ["平民。先听。", "我好人。信息少，过。"],
+    fillerR2: ["平民。还在听。", "好人。投票前给个查验，否则我弃。"],
+    openers: ["", "", ""],
+  },
+  {
+    // 激进：推进腔
+    fillerR1: ["我是平民，别磨蹭——有查验就快点报，没有今天谁也别想混过去！", "平民。我话放这：第一天不敢表态的人，晚上最该被盯。"],
+    fillerR2: ["我是好人，别再拖了！每空一轮狼就多刀一个，今天必须投出结果！", "平民。我都听够了，没有查验就全凭发言投票，谁虚谁出局！"],
+    openers: ["我不想绕弯子，", "直接说——", ""],
+  },
+  {
+    // 温和：软化腔
+    fillerR1: ["我是好人哈，大家慢慢说，我都听着呢，别吵起来～", "平民一枚。第一天嘛，互相多包容，信息明天自然就出来了。"],
+    fillerR2: ["我是好人哈。虽然局势紧，但也请大家别互相误伤，投票前多想一下～", "平民。大家都不容易，把信息摊开讲清楚，别凭感觉投人。"],
+    openers: ["我个人觉得，", "这么说吧，", ""],
+  },
+  {
+    // 谨慎：对冲腔
+    fillerR1: ["我是平民……信息太少了，我先不站边，再观察一轮。", "好人。第一天的发言我都不敢全信，包括遗言，先留个心眼。"],
+    fillerR2: ["我是平民……现在下结论还太早，我保守起见跟大方向，不带头。", "好人。局势扑朔迷离，我建议投票以查验为准，没查验宁可不投。"],
+    openers: ["我拿不太准，", "保守一点讲，", ""],
+  },
+];
+
+/** 语义核心前叠加人格垫语（契约短语不被拆散：垫语只出现在整句前） */
+function flavor(p: Persona, core: string, key: string): string {
+  const opener = pick(p.openers, key + "|op");
+  return opener + core;
+}
+
 function done(
   submit: (a: Action, opts?: { reasoning?: string }) => { ok: boolean },
   action: Action,
@@ -67,19 +138,23 @@ function done(
 }
 
 export function createWerewolfBot(name: string, bias = 0): SeatDriver {
+  const persona = PERSONAS[((bias % PERSONAS.length) + PERSONAS.length) % PERSONAS.length];
   return {
     name,
     act: async (view: AgentView, submit) => {
       const priv = view.private as unknown as WWPrivate;
       const pub = view.public as unknown as WWPublic;
       const role = priv.role ?? "villager";
+      const me = view.you.seat;
+      const round = pub.round ?? 1;
       const la = view.legal_actions;
       const values = (t: string): number[] =>
         ((la.find((a) => a.type === t)?.schema?.values ?? []) as unknown[]).filter(
           (v): v is number => typeof v === "number",
         );
+      const k = (ctx: string): string => `${me}:${round}:${ctx}`;
 
-      // 夜间：狼出刀（升级：优先刀已跳预言家的——看昨日发言）
+      // 夜间：狼出刀（优先刀已跳预言家的——含昨日发言与今日遗言）
       if (la.some((a) => a.type === "kill")) {
         const targets = values("kill");
         if (targets.length === 0) return done(submit, { type: "pass" });
@@ -100,40 +175,102 @@ export function createWerewolfBot(name: string, bias = 0): SeatDriver {
         return done(submit, { type: "check", target: t });
       }
 
-      // 白天发言
+      // 遗言：预言家公开全部查验（信息补偿核心）；狼搅局；村民托付
+      if (la.some((a) => a.type === "last_words")) {
+        if (role === "seer") {
+          const cs = priv.checks ?? [];
+          if (cs.length === 0) {
+            return done(submit, {
+              type: "last_words",
+              text: "我是预言家……还没来得及验人。请大家警惕今天跳预言家的人，别让狼白刀我一场。",
+            });
+          }
+          const detail = cs.map((c) => `验了 ${c.target} 号，${c.is_wolf ? "是狼人" : "是好人"}`).join("；");
+          return done(submit, {
+            type: "last_words",
+            text: `我是预言家，这是我的遗言：我${detail}。好人阵营请记住这些信息，别让狼人白刀我。`,
+          });
+        }
+        if (role === "werewolf") {
+          return done(submit, {
+            type: "last_words",
+            text: pick(
+              [
+                "行，你们投吧。我是好人，投错我也不怪你们——反正狼今晚还会动手。",
+                "我是普通村民……你们会后悔的。好人都沉默，狼在笑。",                "遗言就一句：带我走的人，今晚盯紧他。",
+              ],
+              k("lw-wolf"),
+            ),
+          });
+        }
+        return done(submit, {
+          type: "last_words",
+          text: pick(
+            [
+              "我平民一个，死得冤。别浪费我的遗言——把票投给真正可疑的人。",
+              "我是好人……希望我的死能让你们看清谁是狼。",
+              "平民遗言：别内耗，狼在看笑话。跟住查验信息。",
+            ],
+            k("lw-villager"),
+          ),
+        });
+      }
+
+      // 白天发言：情境 → 语义核心；人格 → 语气
       if (la.some((a) => a.type === "say")) {
         const claims = parseSeerClaims(pub.today_says ?? []);
-        const me = view.you.seat;
+        const hasLW = (pub.today_says ?? []).some((s) => s.kind === "last_words");
+
         if (role === "seer") {
           const cs = priv.checks ?? [];
           const c = cs[cs.length - 1];
-          const text = c
-            ? `我是预言家，昨晚验了 ${c.target} 号，${c.is_wolf ? "是狼人！" : "是好人。"}请大家认准我的查验。`
-            : "我是预言家，昨晚没有验人。";
-          return done(submit, { type: "say", text });
+          if (!c) {
+            return done(submit, { type: "say", text: "我是预言家，昨晚没有验人。信息后续补上，请大家先稳住。" });
+          }
+          const verdict = c.is_wolf ? "是狼人！" : "是好人。";
+          const core = pick(
+            [
+              `我是预言家。昨晚验了 ${c.target} 号，${verdict}这一票请大家跟我走。`,
+              `预言家在此。我的查验：昨晚验了 ${c.target} 号，${verdict}之后每晚我都会更新信息。`,
+              `听好——我是预言家，昨晚验了 ${c.target} 号，${verdict}请记下这条信息再投票。`,
+            ],
+            k("seer-claim"),
+          );
+          return done(submit, { type: "say", text: flavor(persona, core, k("seer-claim")) });
         }
+
         if (role === "werewolf") {
           const mates = new Set(priv.teammates ?? []);
           const killTarget = claims.find((c) => c.isWolf && mates.has(c.checked));
           if (killTarget) {
-            return done(submit, {
-              type: "say",
-              text: `${killTarget.claimant} 号这个预言家查得太准了，可疑。我是个平民，${killTarget.claimant} 号可能是狼悍跳。`,
-            });
+            const core = pick(
+              [
+                `我是个平民。${killTarget.claimant} 号这个"预言家"查得也太准了吧？我反而怀疑他是狼悍跳，${killTarget.checked} 号先别急着定罪。`,
+                `有点意思，${killTarget.claimant} 号一跳就查杀，矛头直指 ${killTarget.checked} 号。真预言家会这么巧？我保留意见。`,
+                `我是好人。这查验我不信——${killTarget.claimant} 号在带节奏，大家小心，别被一句话送走好人。`,
+              ],
+              k("wolf-deflect"),
+            );
+            return done(submit, { type: "say", text: flavor(persona, core, k("wolf-deflect")) });
           }
-          return done(submit, {
-            type: "say",
-            text: `我是个平民。现在 ${pub.alive_seats.length} 人存活，我认为信息太少，先听大家怎么说。`,
-          });
+          const filler = round <= 1 ? persona.fillerR1 : persona.fillerR2;
+          return done(submit, { type: "say", text: pick(filler, k("wolf-filler")) });
         }
-        // 村民：被查杀 → 自证清白（不自认！）
+
+        // 村民：被查杀 → 自证清白（契约：必含"不是狼"）
         const accusedMe = claims.find((c) => c.isWolf && c.checked === me);
         if (accusedMe) {
-          return done(submit, {
-            type: "say",
-            text: `${accusedMe.claimant} 号查杀我，我不是狼！我是好人，${accusedMe.claimant} 号可能是狼悍跳带偏节奏。`,
-          });
+          const core = pick(
+            [
+              `${accusedMe.claimant} 号查杀我？我不是狼！我是好人，${accusedMe.claimant} 号八成是狼悍跳，大家别被带偏。`,
+              `我真的不是狼。${accusedMe.claimant} 号这个查验有假——好人不要自相残杀，今天该查的是他。`,
+              `被查杀了，我只能再说一次：我不是狼。真预言家若有别的查验，请立刻站出来对信息。`,
+            ],
+            k("v-defend"),
+          );
+          return done(submit, { type: "say", text: flavor(persona, core, k("v-defend")) });
         }
+
         // 村民：评估跳报可信度
         const allSays = pub.today_says ?? [];
         const counterClaim = hasCounterClaim(claims);
@@ -142,28 +279,48 @@ export function createWerewolfBot(name: string, bias = 0): SeatDriver {
         );
         if (credibleKill) {
           if (counterClaim) {
-            return done(submit, {
-              type: "say",
-              text: `有对跳，${credibleKill.claimant} 号和被查杀的 ${credibleKill.checked} 号各执一词，我先观望再投票。`,
-            });
+            const core = pick(
+              [
+                `有对跳，${credibleKill.claimant} 号和被查杀的 ${credibleKill.checked} 号各执一词，必有至少一狼。我先各听一轮，票不慌投。`,
+                `对跳局面最忌乱投：${credibleKill.claimant} 号与 ${credibleKill.checked} 号里藏狼，今天的信息还不够定罪。`,
+                `${credibleKill.claimant} 号、${credibleKill.checked} 号互指——典型对跳。我观望，谁露破绽投谁。`,
+              ],
+              k("v-counter"),
+            );
+            return done(submit, { type: "say", text: flavor(persona, core, k("v-counter")) });
           }
           if (explicitSelfDefense(allSays, credibleKill.checked)) {
-            return done(submit, {
-              type: "say",
-              text: `${credibleKill.claimant} 号查杀 ${credibleKill.checked} 号，但对方否认了。证据不够充分，我保持怀疑。`,
-            });
+            const core = pick(
+              [
+                `${credibleKill.claimant} 号查杀 ${credibleKill.checked} 号，但对方明确否认了。单方面查验不足为凭，我再看看。`,
+                `${credibleKill.checked} 号不认这个查杀，${credibleKill.claimant} 号也没第二验佐证。证据不够，我保持怀疑。`,
+              ],
+              k("v-skeptic"),
+            );
+            return done(submit, { type: "say", text: flavor(persona, core, k("v-skeptic")) });
           }
-          return done(submit, {
-            type: "say",
-            text: `我认可 ${credibleKill.claimant} 号预言家的查验，${credibleKill.checked} 号是狼，请大家跟票放逐。`,
-          });
+          const core = pick(
+            [
+              `我认可 ${credibleKill.claimant} 号的查验，${credibleKill.checked} 号是狼。今天这票请大家集中放逐，别分散。`,
+              `信 ${credibleKill.claimant} 号。${credibleKill.checked} 号是狼，跟票，别让查验信息浪费掉。`,
+              `${credibleKill.claimant} 号敢跳就有底气。我跟他：${credibleKill.checked} 号，出局。`,
+            ],
+            k("v-endorse"),
+          );
+          return done(submit, { type: "say", text: flavor(persona, core, k("v-endorse")) });
         }
-        return done(submit, { type: "say", text: "我是好人。昨天场上发生的事我需要再想想，谨慎投票。" });
+
+        // 无信息填充：round 1 / round 2+ 人格话术；今日有遗言时部分话术呼应
+        const filler = round <= 1 ? persona.fillerR1 : persona.fillerR2;
+        let text = pick(filler, k("v-filler"));
+        if (hasLW && round <= 1) {
+          text = "刚听完遗言，更觉得不能乱投。我是好人，先跟住查验信息，再看大家发言。" + text;
+        }
+        return done(submit, { type: "say", text });
       }
 
       // 投票
       if (la.some((a) => a.type === "vote")) {
-        const me = view.you.seat;
         const mates = new Set(priv.teammates ?? []);
         const targets = values("vote").filter((t) => t !== me);
         const claims = parseSeerClaims(pub.today_says ?? []);
@@ -185,14 +342,15 @@ export function createWerewolfBot(name: string, bias = 0): SeatDriver {
           if (wolf) return done(submit, { type: "vote", target: wolf.target });
         }
 
-        // 村民/预言家：投票——默认跟查杀；仅强证据（对跳+被查杀者明确自证）时反投跳报者
+        // 村民/预言家：默认跟查杀；仅强证据（对跳+被查杀者明确自证）时反投跳报者
         const allSaysForVote = pub.today_says ?? [];
         const counterClaimForVote = hasCounterClaim(claims);
         const credibleKillForVote = claims.find(
           (c) => c.isWolf && c.checked !== me && pub.alive_seats.includes(c.checked),
         );
         if (credibleKillForVote) {
-          const strongEvidence = counterClaimForVote && explicitSelfDefense(allSaysForVote, credibleKillForVote.checked);
+          const strongEvidence =
+            counterClaimForVote && explicitSelfDefense(allSaysForVote, credibleKillForVote.checked);
           return done(submit, {
             type: "vote",
             target: strongEvidence ? credibleKillForVote.claimant : credibleKillForVote.checked,

@@ -92,10 +92,8 @@ export class Match {
   private state!: unknown;
   private finished = false;
   private lastPhaseKey = "";
-  private acting = new Set<SeatId>();
   private received = new Map<SeatId, Action>();
   private reasons = new Map<SeatId, string>();
-  private lastNonces = new Map<SeatId, string>();
   private nonceOwners = new Map<string, SeatId>();
   private turnDeadline: number | null = null;
   private result: MatchResult | null = null;
@@ -202,12 +200,11 @@ export class Match {
   }
 
   private async step(active: SeatId[]): Promise<void> {
-    this.acting = new Set(active);
-    this.received = new Map();
-    this.reasons = new Map();
     this.turnDeadline = Date.now() + this.timeoutMs + (this.firstStep ? this.graceMs : 0);
     this.firstStep = false;
-    await Promise.all(active.map((seat) => this.drive(seat)));
+    // 相位间隙已提前提交的座位直接入账，不再挂起等待
+    const toDrive = active.filter((seat) => !this.received.has(seat));
+    await Promise.all(toDrive.map((seat) => this.drive(seat)));
     // 超时兜底：未提交者执行游戏默认动作（并校验其合法性——这是游戏模块的契约）
     for (const seat of active) {
       if (!this.received.has(seat)) {
@@ -242,6 +239,11 @@ export class Match {
         this.gameEvents.push({ type: ev.type, data: ev.data ?? {} });
       }
     }
+    // 回合收尾：清空缓冲并解除执法时限。此后状态已推进，新相位的行动者
+    // 可立即提前提交（trySubmit 按 activeSeats 放行），消除 NOT_YOUR_TURN 窗口
+    this.received = new Map();
+    this.reasons = new Map();
+    this.turnDeadline = null;
   }
 
   /** acted/timed_out 的脱敏钩子：在动作应用前、以动作发生时的状态调用（相位正确） */
@@ -296,7 +298,9 @@ export class Match {
       }
     }
 
-    if (!this.acting.has(seat)) return { ok: false, error: "NOT_YOUR_TURN", legal_actions: [] };
+    if (!this.game.activeSeats(this.state).includes(seat)) {
+      return { ok: false, error: "NOT_YOUR_TURN", legal_actions: [] };
+    }
     if (this.received.has(seat)) {
       return { ok: false, error: "NONCE_REUSED：本回合已接受动作（无 nonce 重试）", legal_actions: [] };
     }
@@ -310,7 +314,6 @@ export class Match {
     }
     this.received.set(seat, action);
     if (opts?.nonce !== undefined) {
-      this.lastNonces.set(seat, opts.nonce);
       this.nonceOwners.set(opts.nonce, seat);
     }
     if (typeof opts?.reasoning === "string" && opts.reasoning.length > 0) {

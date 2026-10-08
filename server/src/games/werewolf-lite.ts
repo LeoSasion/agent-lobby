@@ -1,10 +1,12 @@
 /**
  * 狼人杀·简化版（werewolf_lite）—— 平台灵魂游戏
  * 6 席：2 狼 / 3 民 / 1 预言家
- * 阶段循环：night（同时相位：狼刀 + 验人）→ day_discuss（顺序发言）
+ * 阶段循环：night（同时相位：狼刀 + 验人）→ day_discuss（遗言开场 → 顺序发言）
  *   → day_vote（同时相位：投票放逐，平票 PK 重投，PK 再平无人出局）→ 下一夜
+ * 遗言：夜亡者与白天被放逐者在次日白天开场依次公开讲 last_words
+ *   （真预言家首夜被刀后查验信息不湮灭——好人阵营的信息补偿机制）
  * 信息隔离：角色/队友/验人结果仅入 private；狼刀决策事件仅狼可见；
- *   死亡席位保留自身角色视角但不再行动；终局 game_won 公开全部身份
+ *   死亡席位保留自身角色视角并保留遗言行动权；终局 game_won 公开全部身份
  */
 
 import type { Action, LegalAction, SeatId, Viewer } from "../protocol.ts";
@@ -27,7 +29,7 @@ interface State {
   nightActions: Map<SeatId, NightAction>;
   sayQueue: SeatId[];
   sayIndex: number;
-  todaySays: { seat: SeatId; text: string }[];
+  todaySays: { seat: SeatId; text: string; kind?: "say" | "last_words" }[];
   votes: Map<SeatId, SeatId | null>;
   seerChecks: { target: SeatId; is_wolf: boolean }[];
   winner: "good" | "wolves" | null;
@@ -35,6 +37,11 @@ interface State {
   roundHadKill: boolean;
   pkCandidates: SeatId[] | null;
   lastSays: { seat: SeatId; text: string }[];
+  /** 待讲遗言席位累积（夜亡 + 白天被放逐），次日白天开场依次讲出 */
+  pendingLW: SeatId[];
+  /** 今日开场遗言队列（座位序）与游标 */
+  lwQueue: SeatId[];
+  lwIndex: number;
 }
 
 function aliveSeats(s: State): SeatId[] {
@@ -89,6 +96,7 @@ function tryResolveNight(s: State, events: GameEvent[], rng: Rng): void {
   events.push({ type: "night_kill_decided", data: { target }, visibility: { seats: wolves } });
   if (target !== null) {
     s.alive.set(target, false);
+    s.pendingLW.push(target); // 夜亡者次日留遗言（真预言家的查验不随死亡湮灭）
     events.push({ type: "player_died", data: { seat: target, cause: "night" } });
   }
   s.roundHadKill = target !== null;
@@ -111,6 +119,10 @@ function tryResolveNight(s: State, events: GameEvent[], rng: Rng): void {
 
   if (checkWin(s, events)) return;
   s.phase = "day_discuss";
+  // 开场遗言：累积的死者按座位序依次讲，随后存活者依序发言
+  s.lwQueue = [...s.pendingLW].sort((a, b) => a - b);
+  s.lwIndex = 0;
+  s.pendingLW = [];
   s.sayQueue = aliveSeats(s);
   s.sayIndex = 0;
   s.todaySays = [];
@@ -153,6 +165,7 @@ function tryResolveVote(s: State, events: GameEvent[]): void {
   s.pkCandidates = null;
   if (exiled !== null) {
     s.alive.set(exiled, false);
+    s.pendingLW.push(exiled); // 被放逐者亦留遗言（次日白天开场讲出）
     events.push({ type: "player_died", data: { seat: exiled, cause: "vote" } });
   }
   if (checkWin(s, events)) return;
@@ -210,6 +223,9 @@ export function createWerewolfLite(): GameModule<State> {
         roundHadKill: false,
         pkCandidates: null,
         lastSays: [],
+        pendingLW: [],
+        lwQueue: [],
+        lwIndex: 0,
       };
     },
 
@@ -224,7 +240,11 @@ export function createWerewolfLite(): GameModule<State> {
     activeSeats(s) {
       if (s.phase === "finished") return [];
       if (s.phase === "night") return nightActors(s);
-      if (s.phase === "day_discuss") return [s.sayQueue[s.sayIndex]];
+      if (s.phase === "day_discuss") {
+        // 开场遗言优先（死者依次讲），随后存活者依序发言
+        if (s.lwIndex < s.lwQueue.length) return [s.lwQueue[s.lwIndex]];
+        return [s.sayQueue[s.sayIndex]];
+      }
       return aliveSeats(s); // day_vote
     },
 
@@ -250,6 +270,11 @@ export function createWerewolfLite(): GameModule<State> {
       }
 
       if (s.phase === "day_discuss") {
+        if (s.lwIndex < s.lwQueue.length) {
+          return s.lwQueue[s.lwIndex] === seat
+            ? [{ type: "last_words", schema: { text: "string 1-500" }, hint: "遗言（公开）" }]
+            : [];
+        }
         return s.sayQueue[s.sayIndex] === seat
           ? [{ type: "say", schema: { text: "string 1-500" }, hint: "公开发言" }]
           : [];
@@ -291,6 +316,17 @@ export function createWerewolfLite(): GameModule<State> {
       }
 
       if (s.phase === "day_discuss") {
+        if (s.lwIndex < s.lwQueue.length) {
+          if (s.lwQueue[s.lwIndex] !== seat) return { ok: false, error: "NOT_YOUR_TURN：未到其遗言" };
+          if (action.type === "last_words") {
+            const text = action.text;
+            if (typeof text !== "string" || text.length < 1 || text.length > 500) {
+              return { ok: false, error: "ILLEGAL_ACTION：text 须为 1-500 字符" };
+            }
+            return { ok: true };
+          }
+          return { ok: false, error: "ILLEGAL_ACTION：遗言阶段仅可 last_words" };
+        }
         if (s.sayQueue[s.sayIndex] !== seat) return { ok: false, error: "NOT_YOUR_TURN：未到你发言" };
         if (action.type === "say") {
           const text = action.text;
@@ -324,13 +360,21 @@ export function createWerewolfLite(): GameModule<State> {
         });
         tryResolveNight(s, events, rng);
       } else if (s.phase === "day_discuss") {
-        const text = String(action.text ?? "");
-        s.todaySays.push({ seat, text });
-        events.push({ type: "said", data: { seat, text } });
-        s.sayIndex += 1;
-        if (s.sayIndex >= s.sayQueue.length) {
-          s.phase = "day_vote";
-          s.votes = new Map();
+        if (s.lwIndex < s.lwQueue.length) {
+          // 遗言：入公开 today_says（kind 标记），bots/观众可据此推理
+          const text = String(action.text ?? "");
+          s.todaySays.push({ seat, text, kind: "last_words" });
+          events.push({ type: "last_words", data: { seat, text } });
+          s.lwIndex += 1;
+        } else {
+          const text = String(action.text ?? "");
+          s.todaySays.push({ seat, text, kind: "say" });
+          events.push({ type: "said", data: { seat, text } });
+          s.sayIndex += 1;
+          if (s.sayIndex >= s.sayQueue.length) {
+            s.phase = "day_vote";
+            s.votes = new Map();
+          }
         }
       } else if (s.phase === "day_vote") {
         s.votes.set(seat, action.type === "vote" ? (action.target as SeatId) : null);
@@ -364,7 +408,10 @@ export function createWerewolfLite(): GameModule<State> {
 
     timeoutAction(s) {
       // 夜间超时一律 pass（空刀/不验）：绝不替狼队抢刀权；比赛推进由停滞治理兜底
-      if (s.phase === "day_discuss") return { type: "say", text: "（沉默）" };
+      if (s.phase === "day_discuss") {
+        if (s.lwIndex < s.lwQueue.length) return { type: "last_words", text: "（沉默离世，未留遗言）" };
+        return { type: "say", text: "（沉默）" };
+      }
       return { type: "pass" };
     },
 

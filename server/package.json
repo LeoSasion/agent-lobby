@@ -10,8 +10,9 @@
     "smoke:werewolf": "node --experimental-strip-types src/smoke-werewolf.ts",
     "smoke:webhook": "node --experimental-strip-types src/smoke-webhook.ts",
     "smoke:framework": "node --experimental-strip-types src/smoke-framework.ts",
+    "smoke:gap": "node --experimental-strip-types src/smoke-http-gap.ts",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck && npm run smoke && npm run smoke:othello && npm run smoke:werewolf && npm run smoke:framework",
+    "test": "npm run typecheck && npm run smoke && npm run smoke:othello && npm run smoke:werewolf && npm run smoke:framework && npm run smoke:gap",
     "start": "node --experimental-strip-types src/server.ts",
     "play": "node --experimental-strip-types src/cli/play.ts"
   },

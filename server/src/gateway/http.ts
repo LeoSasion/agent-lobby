@@ -28,12 +28,19 @@ import { houseBotsFor } from "../bots/registry.ts";
 import { WebhookSeatDriver } from "./webhook.ts";
 import { randomId, withTimeout } from "../util.ts";
 
-/** HTTP Pull 座位驱动：act() 挂起等待，直到 Agent 经 POST /actions 提交（或超时兜底） */
+/** HTTP Pull 座位驱动：act() 挂起等待，直到 Agent 经 POST /actions 提交（或超时兜底）。
+ *  相位切换间隙（上一回合已结算、新回合 step 尚未开启）收到的提交先落地缓冲，
+ *  新回合开启时立即入账——消除轮询型 Agent 的 NOT_YOUR_TURN 窗口 */
 class HttpSeatDriver implements SeatDriver {
   readonly name: string;
   private pending: {
     submit: (a: Action, opts?: { reasoning?: string; nonce?: string }) => SubmitResult;
     resolve: () => void;
+  } | null = null;
+  private early: {
+    action: Action;
+    opts?: { reasoning?: string; nonce?: string };
+    resolve: (r: SubmitResult) => void;
   } | null = null;
 
   constructor(name: string) {
@@ -42,20 +49,38 @@ class HttpSeatDriver implements SeatDriver {
 
   act(_view: AgentView, submit: (a: Action, opts?: { reasoning?: string; nonce?: string }) => SubmitResult): Promise<void> {
     return new Promise<void>((resolve) => {
+      if (this.early) {
+        const e = this.early;
+        this.early = null;
+        const r = submit(e.action, e.opts);
+        e.resolve(r);
+        if (r.ok) resolve();
+        else this.pending = { submit, resolve }; // 提交失败：结果已还给 POST 等待者，继续等待修正后的动作
+        return;
+      }
       this.pending = { submit, resolve };
     });
   }
 
-  handleAction(action: Action, opts?: { reasoning?: string; nonce?: string }): SubmitResult {
-    if (!this.pending) {
-      return { ok: false, error: "NOT_YOUR_TURN：当前无待提交回合", legal_actions: [] };
+  handleAction(action: Action, opts?: { reasoning?: string; nonce?: string }): Promise<SubmitResult> {
+    if (this.pending) {
+      const r = this.pending.submit(action, opts);
+      if (r.ok) {
+        this.pending.resolve();
+        this.pending = null;
+      }
+      return Promise.resolve(r);
     }
-    const r = this.pending.submit(action, opts);
-    if (r.ok) {
-      this.pending.resolve();
-      this.pending = null;
+    if (this.early) {
+      return Promise.resolve({
+        ok: false,
+        error: "DUPLICATE_ACTION：本回合已提前接受动作，请等待结算",
+        legal_actions: [],
+      });
     }
-    return r;
+    return new Promise<SubmitResult>((resolve) => {
+      this.early = { action, opts, resolve };
+    });
   }
 }
 
@@ -624,19 +649,33 @@ export class Gateway {
       if (!driver) {
         return this.json(res, 403, { error: "SEAT_INVALID：该席位走 Webhook 通道，不经此端点出招" });
       }
+      // 未轮到的席位立即拒绝（保留即时反馈）；相位间隙（active=true 但 step 未开）
+      // 交给驱动缓冲——新回合开启时自动入账，消除轮询型 Agent 的 NOT_YOUR_TURN 窗口
+      if (rm.match.isFinished()) {
+        return this.json(res, 422, { ok: false, code: "MATCH_FINISHED", error: "MATCH_FINISHED", legal_actions: [] });
+      }
+      const probe = rm.match.viewFor(seat);
+      if (!probe.you.active) {
+        return this.json(res, 422, {
+          ok: false,
+          code: "NOT_YOUR_TURN",
+          error: "NOT_YOUR_TURN：当前不轮到该席位行动",
+          legal_actions: probe.legal_actions,
+        });
+      }
       const body = await readJson(req);
       const action = (body.action ?? body) as Action;
       const opts: { reasoning?: string; nonce?: string } = {};
       if (typeof body.reasoning === "string") opts.reasoning = body.reasoning.slice(0, 500);
       if (typeof body.nonce === "string") opts.nonce = body.nonce.slice(0, 64);
-      const r = driver.handleAction(action, opts);
+      const r = await driver.handleAction(action, opts);
       if (r.ok) {
         const view = rm.match.viewFor(seat);
         return this.json(res, 200, { ok: true, view });
       }
       const code =
-        ["MATCH_FINISHED", "NOT_YOUR_TURN", "NONCE_REUSED", "ILLEGAL_ACTION", "SEAT_INVALID"].find((c) =>
-          String(r.error).startsWith(c),
+        ["MATCH_FINISHED", "NOT_YOUR_TURN", "NONCE_REUSED", "DUPLICATE_ACTION", "ILLEGAL_ACTION", "SEAT_INVALID"].find(
+          (c) => String(r.error).startsWith(c),
         ) ?? "UNKNOWN";
       return this.json(res, 422, { ok: false, code, error: r.error, legal_actions: r.legal_actions });
     }

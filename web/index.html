@@ -278,6 +278,8 @@ function evText(e) {
     case "passed": return `${d.seat}号虚着`;
     case "board_full": return `棋盘下满 ${d.black} : ${d.white}`;
     case "said": return `${d.seat}号：${esc(d.text)}`;
+    case "last_words": return `【遗言】${d.seat}号：${esc(d.text)}`;
+    case "vote_pk": return `平票 PK！候选：${(d.candidates ?? []).join("、")} 号 —— 全员仅可在候选中重投`;
     case "vote_result": return `计票 ${esc(JSON.stringify(d.tally))} → ${d.exiled != null ? d.exiled + "号被放逐" : "无人出局"}`;
     case "player_died": return `${d.seat}号出局（${d.cause === "night" ? "夜间遇害" : "投票放逐"}）`;
     case "night_kill_decided": return `【狼队】刀口 → ${d.target != null ? d.target + "号" : "空刀"}（私有事件，仅狼可见）`;
@@ -290,6 +292,7 @@ function evText(e) {
 }
 function evClass(e) {
   if (e.type === "said") return "ev say";
+  if (e.type === "last_words") return "ev say";
   if (e.type === "phase_started" || e.type === "round_started") return "ev sys";
   if (e.type === "game_won" || e.type === "match_ended") return "ev win";
   return "ev";
@@ -685,7 +688,7 @@ function renderWolf(v, box, interactive) {
     html += `</div>`;
   }
   if (p.today_says && p.today_says.length) {
-    html += `<div class="says">` + p.today_says.map((s) => `<div class="line"><span class="who">${s.seat}号</span>${esc(s.text)}</div>`).join("") + `</div>`;
+    html += `<div class="says">` + p.today_says.map((s) => `<div class="line"><span class="who">${s.seat}号${s.kind === "last_words" ? " · 遗言" : ""}</span>${esc(s.text)}</div>`).join("") + `</div>`;
   }
   if (interactive) {
     box.innerHTML = html + `<div class="act-area"></div>`;
@@ -715,6 +718,7 @@ function renderActions(v, box) {
     if (kill) html += `<div class="arow"><span class="dlab">狼刀</span>${kill.schema.values.map((t) => `<button class="mini" onclick="act({type:'kill',target:${t}})">${t}号</button>`).join("")}<button class="mini" onclick="act({type:'pass'})">空刀</button></div>`;
     if (check) html += `<div class="arow"><span class="dlab">查验</span>${check.schema.values.map((t) => `<button class="mini" onclick="act({type:'check',target:${t}})">${t}号</button>`).join("")}<button class="mini" onclick="act({type:'pass'})">不验</button></div>`;
     if (types.includes("say")) html += `<div class="arow"><textarea id="say-text" rows="2" style="flex:1"></textarea><button class="btn" onclick="act({type:'say',text:$('#say-text').value})">发言</button></div>`;
+    if (types.includes("last_words")) html += `<div class="arow"><textarea id="lw-text" rows="2" style="flex:1" placeholder="你的遗言将公开，把握好最后的信息权…"></textarea><button class="btn" onclick="act({type:'last_words',text:$('#lw-text').value})">留遗言</button></div>`;
     if (vote) html += `<div class="arow"><span class="dlab">投票</span>${vote.schema.values.map((t) => `<button class="mini" onclick="act({type:'vote',target:${t}})">${t}号</button>`).join("")}<button class="mini" onclick="act({type:'pass'})">弃票</button></div>`;
   }
   box.innerHTML = html || `<div class="kv">…</div>`;
