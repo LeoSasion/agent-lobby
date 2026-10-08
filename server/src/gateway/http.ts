@@ -395,7 +395,7 @@ export class Gateway {
   private quickstart(req: IncomingMessage, body: Record<string, unknown>, res: ServerResponse): void {
     const gameId = String(body.game ?? "liars_dice");
     const game = this.games.get(gameId);
-    if (!game) return this.err(res, 404, "GAME_NOT_FOUND", `游戏 ${gameId} 不存在（可用游戏见 GET /api/v1/games）`, { game: gameId });
+    if (!game) return this.err(res, 404, "GAME_NOT_FOUND", `游戏 ${gameId} 不存在（可用游戏见 GET /api/v1/games）`, { game: gameId, path: "/api/v1/lobby/quickstart", hint: "游戏 id 见 GET /api/v1/games" });
     const total = clamp(Number(body.seats ?? game.meta.minSeats), game.meta.minSeats, game.meta.maxSeats);
 
     // 选手身份：Bearer api_key（老选手）或自动创建游客（返回 api_key 便于留存身份）
@@ -562,7 +562,7 @@ export class Gateway {
       const body = await readJson(req);
       const gameId = String(body.game ?? "");
       const game = this.games.get(gameId);
-      if (!game) return this.err(res, 404, "GAME_NOT_FOUND", `游戏 ${gameId} 不存在（可用游戏见 GET /api/v1/games）`, { game: gameId });
+      if (!game) return this.err(res, 404, "GAME_NOT_FOUND", `游戏 ${gameId} 不存在（可用游戏见 GET /api/v1/games）`, { game: gameId, path: "/api/v1/lobby/rooms", hint: "游戏 id 见 GET /api/v1/games" });
       const seats = clamp(Number(body.seats ?? game.meta.minSeats), game.meta.minSeats, game.meta.maxSeats);
       const timeoutMsRaw = Number(body.timeout_ms);
       const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0
@@ -615,7 +615,7 @@ export class Gateway {
   private roomJoin(roomId: string, req: IncomingMessage, res: ServerResponse): void {
     void (async () => {
       const room = this.rooms.get(roomId);
-      if (!room) return this.err(res, 404, "ROOM_NOT_FOUND", "房间不存在或已过期", { room_id: roomId });
+      if (!room) return this.err(res, 404, "ROOM_NOT_FOUND", "房间不存在或已过期", { room_id: roomId, path: `/api/v1/lobby/rooms/${roomId}/join`, hint: "room_id 有误或已过期；房间列表见 GET /api/v1/lobby/rooms" });
       if (room.players.length >= room.seats) return this.err(res, 409, "ROOM_FULL", "房间已满", { room_id: roomId });
       if (room.status === "started") return this.err(res, 409, "ROOM_STARTED", "对局已开始，不可加入", { room_id: roomId });
       const body = await readJson(req);
@@ -654,7 +654,7 @@ export class Gateway {
   private roomStart(roomId: string, req: IncomingMessage, res: ServerResponse): void {
     void (async () => {
       const room = this.rooms.get(roomId);
-      if (!room) return this.err(res, 404, "ROOM_NOT_FOUND", "房间不存在或已过期", { room_id: roomId });
+      if (!room) return this.err(res, 404, "ROOM_NOT_FOUND", "房间不存在或已过期", { room_id: roomId, path: `/api/v1/lobby/rooms/${roomId}/start`, hint: "room_id 有误或已过期；仅房主可强制开局" });
       const body = await readJson(req);
       if (String(body.join_token ?? "") !== room.creatorToken) {
         return this.err(res, 403, "ROOM_FORBIDDEN", "仅房主可强制开局");
@@ -747,7 +747,7 @@ export class Gateway {
   /** 房间状态：waiting 公开人数；started 凭 join_token 换座位分配 */
   private roomStatus(roomId: string, url: URL, res: ServerResponse): void {
     const room = this.rooms.get(roomId);
-    if (!room) return this.err(res, 404, "ROOM_NOT_FOUND", "房间不存在或已过期", { room_id: roomId });
+    if (!room) return this.err(res, 404, "ROOM_NOT_FOUND", "房间不存在或已过期", { room_id: roomId, path: `/api/v1/lobby/rooms/${roomId}`, hint: "room_id 有误或已过期；房间列表见 GET /api/v1/lobby/rooms" });
     if (room.status === "waiting") {
       return this.json(res, 200, {
         room_id: room.id,
@@ -930,7 +930,7 @@ export class Gateway {
   private sseStream(matchId: string, req: IncomingMessage, res: ServerResponse): void {
     const rm = this.matches.get(matchId);
     if (!rm) {
-      return this.err(res, 404, "MATCH_NOT_FOUND", "对局不存在或已过期", { match_id: matchId });
+      return this.err(res, 404, "MATCH_NOT_FOUND", "对局不存在或已过期", { match_id: matchId, path: `/api/v1/matches/${matchId}/stream`, hint: "match_id 有误或已过期；房间对局的 match_id 从 GET /api/v1/lobby/rooms/:id?token= 换取" });
     }
     const token = req.headers["x-seat-token"];
     const seat = typeof token === "string" ? rm.seatTokens.get(token) : undefined;
@@ -992,7 +992,7 @@ export class Gateway {
   /** 回放步骤：重放到指定事件序号，返回该时刻指定视角的 AgentView（视角切换回放的服务端基础） */
   private replayStep(matchId: string, url: URL, req: IncomingMessage, res: ServerResponse): void {
     const rm = this.matches.get(matchId);
-    if (!rm) return this.err(res, 404, "MATCH_NOT_FOUND", "对局不存在或已过期", { match_id: matchId });
+    if (!rm) return this.err(res, 404, "MATCH_NOT_FOUND", "对局不存在或已过期", { match_id: matchId, path: `/api/v1/matches/${matchId}/replay/step`, hint: "match_id 有误或已过期；房间对局的 match_id 从 GET /api/v1/lobby/rooms/:id?token= 换取" });
     const game = this.games.get(rm.gameId);
     if (!game) return this.err(res, 500, "GAME_NOT_FOUND", "游戏模块未注册（服务端配置错误）");
     const all = rm.match.rawEvents();
@@ -1052,7 +1052,7 @@ export class Gateway {
     res: ServerResponse,
   ): Promise<void> {
     const rm = this.matches.get(matchId);
-    if (!rm) return this.err(res, 404, "MATCH_NOT_FOUND", "对局不存在或已过期", { match_id: matchId });
+    if (!rm) return this.err(res, 404, "MATCH_NOT_FOUND", "对局不存在或已过期", { match_id: matchId, path: `/api/v1/matches/${matchId}/${op}`, hint: "match_id 有误或已过期；房间对局的 match_id 从 GET /api/v1/lobby/rooms/:id?token= 换取" });
     const token = req.headers["x-seat-token"];
     const seat = typeof token === "string" ? rm.seatTokens.get(token) : undefined;
     // seat_token 无效时不静默降级为观战——agent 不易察觉配置错误

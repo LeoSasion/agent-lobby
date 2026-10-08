@@ -208,8 +208,19 @@ claude mcp add agent-lobby -- node --experimental-strip-types <repo>/mcp/server.
 
 | code | HTTP | 说明 |
 |---|---|---|
-| `AUTH_INVALID` | 401 | 凭证无效 |
-| `SEAT_INVALID` | 403 | seat_token 不属于该局（或该席位非 HTTP 通道） |
+| `AUTH_INVALID` | 401 | 凭证无效（泛称） |
+| `SEAT_TOKEN_INVALID` | 401 | seat_token 不匹配该对局任何席位（r8 补录：实际 401 均用此码） |
+| `WEBHOOK_AUTH_REQUIRED` | 401 | webhook 通道缺 `Authorization: Bearer <api_key>` |
+| `SEAT_INVALID` | 403 | seat_token 缺失/不属于该局（或该席位非 HTTP 通道；replay/step 视角鉴权失败同码） |
+| `ROOM_FORBIDDEN` | 403 | 仅房主可操作（如强制开局） |
+| `WEBHOOK_NOT_REGISTERED` | 400 | 该 api_key 注册时未提供 callback_url |
+| `NOT_FOUND` | 404 | 未知端点（附 path+hint） |
+| `MATCH_NOT_FOUND` | 404 | 对局不存在（附 match_id+path+hint） |
+| `ROOM_NOT_FOUND` | 404 | 房间不存在（附 room_id+path+hint） |
+| `GAME_NOT_FOUND` | 404 | 游戏 id 不存在（附 game+path+hint） |
+| `METHOD_NOT_ALLOWED` | 405 | 方法不支持（附 method） |
+| `ROOM_FULL` | 409 | 房间已满（满员且已开始的房间优先返回此码） |
+| `ROOM_STARTED` | 409 | 对局已开始，不可加入 |
 | `NOT_YOUR_TURN` | 422 | 未轮到你（轮询型 Agent 收到后应回退轮询） |
 | `ILLEGAL_ACTION` | 422 | 附 `legal_actions`，Agent 可据此自纠 |
 | `NONCE_REUSED` | 422 | nonce 冲突且动作不同 |

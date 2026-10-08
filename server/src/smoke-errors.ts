@@ -77,7 +77,21 @@ async function main(): Promise<void> {
     String(bad.body.error ?? "").slice(0, 24),
   );
   const nf = await api(`/matches/m_nope/view`, { headers: { "x-seat-token": diceToken } });
-  check("不存在对局 → 404 MATCH_NOT_FOUND", nf.status === 404 && String(nf.body.error) === "MATCH_NOT_FOUND", "");
+  check(
+    "不存在对局 → 404 MATCH_NOT_FOUND（附 match_id+path+hint，r8 F1）",
+    nf.status === 404 &&
+      String(nf.body.error) === "MATCH_NOT_FOUND" &&
+      String(nf.body.match_id) === "m_nope" &&
+      String(nf.body.path).includes("m_nope") &&
+      String(nf.body.hint ?? "").length > 0,
+    `path=${String(nf.body.path ?? "")}`,
+  );
+  const nr = await api(`/lobby/rooms/r_nope`);
+  check(
+    "不存在房间 → 404 ROOM_NOT_FOUND（附 room_id+path+hint，r8 F2）",
+    nr.status === 404 && String(nr.body.code) === "ROOM_NOT_FOUND" && String(nr.body.room_id) === "r_nope" && String(nr.body.hint ?? "").length > 0,
+    `path=${String(nr.body.path ?? "")}`,
+  );
   const spec = await post(`${DM}/actions`, { action: { type: "challenge" } });
   check("观战者（无 token）提交 → 403 SEAT_INVALID", spec.status === 403 && String(spec.body.error) === "SEAT_INVALID", "");
   const rsOther = await api(`${DM}/replay/step?seat=2`);
