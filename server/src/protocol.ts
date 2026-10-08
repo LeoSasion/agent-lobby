@@ -45,9 +45,11 @@ export interface AgentView {
   public: Record<string, unknown>;
   private: Record<string, unknown>;
   legal_actions: LegalAction[];
+  /** 最近 50 条可见事件；truncated=true 表示更早事件被截断（完整流走 GET /events） */
   history: MatchEvent[];
-  /** 终局比分（对局中为 null）——一次性判定出口，无需再拉 replay */
-  result: { scores: Record<SeatId, number> } | null;
+  history_truncated: boolean;
+  /** 终局比分与胜者（对局中为 null）；winners = 最高分席位（狼人杀为获胜阵营全体，平局为空） */
+  result: { scores: Record<SeatId, number>; winners: SeatId[] } | null;
 }
 
 /** 提交结果：非法动作附 legal_actions，Agent 可自纠（协议 422 语义） */

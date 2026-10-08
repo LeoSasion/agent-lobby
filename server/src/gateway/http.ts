@@ -96,10 +96,33 @@ interface RunningMatch {
   headline: string | null;
 }
 
+/** 多人房间：真人选手按加入顺序定座，满员自动开局（房主可强制开局并 bot 补位） */
+interface RoomPlayer {
+  joinToken: string;
+  name: string;
+  agentId: string;
+  seat: SeatId | null;
+  seatToken: string | null;
+}
+
+interface Room {
+  id: string;
+  game: string;
+  seats: number;
+  status: "waiting" | "started";
+  players: RoomPlayer[];
+  creatorToken: string;
+  matchId: string | null;
+  createdAt: number;
+  /** 每回合时限覆盖（ms，5s–300s）；缺省用游戏默认 */
+  timeoutMs?: number;
+}
+
 export class Gateway {
   private games = new Map<string, GameModule<unknown>>();
   private agents = new Map<string, { agent_id: string; name: string; callback_url?: string; webhook_secret?: string }>();
   private matches = new Map<string, RunningMatch>();
+  private rooms = new Map<string, Room>();
   private ratings = new RatingStore();
   private agentNames = new Map<string, string>();
   /** nonce 重放缓存：key = matchId:seat:nonce —— 跨回合重试返回原成功，不消耗任何回合（真幂等） */
@@ -240,6 +263,11 @@ export class Gateway {
           "POST /api/v1/agents",
           "GET  /api/v1/games",
           "POST /api/v1/lobby/quickstart",
+          "GET  /api/v1/lobby/rooms               多人房间列表",
+          "POST /api/v1/lobby/rooms               创建房间 {game, seats?, name?}",
+          "POST /api/v1/lobby/rooms/:id/join      加入房间 {name?}",
+          "POST /api/v1/lobby/rooms/:id/start     房主强制开局（余位 bot 补位）{join_token}",
+          "GET  /api/v1/lobby/rooms/:id?token=    房间状态（带 join_token 获取座位分配）",
           "GET  /api/v1/matches/:id/view",
           "POST /api/v1/matches/:id/actions",
           "GET  /api/v1/matches/:id/events?since=",
@@ -300,6 +328,24 @@ export class Gateway {
     if (method === "POST" && path === "/api/v1/lobby/quickstart") {
       return this.quickstart(req, await readJson(req), res);
     }
+    if (method === "GET" && path === "/api/v1/lobby/rooms") {
+      return this.roomList(res);
+    }
+    if (method === "POST" && path === "/api/v1/lobby/rooms") {
+      return this.roomCreate(req, res);
+    }
+    const roomJoin = /^\/api\/v1\/lobby\/rooms\/([^/]+)\/join$/.exec(path);
+    if (method === "POST" && roomJoin) {
+      return this.roomJoin(roomJoin[1], req, res);
+    }
+    const roomStart = /^\/api\/v1\/lobby\/rooms\/([^/]+)\/start$/.exec(path);
+    if (method === "POST" && roomStart) {
+      return this.roomStart(roomStart[1], req, res);
+    }
+    const roomGet = /^\/api\/v1\/lobby\/rooms\/([^/]+)$/.exec(path);
+    if (method === "GET" && roomGet) {
+      return this.roomStatus(roomGet[1], url, res);
+    }
     const lb = /^\/api\/v1\/leaderboard\/([^/]+)$/.exec(path);
     if (method === "GET" && lb) {
       const rows = this.ratings.leaderboard(lb[1]).map((row) => ({
@@ -319,7 +365,11 @@ export class Gateway {
     }
     const m = /^\/api\/v1\/matches\/([^/]+)\/(view|actions|events|replay)$/.exec(path);
     if (m) return this.matchOp(m[1], m[2], method, url, req, res);
-    return this.json(res, 404, { error: "NOT_FOUND", path });
+    return this.json(res, 404, {
+      error: "NOT_FOUND",
+      path,
+      hint: "对局子路径仅支持 view|actions|events|replay（另有 /stream 与 /replay/step）",
+    });
   }
 
   private quickstart(req: IncomingMessage, body: Record<string, unknown>, res: ServerResponse): void {
@@ -381,16 +431,7 @@ export class Gateway {
       headline: null,
     };
     this.matches.set(match.id, rm);
-    match
-      .run()
-      .then((r) => {
-        rm.result = r;
-        rm.headline = this.makeHeadline(gameId, r);
-        if (!r.events.some((e) => e.type === "match_failed")) {
-          rm.ratings = this.ratings.applyMatch(gameId, seatAgents, r.scores);
-        }
-      })
-      .catch((e) => console.error("[match error]", match.id, e));
+    this.runMatchBookkeeping(rm);
 
     return this.json(res, 200, {
       match_id: match.id,
@@ -404,6 +445,228 @@ export class Gateway {
         ? "等待平台把回合推送到你的 callback（x-arena-signature 验签），回 200 + {action, reasoning?}"
         : "轮询 GET view，you.active=true 时 POST actions（可附 reasoning / nonce）",
     });
+  }
+
+  /** 对局终局记账（headline + Elo），quickstart 与房间开局共用 */
+  private runMatchBookkeeping(rm: RunningMatch): void {
+    rm.match
+      .run()
+      .then((r) => {
+        rm.result = r;
+        rm.headline = this.makeHeadline(rm.gameId, r);
+        if (!r.events.some((e) => e.type === "match_failed")) {
+          rm.ratings = this.ratings.applyMatch(rm.gameId, rm.seatAgents, r.scores);
+        }
+      })
+      .catch((e) => console.error("[match error]", rm.match.id, e));
+  }
+
+  /** 请求者身份：Bearer api_key 关联老选手（Elo 累积），否则匿名游客 */
+  private identityOf(req: IncomingMessage, fallbackName: string): { agentId: string; name: string } {
+    const auth = typeof req.headers.authorization === "string"
+      ? req.headers.authorization.replace(/^Bearer\s+/i, "")
+      : "";
+    const known = auth ? this.agents.get(auth) : undefined;
+    if (known) return { agentId: known.agent_id, name: known.name };
+    return { agentId: "a_" + randomId(""), name: fallbackName };
+  }
+
+  /** 创建多人房间（创建者即 1 号候选人；满员自动开局） */
+  private roomCreate(req: IncomingMessage, res: ServerResponse): void {
+    void (async () => {
+      const body = await readJson(req);
+      const gameId = String(body.game ?? "");
+      const game = this.games.get(gameId);
+      if (!game) return this.json(res, 404, { error: "GAME_NOT_FOUND", game: gameId });
+      const seats = clamp(Number(body.seats ?? game.meta.minSeats), game.meta.minSeats, game.meta.maxSeats);
+      const timeoutMsRaw = Number(body.timeout_ms);
+      const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0
+        ? clamp(timeoutMsRaw, 5_000, 300_000)
+        : undefined;
+      const name = String(body.name ?? "host-" + randomId(""));
+      const me = this.identityOf(req, name);
+      if (me.name === name && !body.name) this.agentNames.set(me.agentId, name);
+      else this.agentNames.set(me.agentId, me.name);
+      const joinToken = "jt_" + randomId("");
+      const room: Room = {
+        id: "r_" + randomId(""),
+        game: gameId,
+        seats,
+        status: "waiting",
+        players: [{ joinToken, name: me.name, agentId: me.agentId, seat: null, seatToken: null }],
+        creatorToken: joinToken,
+        matchId: null,
+        createdAt: Date.now(),
+        timeoutMs,
+      };
+      this.rooms.set(room.id, room);
+      const started = this.tryStartRoom(room, false);
+      return this.json(res, 201, {
+        room_id: room.id,
+        join_token: joinToken,
+        game: gameId,
+        seats,
+        players: room.players.length,
+        status: started ? "started" : "waiting",
+        hint: "其他人 POST /lobby/rooms/" + room.id + "/join 加入；满员自动开局。轮询 GET 本房间（带 join_token）获取座位分配。",
+      });
+    })().catch((e) => this.json(res, 500, { error: "INTERNAL", message: String(e) }));
+  }
+
+  /** 加入房间（按加入顺序定座） */
+  private roomJoin(roomId: string, req: IncomingMessage, res: ServerResponse): void {
+    void (async () => {
+      const room = this.rooms.get(roomId);
+      if (!room) return this.json(res, 404, { error: "ROOM_NOT_FOUND", room_id: roomId });
+      if (room.players.length >= room.seats) return this.json(res, 409, { error: "ROOM_FULL：房间已满", room_id: roomId });
+      if (room.status === "started") return this.json(res, 409, { error: "ROOM_STARTED：对局已开始", room_id: roomId });
+      const body = await readJson(req);
+      const name = String(body.name ?? "player-" + randomId(""));
+      const me = this.identityOf(req, name);
+      this.agentNames.set(me.agentId, me.name);
+      const joinToken = "jt_" + randomId("");
+      room.players.push({ joinToken, name: me.name, agentId: me.agentId, seat: null, seatToken: null });
+      const started = this.tryStartRoom(room, false);
+      return this.json(res, 200, {
+        room_id: room.id,
+        join_token: joinToken,
+        player_index: room.players.length,
+        seats: room.seats,
+        players: room.players.length,
+        status: started ? "started" : "waiting",
+        hint: "轮询 GET /lobby/rooms/" + room.id + "?token=" + joinToken + " 直至 status=started，凭 seat_token 参赛。",
+      });
+    })().catch((e) => this.json(res, 500, { error: "INTERNAL", message: String(e) }));
+  }
+
+  /** 房主强制开局：余位由 house bot 补齐（至少 1 名真人） */
+  private roomStart(roomId: string, req: IncomingMessage, res: ServerResponse): void {
+    void (async () => {
+      const room = this.rooms.get(roomId);
+      if (!room) return this.json(res, 404, { error: "ROOM_NOT_FOUND", room_id: roomId });
+      const body = await readJson(req);
+      if (String(body.join_token ?? "") !== room.creatorToken) {
+        return this.json(res, 403, { error: "ROOM_FORBIDDEN：仅房主可强制开局" });
+      }
+      if (room.status === "started") return this.json(res, 409, { error: "ROOM_STARTED：对局已开始" });
+      const ok = this.tryStartRoom(room, true);
+      if (!ok) return this.json(res, 500, { error: "ROOM_START_FAILED" });
+      const me = room.players[0]!;
+      return this.json(res, 200, {
+        room_id: room.id,
+        status: "started",
+        match_id: room.matchId,
+        seat_id: me.seat,
+        seat_token: me.seatToken,
+        bots_filled: room.seats - room.players.length,
+      });
+    })().catch((e) => this.json(res, 500, { error: "INTERNAL", message: String(e) }));
+  }
+
+  /** 尝试开局：满员自动开；fillWithBots 时余位补 house bot。开局成功返回 true */
+  private tryStartRoom(room: Room, fillWithBots: boolean): boolean {
+    if (room.status === "started") return false;
+    const game = this.games.get(room.game);
+    if (!game || room.players.length === 0) return false;
+    const bots = room.seats - room.players.length;
+    if (bots < 0) return false;
+    if (bots > 0 && !fillWithBots) return false;
+
+    const house = bots > 0 ? houseBotsFor(room.game, bots) : [];
+    const humanDrivers = room.players.map((p) => new HttpSeatDriver(p.name));
+    const drivers: SeatDriver[] = [...humanDrivers, ...house.map((h) => h.driver)];
+    const match = createMatch({
+      game,
+      drivers,
+      graceMs: 15000,
+      minPhaseMs: room.game === "werewolf_lite" ? 4000 : 0,
+      timeoutMs: room.timeoutMs,
+    });
+    const seatAgents = new Map<SeatId, string>();
+    room.players.forEach((p, i) => {
+      p.seat = i + 1;
+      p.seatToken = "st_" + randomId("");
+      seatAgents.set(p.seat, p.agentId);
+      this.agentNames.set(p.agentId, p.name);
+    });
+    house.forEach((h, i) => {
+      seatAgents.set(room.players.length + i + 1, h.agent);
+      this.agentNames.set(h.agent, h.name);
+    });
+    const seatTokens = new Map<string, SeatId>();
+    for (const p of room.players) seatTokens.set(p.seatToken!, p.seat!);
+    const httpDrivers = new Map<SeatId, HttpSeatDriver>();
+    humanDrivers.forEach((d, i) => httpDrivers.set(i + 1, d));
+
+    const rm: RunningMatch = {
+      match,
+      gameId: room.game,
+      startedAt: Date.now(),
+      seatTokens,
+      httpDrivers,
+      seatAgents,
+      result: null,
+      ratings: null,
+      headline: null,
+    };
+    this.matches.set(match.id, rm);
+    room.status = "started";
+    room.matchId = match.id;
+    this.runMatchBookkeeping(rm);
+    return true;
+  }
+
+  /** 房间状态：waiting 公开人数；started 凭 join_token 换座位分配 */
+  private roomStatus(roomId: string, url: URL, res: ServerResponse): void {
+    const room = this.rooms.get(roomId);
+    if (!room) return this.json(res, 404, { error: "ROOM_NOT_FOUND", room_id: roomId });
+    if (room.status === "waiting") {
+      return this.json(res, 200, {
+        room_id: room.id,
+        status: "waiting",
+        game: room.game,
+        seats: room.seats,
+        players: room.players.length,
+        names: room.players.map((p) => p.name),
+      });
+    }
+    const token = url.searchParams.get("token");
+    const me = token ? room.players.find((p) => p.joinToken === token) : undefined;
+    if (!me) {
+      return this.json(res, 200, {
+        room_id: room.id,
+        status: "started",
+        game: room.game,
+        match_id: room.matchId,
+        seats: room.seats,
+      });
+    }
+    return this.json(res, 200, {
+      room_id: room.id,
+      status: "started",
+      game: room.game,
+      match_id: room.matchId,
+      seat_id: me.seat,
+      seat_token: me.seatToken,
+      seats: room.seats,
+    });
+  }
+
+  /** 房间列表（waiting 在前，各取最新若干） */
+  private roomList(res: ServerResponse): void {
+    const all = [...this.rooms.values()].sort((a, b) => b.createdAt - a.createdAt);
+    const shape = (r: Room) => ({
+      room_id: r.id,
+      game: r.game,
+      seats: r.seats,
+      players: r.players.length,
+      status: r.status,
+      match_id: r.matchId,
+      names: r.players.map((p) => p.name),
+    });
+    const waiting = all.filter((r) => r.status === "waiting").slice(0, 20);
+    const started = all.filter((r) => r.status === "started").slice(0, 10);
+    return this.json(res, 200, { rooms: [...waiting, ...started].map(shape) });
   }
 
   private nameOf(agent: string): string {
@@ -708,7 +971,11 @@ export class Gateway {
     if (op === "events" && method === "GET") {
       const sinceParam = Number(url.searchParams.get("since"));
       const since = Number.isFinite(sinceParam) ? sinceParam : -1;
-      return this.json(res, 200, { events: rm.match.eventsFor(viewer, since) });
+      return this.json(res, 200, {
+        events: rm.match.eventsFor(viewer, since),
+        // 赛中 acted.reasoning 脱敏、终局后公开——finished 标记帮助调用方区分两种语义
+        finished: rm.match.isFinished(),
+      });
     }
     if (op === "replay" && method === "GET") {
       const r = rm.match.currentResult();

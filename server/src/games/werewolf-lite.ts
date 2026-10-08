@@ -162,9 +162,10 @@ function tryResolveVote(s: State, events: GameEvent[]): void {
     return;
   }
   const exiled: SeatId | null = max > 0 && tied.length === 1 ? tied[0] : null; // PK 再平 → 无人出局
+  const passed = aliveSeats(s).filter((t) => s.votes.get(t) === null);
   events.push({
     type: "vote_result",
-    data: { tally: Object.fromEntries([...tally.entries()]), exiled, pk: s.pkCandidates !== null },
+    data: { tally: Object.fromEntries([...tally.entries()]), exiled, passed, pk: s.pkCandidates !== null },
   });
   s.pkCandidates = null;
   if (exiled !== null) {
@@ -325,7 +326,7 @@ export function createWerewolfLite(): GameModule<State> {
           if (action.type === "last_words") {
             const text = action.text;
             if (typeof text !== "string" || text.length < 1 || text.length > 500) {
-              return { ok: false, error: "ILLEGAL_ACTION：text 须为 1-500 字符" };
+              return { ok: false, error: `ILLEGAL_ACTION：text 须为 1-500 字符（按 UTF-16 码元计，当前 ${typeof text === "string" ? text.length : typeof text}）` };
             }
             return { ok: true };
           }
@@ -335,7 +336,7 @@ export function createWerewolfLite(): GameModule<State> {
         if (action.type === "say") {
           const text = action.text;
           if (typeof text !== "string" || text.length < 1 || text.length > 500) {
-            return { ok: false, error: "ILLEGAL_ACTION：text 须为 1-500 字符" };
+            return { ok: false, error: `ILLEGAL_ACTION：text 须为 1-500 字符（按 UTF-16 码元计，当前 ${typeof text === "string" ? text.length : typeof text}）` };
           }
           return { ok: true };
         }
@@ -387,8 +388,7 @@ export function createWerewolfLite(): GameModule<State> {
       return { state: s, events };
     },
 
-    viewOf(s, viewer) {
-      const pub: Record<string, unknown> = {
+    viewOf(s, viewer) {      const pub: Record<string, unknown> = {
         round: s.round,
         phase: s.phase,
         seats: s.seats,
@@ -413,8 +413,9 @@ export function createWerewolfLite(): GameModule<State> {
     timeoutAction(s) {
       // 夜间超时一律 pass（空刀/不验）：绝不替狼队抢刀权；比赛推进由停滞治理兜底
       if (s.phase === "day_discuss") {
-        if (s.lwIndex < s.lwQueue.length) return { type: "last_words", text: "（沉默离世，未留遗言）" };
-        return { type: "say", text: "（沉默）" };
+        // 文案明确区分「超时」与「主动沉默」——避免系统默认话术被当作推理素材（r5 真人局实测反馈）
+        if (s.lwIndex < s.lwQueue.length) return { type: "last_words", text: "（超时未留遗言）" };
+        return { type: "say", text: "（超时未发言）" };
       }
       return { type: "pass" };
     },

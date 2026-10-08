@@ -57,7 +57,7 @@ export function composeAgentView(opts: {
   deadlineMs: number | null;
   /** 本席位本回合是否已提交（防重复提交的即时信号） */
   youSubmitted?: boolean;
-  result?: { scores: Record<SeatId, number> } | null;
+  result?: { scores: Record<SeatId, number>; winners: SeatId[] } | null;
 }): AgentView {
   const snap = opts.game.viewOf(opts.state, opts.viewer);
   const active = opts.finished ? [] : opts.game.activeSeats(opts.state);
@@ -79,9 +79,20 @@ export function composeAgentView(opts: {
     private: snap.private,
     legal_actions: opts.viewer === "spectator" ? [] : opts.game.legalActions(opts.state, opts.viewer),
     history: opts.visible.slice(-50),
-    // 终局附比分（一次性判定的便捷出口；对局中为 null）
+    history_truncated: opts.visible.length > 50,
+    // 终局附比分与胜者（一次性判定的便捷出口；对局中为 null）
     result: opts.result ?? null,
   };
+}
+
+/** 终局胜者：取最高分席位（>0）；平局全员同最高分仍列为 winners，0 分局为空 */
+export function winnersOf(scores: Record<SeatId, number>): SeatId[] {
+  let max = 0;
+  for (const v of Object.values(scores)) max = Math.max(max, v);
+  if (max <= 0) return [];
+  return Object.entries(scores)
+    .filter(([, v]) => v === max)
+    .map(([k]) => Number(k));
 }
 
 export class Match {
@@ -177,7 +188,7 @@ export class Match {
       finished: this.finished,
       deadlineMs: this.turnDeadline,
       youSubmitted: viewer !== "spectator" && this.received.has(viewer),
-      result: this.finished && scores ? { scores } : null,
+      result: this.finished && scores ? { scores, winners: winnersOf(scores) } : null,
     });
   }
 
