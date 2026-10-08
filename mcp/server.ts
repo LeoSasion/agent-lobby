@@ -158,12 +158,20 @@ const tools: Tool[] = [
         body,
       });
       if (r.ok) {
-        const view = r.view as Json | undefined;
-        return view
-          ? "动作已提交。当前局面：\n" + JSON.stringify(view)
-          : "动作已提交。可调用 arena_view 跟进局势。";
+        // r9 mcp9-d1：响应前缀人读文本不利于程序化解析——改纯 JSON（ok/applied/replayed 语义与 docs §3.1 一致；
+        // replayed=true 表示 nonce 重放命中，本次未发生新入账）
+        return JSON.stringify({
+          ok: true,
+          applied: r.applied === true,
+          replayed: r.replayed === true,
+          ...(r.reasoning_truncated ? { reasoning_truncated: true } : {}),
+          view: r.view ?? null,
+        });
       }
-      throw new Error(`动作被拒 [${r.code ?? "?"}]：${r.error}\n当前合法动作：${JSON.stringify(r.legal_actions ?? [])}`);
+      // r9 mcp9-d1：error 是 code 的别名，人读文本在 message——透传丢 message 让排查变难
+      throw new Error(
+        `动作被拒 [${r.code ?? "?"}]：${typeof r.message === "string" ? r.message : String(r.error)}\n当前合法动作：${JSON.stringify(r.legal_actions ?? [])}`,
+      );
     },
   },
   {

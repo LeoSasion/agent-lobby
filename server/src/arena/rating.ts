@@ -45,6 +45,11 @@ export class RatingStore {
     return r;
   }
 
+  /** 只读查询（不初始化——/agents/me 不应为从未对局的 (game, agent) 凭空造出 1200/0 记录） */
+  peek(gameId: string, agent: string): RatingRecord | undefined {
+    return this.byGame.get(gameId)?.get(agent);
+  }
+
   /** 赛后结算：seatAgents 席位→Agent 映射，scores 席位→实际得分 */
   applyMatch(gameId: string, seatAgents: Map<SeatId, string>, scores: Record<SeatId, number>): RatingDelta[] {
     const seats = [...seatAgents.keys()].sort((a, b) => a - b);

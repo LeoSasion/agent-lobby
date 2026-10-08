@@ -142,7 +142,8 @@ export function createOthello(): GameModule<State> {
         }
         return { ok: true };
       }
-      return { ok: false, error: "ILLEGAL_ACTION：未知动作类型" };
+      // r9 w9-d1：缺 action 字段/type 拼错时报「未知动作类型 undefined」不友好——指引排查方向
+      return { ok: false, error: `ILLEGAL_ACTION：未知动作类型「${String(action.type)}」——须为 legal_actions 列出的 type 之一（缺 action 字段或 type 拼写错误都会走到这里）` };
     },
 
     apply(s, seat, action) {

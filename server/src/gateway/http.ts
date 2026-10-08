@@ -23,7 +23,7 @@ import type { MatchResult, SeatDriver } from "../arena/match.ts";
 import { createMatch } from "../arena/lobby.ts";
 import { replayToState } from "../arena/replay.ts";
 import { RatingStore } from "../arena/rating.ts";
-import type { RatingDelta } from "../arena/rating.ts";
+import type { RatingDelta, RatingRecord } from "../arena/rating.ts";
 import { houseBotsFor } from "../bots/registry.ts";
 import { WebhookSeatDriver } from "./webhook.ts";
 import { randomId, withTimeout } from "../util.ts";
@@ -281,6 +281,8 @@ export class Gateway {
         games: [...this.games.keys()],
         endpoints: [
           "POST /api/v1/agents",
+          "GET  /api/v1/agents/me                档案 + 各游戏 Elo（Bearer api_key）",
+          "GET  /api/v1/agents/:id/matches?page= 战绩列表（已结束对局，倒序分页）",
           "GET  /api/v1/games",
           "POST /api/v1/lobby/quickstart",
           "GET  /api/v1/lobby/rooms               多人房间列表",
@@ -288,10 +290,13 @@ export class Gateway {
           "POST /api/v1/lobby/rooms/:id/join      加入房间 {name?, channel?}（channel=webhook 需 Bearer + 已注册 callback_url）",
           "POST /api/v1/lobby/rooms/:id/start     房主强制开局（余位 bot 补位）{join_token}",
           "GET  /api/v1/lobby/rooms/:id?token=    房间状态（带 join_token 获取座位分配）",
+          "GET  /api/v1/matches                   最近对局列表",
           "GET  /api/v1/matches/:id/view",
           "POST /api/v1/matches/:id/actions",
           "GET  /api/v1/matches/:id/events?since=",
           "GET  /api/v1/matches/:id/replay",
+          "GET  /api/v1/matches/:id/replay/step?to=<seq>&seat=N  回放步骤视图（?seat=N 需该席位 x-seat-token）",
+          "GET  /api/v1/matches/:id/stream        SSE 实时事件流",
           "GET  /api/v1/leaderboard/:game",
         ],
       });
@@ -315,6 +320,57 @@ export class Gateway {
         name,
         callback_url: callbackUrl ?? null,
         webhook_secret: webhookSecret ?? null,
+      });
+    }
+    // GET /agents/me：档案 + 各游戏 Elo（r9 dc9-d1/dc9-d2/dc9-h1/w9-s2 四方报告：文档 §3.1 承诺但 404）
+    if (method === "GET" && path === "/api/v1/agents/me") {
+      const auth = typeof req.headers.authorization === "string"
+        ? req.headers.authorization.replace(/^Bearer\s+/i, "")
+        : "";
+      const known = auth ? this.agents.get(auth) : undefined;
+      if (!known) {
+        return this.err(res, 401, "AUTH_INVALID", "缺少或无效的 Bearer api_key（GET /agents/me 需注册时返回的 api_key）", { path: "/api/v1/agents/me" });
+      }
+      const ratings: Record<string, RatingRecord> = {};
+      for (const gameId of this.games.keys()) {
+        const r = this.ratings.peek(gameId, known.agent_id);
+        if (r) ratings[gameId] = r;
+      }
+      return this.json(res, 200, {
+        agent_id: known.agent_id,
+        name: known.name,
+        callback_url: known.callback_url ?? null,
+        ratings,
+      });
+    }
+    // GET /agents/:id/matches?page=：战绩列表（r9：文档承诺未实现；只列已结束对局，倒序分页）
+    const agentMatches = /^\/api\/v1\/agents\/([^/]+)\/matches$/.exec(path);
+    if (method === "GET" && agentMatches) {
+      const agentId = decodeURIComponent(agentMatches[1]!);
+      const page = Math.max(1, Number(url.searchParams.get("page")) || 1);
+      const perPage = 20;
+      const mine = [...this.matches.values()]
+        .filter((rm) => rm.match.isFinished() && [...rm.seatAgents.values()].includes(agentId))
+        .sort((a, b) => b.startedAt - a.startedAt);
+      const slice = mine.slice((page - 1) * perPage, page * perPage);
+      return this.json(res, 200, {
+        agent_id: agentId,
+        page,
+        per_page: perPage,
+        total: mine.length,
+        has_more: page * perPage < mine.length,
+        matches: slice.map((rm) => {
+          const mySeat = [...rm.seatAgents.entries()].find(([, a]) => a === agentId)?.[0];
+          const scores = rm.match.currentResult()?.scores ?? null;
+          return {
+            match_id: rm.match.id,
+            game: rm.gameId,
+            started_at: rm.startedAt,
+            headline: rm.headline,
+            my_seat: mySeat ?? null,
+            scores,
+          };
+        }),
       });
     }
     if (method === "POST" && path === "/api/v1/webhook/test") {
@@ -769,6 +825,8 @@ export class Gateway {
         game: room.game,
         seats: room.seats,
         players: room.players.length,
+        // r9 w9-s2：waiting 期没有剩余席位数，轮询者无法判断还差几人开局
+        seats_remaining: room.seats - room.players.length,
         names: room.players.map((p) => p.name),
         channels: room.players.map((p) => p.channel),
       });
@@ -1112,10 +1170,14 @@ export class Gateway {
       if (replayKey && this.nonceReplay.has(replayKey)) {
         await new Promise((r) => setImmediate(r)); // 若原动作正在结算，等一拍取结算后视图
         const full = rm.match.viewFor(seat);
+        // r9 dc9-d1/dc9-h1 三方共识：跨回合重发同 nonce 曾回 applied:true——
+        // 语义陷阱：本次请求未发生任何新入账（原动作可能在若干回合前已结算），
+        // 客户端若以 applied 判"本回合已提交"会被误导（实测：真入账丢失 + 无声跳过新回合）。
+        // 修正：replayed 响应 applied:false；入账自检 = ok && applied && !replayed（见 docs §3.1）
         return this.json(res, 200, {
           ok: true,
           replayed: true,
-          applied: true,
+          applied: false,
           ...(reasonTruncated ? { reasoning_truncated: true } : {}),
           view: { ...full, history: [], history_truncated: true },
         });

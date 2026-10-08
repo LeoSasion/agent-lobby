@@ -124,6 +124,34 @@ async function main(): Promise<void> {
   );
   const bogus = await post(`${DM}/actions`, { action: { type: "hack" } }, diceToken);
   check("未知动作类型 → 422 ILLEGAL_ACTION + code", bogus.status === 422 && String(bogus.body.code) === "ILLEGAL_ACTION", "");
+  // r9 dc9-h1 遗留吸收：face 单独越界（qty 合法、face=7）——曾被 qty 越界用例短路吞掉
+  const face7 = await post(`${DM}/actions`, { action: { type: "bid", qty: 2, face: 7 } }, diceToken);
+  check(
+    "face=7 单独越界 → 422 ILLEGAL_ACTION（face 合法区间提示）",
+    face7.status === 422 && String(face7.body.code) === "ILLEGAL_ACTION" && String(face7.body.message).includes("face"),
+    String(face7.body.message ?? "").slice(0, 40),
+  );
+
+  // r9：GET /agents/me + /agents/:id/matches（文档承诺曾 404——dc9-d1/dc9-d2/dc9-h1/w9-s2/w9-d1 五方报告）
+  const qsApiKey = String(qs.body.api_key ?? "");
+  const meBad = await api("/agents/me");
+  check(
+    "/agents/me 无 Bearer → 401 AUTH_INVALID",
+    meBad.status === 401 && String(meBad.body.code) === "AUTH_INVALID",
+    `status=${meBad.status}`,
+  );
+  const meOk = await api("/agents/me", { headers: { authorization: "Bearer " + qsApiKey } });
+  check(
+    "/agents/me 带 Bearer → 200 档案 + ratings",
+    meOk.status === 200 && typeof meOk.body.agent_id === "string" && typeof meOk.body.name === "string" && typeof meOk.body.ratings === "object",
+    `agent_id=${String(meOk.body.agent_id ?? "").slice(0, 10)}`,
+  );
+  const myMatches = await api(`/agents/${String(meOk.body.agent_id)}/matches`);
+  check(
+    "/agents/:id/matches → 200 战绩列表",
+    myMatches.status === 200 && Array.isArray(myMatches.body.matches) && typeof myMatches.body.has_more === "boolean",
+    `total=${String(myMatches.body.total)}`,
+  );
 
   // —— 阶段 B：狼人杀 6 真人房（全测试驱动）——night 同时相位的 DUPLICATE 窗口稳定可控 ——
   console.log("\n[矩阵 3] DUPLICATE_ACTION（同时相位：先交者等其余行动者期间 submitted=true）");
@@ -290,6 +318,14 @@ async function main(): Promise<void> {
     "旧 nonce 跨回合重发 → 200 replayed:true（重放缓存）",
     replayed.status === 200 && replayed.body.replayed === true,
     `replayed=${String(replayed.body.replayed)}`,
+  );
+  // r9 dc9-d1/dc9-h1 三方共识修复回归：replayed 响应 applied 必须 false——
+  // 本次请求未发生任何新入账（原动作在旧回合已结算），applied:true 会让客户端
+  // 误判"本回合已提交"从而跳过当前回合（实测真发生过）
+  check(
+    "r9 回归：replayed 响应 applied:false（未发生新入账）",
+    replayed.body.applied === false,
+    `applied=${String(replayed.body.applied)}`,
   );
 
   console.log("\n[矩阵 4] 终局语义（打完双人房）");
