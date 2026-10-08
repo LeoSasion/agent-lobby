@@ -93,6 +93,58 @@ check("HMAC 签名全部通过", sigOk);
 check("非法动作自纠生效（action.rejected → 重提交）", rejected >= 1, `rejected × ${rejected}`);
 check("非法动作未进入事件流", !r.events.some((e) => e.type === "acted" && JSON.stringify((e.data as { action?: { qty?: number } }).action?.qty) === "0"));
 
+// —— r9 wh9-h2【高】+ wh9-h1 交叉发现回归：5xx 必须重试（文档 §4"最多 3 次"曾从未生效），
+//    且重试期间 delivery id 不变（去重键承诺）；4xx 才是立即放弃
+console.log("\n[场景 2] 5xx 重试 + delivery id 稳定性（r9 修复回归）");
+const seenDeliveries = new Map<string, number>(); // deliveryId → 收到次数
+let fiveHxxThenOk = 0; // 首次 500 → 重试 200 的完整链路次数
+const flakyServer = createServer((req, res) => {
+  const chunks: Buffer[] = [];
+  req.on("data", (c: Buffer) => chunks.push(c));
+  req.on("end", () => {
+    const delivery = String(req.headers["x-arena-delivery"] ?? "");
+    const body = Buffer.concat(chunks).toString("utf8");
+    const payload = JSON.parse(body) as { event?: string; view?: AgentView };
+    const n = (seenDeliveries.get(delivery) ?? 0) + 1;
+    seenDeliveries.set(delivery, n);
+    if (payload.event === "turn.start" || payload.event === "action.rejected") {
+      if (n === 1 && payload.event === "turn.start") {
+        // 首次投递：500（agent 临时故障）——驱动必须重试而非立即兜底
+        res.writeHead(500);
+        res.end("temporary failure");
+        return;
+      }
+      // 同一 delivery 的重试 / 自纠重推：回 200 + 合法动作
+      if (n >= 2) fiveHxxThenOk++;
+      const action = decideDice(payload.view!);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ action }));
+      return;
+    }
+    res.writeHead(200);
+    res.end("{}");
+  });
+});
+await new Promise<void>((r2) => flakyServer.listen(8898, "127.0.0.1", r2));
+const flakyDriver = new WebhookSeatDriver({
+  name: "flaky-agent",
+  url: "http://127.0.0.1:8898/",
+  secret: SECRET,
+  timeoutMs: 5000,
+});
+const r2res = await createMatch({
+  game: createLiarsDice(),
+  drivers: [flakyDriver, createRuleBot("对手bot2", 0.5)],
+  seed: 7,
+}).run();
+check("5xx 后重试并成功出招（对局完成，未提前兜底）", fiveHxxThenOk >= 1, `500→200 链路 × ${fiveHxxThenOk}`);
+const retriedIds = [...seenDeliveries.values()].filter((n) => n >= 2).length;
+check("重试时 delivery id 不变（同 id ≥2 次）", retriedIds >= 1, `${retriedIds} 个 id 被重试`);
+check("5xx 重试路径对局完整", Object.values(r2res.scores).some((v) => v === 1), "");
+const timedOut2 = r2res.events.filter((e) => e.type === "timed_out" && (e.data as { seat?: number }).seat === 1).length;
+check("flaky 席位无超时兜底（5xx 均被重试救回）", timedOut2 === 0, `${timedOut2} 次`);
+flakyServer.close();
+
 agentServer.close();
 console.log(`\n=== 结果：${failed === 0 ? "全部通过" : failed + " 项失败"} ===`);
 if (failed > 0) process.exitCode = 1;

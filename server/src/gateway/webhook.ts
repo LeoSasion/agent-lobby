@@ -34,6 +34,9 @@ export class WebhookSeatDriver implements SeatDriver {
 
   async act(view: AgentView, submit: (a: Action, opts?: { reasoning?: string; nonce?: string }) => SubmitResult): Promise<void> {
     let payload: Record<string, unknown> = { event: "turn.start", view };
+    // r9 wh9-h2【高】修复：delivery id 必须在 attempt 循环外生成——重试时 id 不变（文档 §4 去重承诺），
+    // 原实现写在循环体内导致每次重试换 id，去重键失效
+    const deliveryId = "d-" + Math.random().toString(36).slice(2, 12);
     for (let attempt = 0; attempt < 3; attempt++) {
       const body = JSON.stringify(payload);
       const sig = createHmac("sha256", this.secret).update(body).digest("hex");
@@ -45,7 +48,7 @@ export class WebhookSeatDriver implements SeatDriver {
             headers: {
               "content-type": "application/json",
               "x-arena-event": String(payload.event),
-              "x-arena-delivery": "d-" + Math.random().toString(36).slice(2, 12),
+              "x-arena-delivery": deliveryId,
               "x-arena-signature": "sha256=" + sig,
             },
             body,
@@ -58,8 +61,11 @@ export class WebhookSeatDriver implements SeatDriver {
           return;
         } else if (res.status < 500) {
           return; // Agent 明确拒绝（4xx）：不重试
+        } else {
+          // r9 wh9-h2【高】修复：5xx 重试——原实现落到循环末尾 return，"最多重试 3 次"
+          // 的文档承诺从未生效（实测 500 后仅 1 次投递即兜底弃票）
+          continue;
         }
-        // 5xx 落到下一轮重试
       } catch {
         return; // 网络错误/超时：交由超时默认动作兜底
       }
