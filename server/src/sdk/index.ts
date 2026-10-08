@@ -13,4 +13,14 @@
  * ```
  */
 
-export { ArenaClient, type MatchHandle, type QuickstartOptions, type ActOptions } from "./client.ts";
+export {
+  ArenaClient,
+  MatchHandle,
+  ArenaApiError,
+  type QuickstartOptions,
+  type ActOptions,
+  type ActResult,
+  type MatchResult,
+  type GameInfo,
+  type LeaderboardRow,
+} from "./client.ts";

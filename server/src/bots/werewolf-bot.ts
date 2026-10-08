@@ -147,12 +147,13 @@ export function createWerewolfBot(name: string, bias = 0): SeatDriver {
       const role = priv.role ?? "villager";
       const me = view.you.seat;
       const round = pub.round ?? 1;
+      const mid = String(view.match_id ?? "m"); // 局标识入 salt：跨局话术分化、局内确定性
       const la = view.legal_actions;
       const values = (t: string): number[] =>
         ((la.find((a) => a.type === t)?.schema?.values ?? []) as unknown[]).filter(
           (v): v is number => typeof v === "number",
         );
-      const k = (ctx: string): string => `${me}:${round}:${ctx}`;
+      const k = (ctx: string): string => `${mid}:${me}:${round}:${ctx}`;
 
       // 夜间：狼出刀（优先刀已跳预言家的——含昨日发言与今日遗言）
       if (la.some((a) => a.type === "kill")) {
@@ -242,6 +243,20 @@ export function createWerewolfBot(name: string, bias = 0): SeatDriver {
         if (role === "werewolf") {
           const mates = new Set(priv.teammates ?? []);
           const killTarget = claims.find((c) => c.isWolf && mates.has(c.checked));
+
+          // 狼本人被查杀：装村民自辩（沉默穿帮——契约句式「不是狼」必说）
+          const accusedMeWolf = claims.find((c) => c.isWolf && c.checked === me);
+          if (accusedMeWolf && !killTarget) {
+            const core = pick(
+              [
+                `${accusedMeWolf.claimant} 号查杀我？我不是狼。我是好人，他这么急着定罪一个人，反而最像悍跳狼。`,
+                `查杀到我头上了——我不是狼，真查验经不起对。${accusedMeWolf.claimant} 号，你敢不敢今晚让刀口证明？`,
+                `我不是狼。${accusedMeWolf.claimant} 号的查验是编的，好人别内耗，真预言家应该能对出漏洞。`,
+              ],
+              k("wolf-self"),
+            );
+            return done(submit, { type: "say", text: flavor(persona, core, k("wolf-self")) });
+          }
           if (killTarget) {
             const core = pick(
               [
@@ -252,6 +267,19 @@ export function createWerewolfBot(name: string, bias = 0): SeatDriver {
               k("wolf-deflect"),
             );
             return done(submit, { type: "say", text: flavor(persona, core, k("wolf-deflect")) });
+          }
+          // 无人被查杀时的填充话术：有跳报 → 围绕信息表态（不说"期待预言家站出来"这种穿帮句）
+          if (claims.length > 0) {
+            const claimer = claims[0]!.claimant;
+            const core = pick(
+              [
+                `${claimer} 号跳了预言家。我是平民，先看他的查验内容经不经得起后面几晚的验证。`,
+                `${claimer} 号自称预言家——我是好人，暂记这条信息，明晚的刀口会替我们分辨真假。`,
+                `场上有人跳预言家了。我是平民，不急着站边，听完他的查验理由再说。`,
+              ],
+              k("wolf-claimed"),
+            );
+            return done(submit, { type: "say", text: flavor(persona, core, k("wolf-claimed")) });
           }
           const filler = round <= 1 ? persona.fillerR1 : persona.fillerR2;
           return done(submit, { type: "say", text: pick(filler, k("wolf-filler")) });
@@ -310,11 +338,30 @@ export function createWerewolfBot(name: string, bias = 0): SeatDriver {
           return done(submit, { type: "say", text: flavor(persona, core, k("v-endorse")) });
         }
 
-        // 无信息填充：round 1 / round 2+ 人格话术；今日有遗言时部分话术呼应
-        const filler = round <= 1 ? persona.fillerR1 : persona.fillerR2;
-        let text = pick(filler, k("v-filler"));
+        // 无信息填充：按场景分化——今日有遗言 / 已有人跳预言家 / 常规（round 1 vs 2+，人格话术）
+        let text: string;
         if (hasLW && round <= 1) {
-          text = "刚听完遗言，更觉得不能乱投。我是好人，先跟住查验信息，再看大家发言。" + text;
+          text = pick(
+            [
+              "听完遗言了。我是好人——死者的信息要么是真相要么是圈套，投票前先对一对。",
+              "刚听完遗言。预言家的查验遗言值得认真记下；假遗言也会露马脚。我是好人。",
+              "遗言都收到了。我是好人，投票看查验不看嗓门，别让真信息被带跑。",
+            ],
+            k("v-lw"),
+          );
+        } else if (claims.length > 0) {
+          const claimer = claims[0]!.claimant;
+          text = pick(
+            [
+              `${claimer} 号跳了预言家。我是好人，先记下查验内容，跟信息投票，不跟感觉。`,
+              `${claimer} 号站出来了——我是好人，这正是我们要的信息，先看他敢不敢连续两晚报查验。`,
+              `有人跳预言家了，我是好人。信息已经开始流动，接下来对不上号的人最可疑。`,
+            ],
+            k("v-claimed"),
+          );
+        } else {
+          const filler = round <= 1 ? persona.fillerR1 : persona.fillerR2;
+          text = pick(filler, k("v-filler"));
         }
         return done(submit, { type: "say", text });
       }
@@ -358,6 +405,7 @@ export function createWerewolfBot(name: string, bias = 0): SeatDriver {
         }
 
         // 无狼查杀时：散票（集中投票会因 3/5 概率命中村民而恶化局势，66% 为散票基线）
+        // 公式 (me+bias+round)%len：bot 席位间天然互碰撞最小（r4b 实测 hash 散票引发随机放逐 → 狼胜率 76%）
         if (targets.length === 0) return done(submit, { type: "pass" });
         return done(submit, { type: "vote", target: targets[(me + pub.round + bias) % targets.length] });
       }

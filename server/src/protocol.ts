@@ -37,12 +37,17 @@ export interface AgentView {
   game: string;
   phase: string;
   round: number;
+  /** 绝对 epoch 毫秒（倒计时请优先读 ms_remaining）；null = 当前无执法时限 */
   deadline_ms: number | null;
-  you: { seat: SeatId; active: boolean };
+  /** 距截止的毫秒数（视图生成时刻计算）；null = 当前无执法时限 */
+  ms_remaining: number | null;
+  you: { seat: SeatId; active: boolean; submitted: boolean };
   public: Record<string, unknown>;
   private: Record<string, unknown>;
   legal_actions: LegalAction[];
   history: MatchEvent[];
+  /** 终局比分（对局中为 null）——一次性判定出口，无需再拉 replay */
+  result: { scores: Record<SeatId, number> } | null;
 }
 
 /** 提交结果：非法动作附 legal_actions，Agent 可自纠（协议 422 语义） */
@@ -53,10 +58,12 @@ export type SubmitResult =
 export const ERROR_CODES = {
   AUTH_INVALID: 401,
   SEAT_INVALID: 403,
-  NOT_YOUR_TURN: 409,
+  NOT_YOUR_TURN: 422,
   ILLEGAL_ACTION: 422,
-  NONCE_REUSED: 409,
-  MATCH_FINISHED: 409,
+  NONCE_REUSED: 422,
+  NONCE_EXPIRED: 422,
+  DUPLICATE_ACTION: 422,
+  MATCH_FINISHED: 422,
   RATE_LIMITED: 429,
   CONTENT_REJECTED: 422,
   VERSION_UNSUPPORTED: 400,

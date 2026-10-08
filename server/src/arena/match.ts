@@ -55,6 +55,9 @@ export function composeAgentView(opts: {
   visible: MatchEvent[];
   finished: boolean;
   deadlineMs: number | null;
+  /** 本席位本回合是否已提交（防重复提交的即时信号） */
+  youSubmitted?: boolean;
+  result?: { scores: Record<SeatId, number> } | null;
 }): AgentView {
   const snap = opts.game.viewOf(opts.state, opts.viewer);
   const active = opts.finished ? [] : opts.game.activeSeats(opts.state);
@@ -65,14 +68,19 @@ export function composeAgentView(opts: {
     phase: opts.game.phase(opts.state),
     round: opts.game.round(opts.state),
     deadline_ms: opts.deadlineMs,
+    // 倒计时推荐读 ms_remaining（deadline_ms 是绝对 epoch 毫秒）；null = 当前无执法时限
+    ms_remaining: opts.deadlineMs !== null ? Math.max(0, opts.deadlineMs - Date.now()) : null,
     you: {
       seat: opts.viewer === "spectator" ? -1 : opts.viewer,
       active: opts.viewer !== "spectator" && active.includes(opts.viewer),
+      submitted: opts.youSubmitted ?? false,
     },
     public: snap.public,
     private: snap.private,
     legal_actions: opts.viewer === "spectator" ? [] : opts.game.legalActions(opts.state, opts.viewer),
     history: opts.visible.slice(-50),
+    // 终局附比分（一次性判定的便捷出口；对局中为 null）
+    result: opts.result ?? null,
   };
 }
 
@@ -94,7 +102,10 @@ export class Match {
   private lastPhaseKey = "";
   private received = new Map<SeatId, Action>();
   private reasons = new Map<SeatId, string>();
-  private nonceOwners = new Map<string, SeatId>();
+  /** nonce → {seat, turn}：幂等重试绑定回合——跨回合重试不再是隐式成功 */
+  private nonceOwners = new Map<string, { seat: SeatId; turn: number }>();
+  /** 回合序号：每次 step() 递增，用于 nonce 与回合绑定 */
+  private turnSeq = 0;
   private turnDeadline: number | null = null;
   private result: MatchResult | null = null;
 
@@ -156,14 +167,17 @@ export class Match {
 
   /** 组装 AgentView：viewOf 是信息隔离唯一出口 */
   viewFor(viewer: SeatId | "spectator"): AgentView {
+    const scores = this.result?.scores;
     return composeAgentView({
       game: this.game,
       state: this.state,
       matchId: this.id,
       viewer,
-      visible: this.store.visibleTo(viewer),
+      visible: this.visibleEvents(viewer),
       finished: this.finished,
       deadlineMs: this.turnDeadline,
+      youSubmitted: viewer !== "spectator" && this.received.has(viewer),
+      result: this.finished && scores ? { scores } : null,
     });
   }
 
@@ -183,7 +197,23 @@ export class Match {
   }
 
   eventsFor(viewer: SeatId | "spectator", since = -1): MatchEvent[] {
-    return this.store.visibleTo(viewer).filter((e) => e.seq > since);
+    return this.visibleEvents(viewer).filter((e) => e.seq > since);
+  }
+
+  /**
+   * 可见事件（含赛中脱敏）：acted.reasoning 是选手私有推理，
+   * 赛中对其他席位/观战隐藏（防竞技泄露）；终局后随事件流公开，供复盘解说。
+   */
+  private visibleEvents(viewer: SeatId | "spectator"): MatchEvent[] {
+    const evs = this.store.visibleTo(viewer);
+    if (this.finished) return evs;
+    return evs.map((e) => {
+      if (e.type === "acted" && e.data.reasoning !== undefined) {
+        const { reasoning: _stripped, ...rest } = e.data;
+        return { ...e, data: rest };
+      }
+      return e;
+    });
   }
 
   currentResult(): MatchResult | null {
@@ -200,6 +230,7 @@ export class Match {
   }
 
   private async step(active: SeatId[]): Promise<void> {
+    this.turnSeq += 1;
     this.turnDeadline = Date.now() + this.timeoutMs + (this.firstStep ? this.graceMs : 0);
     this.firstStep = false;
     // 相位间隙已提前提交的座位直接入账，不再挂起等待
@@ -239,11 +270,14 @@ export class Match {
         this.gameEvents.push({ type: ev.type, data: ev.data ?? {} });
       }
     }
-    // 回合收尾：清空缓冲并解除执法时限。此后状态已推进，新相位的行动者
-    // 可立即提前提交（trySubmit 按 activeSeats 放行），消除 NOT_YOUR_TURN 窗口
+    // 回合收尾：清空缓冲。此后状态已推进，新相位的行动者可立即提前提交
+    // （trySubmit 按 activeSeats 放行），消除 NOT_YOUR_TURN 窗口；
+    // deadline 预置为下一回合时限（step 开始时会重置并附加开局宽限）——
+    // 间隙期的视图不再出现 deadline_ms=null 的困惑
     this.received = new Map();
     this.reasons = new Map();
-    this.turnDeadline = null;
+    this.turnDeadline =
+      this.finished || this.game.isTerminal(this.state) ? null : Date.now() + this.timeoutMs;
   }
 
   /** acted/timed_out 的脱敏钩子：在动作应用前、以动作发生时的状态调用（相位正确） */
@@ -289,12 +323,21 @@ export class Match {
   private trySubmit(seat: SeatId, action: Action, opts?: { reasoning?: string; nonce?: string }): SubmitResult {
     if (this.finished) return { ok: false, error: "MATCH_FINISHED", legal_actions: [] };
 
-    // 幂等重试：同 nonce 同座位 → 无论回合是否已推进，返回成功（网络重试安全）
+    // 幂等重试（绑定回合）：
+    //   同回合同座位同 nonce → 幂等成功（网络重试安全）
+    //   跨回合重试 → NONCE_EXPIRED 显式失败——动作早已结算，静默 ok 会吞掉后续回合
     if (opts?.nonce !== undefined) {
-      const owner = this.nonceOwners.get(opts.nonce);
-      if (owner === seat) return { ok: true };
-      if (owner !== undefined) {
-        return { ok: false, error: "NONCE_REUSED：该 nonce 已被其他座位使用", legal_actions: [] };
+      const rec = this.nonceOwners.get(opts.nonce);
+      if (rec) {
+        if (rec.seat !== seat) {
+          return { ok: false, error: "NONCE_REUSED：该 nonce 已被其他座位使用", legal_actions: [] };
+        }
+        if (rec.turn === this.turnSeq) return { ok: true };
+        return {
+          ok: false,
+          error: "NONCE_EXPIRED：该 nonce 属于已结束的回合，请基于最新 view 重新决策并换新 nonce",
+          legal_actions: this.game.legalActions(this.state, seat),
+        };
       }
     }
 
@@ -314,7 +357,7 @@ export class Match {
     }
     this.received.set(seat, action);
     if (opts?.nonce !== undefined) {
-      this.nonceOwners.set(opts.nonce, seat);
+      this.nonceOwners.set(opts.nonce, { seat, turn: this.turnSeq });
     }
     if (typeof opts?.reasoning === "string" && opts.reasoning.length > 0) {
       this.reasons.set(seat, opts.reasoning.slice(0, 500));

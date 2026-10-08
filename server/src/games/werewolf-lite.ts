@@ -89,11 +89,15 @@ function tryResolveNight(s: State, events: GameEvent[], rng: Rng): void {
   // 狼刀：狼队以最后提交（座位序最高）的 kill 为准
   const wolves = wolfSeats(s);
   let target: SeatId | null = null;
+  let disagreed = false;
   for (const w of wolves) {
     const a = s.nightActions.get(w);
-    if (a && a.type === "kill" && a.target !== undefined) target = a.target;
+    if (a && a.type === "kill" && a.target !== undefined) {
+      if (target !== null && a.target !== target) disagreed = true;
+      target = a.target;
+    }
   }
-  events.push({ type: "night_kill_decided", data: { target }, visibility: { seats: wolves } });
+  events.push({ type: "night_kill_decided", data: { target, disagreed }, visibility: { seats: wolves } });
   if (target !== null) {
     s.alive.set(target, false);
     s.pendingLW.push(target); // 夜亡者次日留遗言（真预言家的查验不随死亡湮灭）

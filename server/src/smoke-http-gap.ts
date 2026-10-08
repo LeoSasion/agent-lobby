@@ -85,7 +85,7 @@ async function main(): Promise<void> {
     `phase=${view?.phase ?? "?"}`,
   );
 
-  // 3. 照法定动作提交（say 或 last_words——取决于座 1 是否夜亡）
+  // 3. 照法定动作提交（say 或 last_words——取决于座 1 是否夜亡），带 nonce 供幂等重放用例
   const legal = view!.legal_actions[0]!;
   const action =
     legal.type === "last_words"
@@ -94,7 +94,7 @@ async function main(): Promise<void> {
   const post = await api("/matches/" + matchId + "/actions", {
     method: "POST",
     headers: { "x-seat-token": seatToken, "content-type": "application/json" },
-    body: JSON.stringify({ action }),
+    body: JSON.stringify({ action, nonce: "gap-nonce-1" }),
   });
   check(
     "间隙提交被接受（修复核心断言）",
@@ -125,6 +125,28 @@ async function main(): Promise<void> {
     body: JSON.stringify({ action }),
   });
   check("同回合重复提交被拒", dup.status === 422, `code=${String(dup.body?.code ?? "")}`);
+
+  // 6. nonce 幂等重放：跨回合同 nonce → 200 + replayed:true（网关重放缓存，绝不消耗新回合）
+  const replay = await api("/matches/" + matchId + "/actions", {
+    method: "POST",
+    headers: { "x-seat-token": seatToken, "content-type": "application/json" },
+    body: JSON.stringify({ action, nonce: "gap-nonce-1" }),
+  });
+  check(
+    "跨回合 nonce 重试幂等成功（replayed）",
+    replay.status === 200 && replay.body.ok === true && replay.body.replayed === true,
+    `status=${replay.status} replayed=${String(replay.body?.replayed ?? "")}`,
+  );
+
+  // 7. 重放没有吞掉后续回合：seat 1 不应出现 timed_out（若有回合被吞，超时裁判会留痕）
+  await new Promise((r) => setTimeout(r, 1200));
+  const ev2 = await api("/matches/" + matchId + "/events?since=-1", {
+    headers: { "x-seat-token": seatToken },
+  });
+  const swallows = (ev2.body.events as { type: string; data?: { seat?: number } }[]).filter(
+    (e) => e.type === "timed_out" && e.data?.seat === 1,
+  );
+  check("重放未消耗任何回合（seat1 无 timed_out）", swallows.length === 0, `出现 ${swallows.length} 次`);
 
   console.log(`\n=== 结果：${failed === 0 ? "全部通过" : failed + " 项失败"} ===`);
   process.exitCode = failed === 0 ? 0 : 1;

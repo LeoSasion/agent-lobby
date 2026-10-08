@@ -102,6 +102,8 @@ export class Gateway {
   private matches = new Map<string, RunningMatch>();
   private ratings = new RatingStore();
   private agentNames = new Map<string, string>();
+  /** nonce 重放缓存：key = matchId:seat:nonce —— 跨回合重试返回原成功，不消耗任何回合（真幂等） */
+  private nonceReplay = new Map<string, true>();
   private indexHtml: string | null = null;
   private dataFile: string;
   private persistTimer: ReturnType<typeof setInterval> | null = null;
@@ -428,11 +430,13 @@ export class Gateway {
         phase: "test",
         round: 0,
         deadline_ms: null,
+        ms_remaining: null,
         you: { seat: 1, active: true },
         public: { note: "Webhook 自检推送：验签通过后可回 200 {\"action\":{\"type\":\"pass\"}}" },
         private: {},
         legal_actions: [{ type: "pass" }],
         history: [],
+        result: null,
       },
     });
     const sig = createHmac("sha256", agent.webhook_secret).update(body).digest("hex");
@@ -654,7 +658,23 @@ export class Gateway {
       if (rm.match.isFinished()) {
         return this.json(res, 422, { ok: false, code: "MATCH_FINISHED", error: "MATCH_FINISHED", legal_actions: [] });
       }
+      const body0 = await readJson(req);
+      const nonce0 = typeof body0.nonce === "string" ? body0.nonce.slice(0, 64) : undefined;
+      // nonce 重放：同 (对局, 席位, nonce) 已成功过 → 直接幂等成功（快照早已入账，绝不消耗新回合）
+      const replayKey = nonce0 ? `${matchId}:${seat}:${nonce0}` : null;
+      if (replayKey && this.nonceReplay.has(replayKey)) {
+        await new Promise((r) => setImmediate(r)); // 若原动作正在结算，等一拍取结算后视图
+        return this.json(res, 200, { ok: true, replayed: true, view: rm.match.viewFor(seat) });
+      }
       const probe = rm.match.viewFor(seat);
+      if (probe.you.submitted) {
+        return this.json(res, 422, {
+          ok: false,
+          code: "DUPLICATE_ACTION",
+          error: "DUPLICATE_ACTION：本回合已接受你的动作，请等待结算（幂等重试请带同一 nonce）",
+          legal_actions: probe.legal_actions,
+        });
+      }
       if (!probe.you.active) {
         return this.json(res, 422, {
           ok: false,
@@ -663,18 +683,24 @@ export class Gateway {
           legal_actions: probe.legal_actions,
         });
       }
-      const body = await readJson(req);
+      const body = body0;
       const action = (body.action ?? body) as Action;
       const opts: { reasoning?: string; nonce?: string } = {};
       if (typeof body.reasoning === "string") opts.reasoning = body.reasoning.slice(0, 500);
       if (typeof body.nonce === "string") opts.nonce = body.nonce.slice(0, 64);
       const r = await driver.handleAction(action, opts);
       if (r.ok) {
+        if (replayKey) {
+          this.nonceReplay.set(replayKey, true);
+          if (this.nonceReplay.size > 2000) this.nonceReplay.clear(); // 粗粒度防膨胀
+        }
+        // 提交成功 ≠ 已结算：等一拍让本回合 apply 跑完，回带结算后的视图
+        await new Promise((r2) => setImmediate(r2));
         const view = rm.match.viewFor(seat);
         return this.json(res, 200, { ok: true, view });
       }
       const code =
-        ["MATCH_FINISHED", "NOT_YOUR_TURN", "NONCE_REUSED", "DUPLICATE_ACTION", "ILLEGAL_ACTION", "SEAT_INVALID"].find(
+        ["MATCH_FINISHED", "NOT_YOUR_TURN", "NONCE_REUSED", "NONCE_EXPIRED", "DUPLICATE_ACTION", "ILLEGAL_ACTION", "SEAT_INVALID"].find(
           (c) => String(r.error).startsWith(c),
         ) ?? "UNKNOWN";
       return this.json(res, 422, { ok: false, code, error: r.error, legal_actions: r.legal_actions });

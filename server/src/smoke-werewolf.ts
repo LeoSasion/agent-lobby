@@ -45,7 +45,7 @@ function withViewCheck(inner: SeatDriver): SeatDriver {
 }
 const names = ["甲", "乙", "丙", "丁", "戊", "己"];
 const bots = names.map((n, i) => withViewCheck(createWerewolfBot(`bot-${n}`, i)));
-const m1: Match = createMatch({ game, drivers: bots, seed: 6666 });
+const m1: Match = createMatch({ game, drivers: bots, seed: 6666, id: "m-ww-det" });
 const r1 = await m1.run();
 
 const won = r1.events.find((e) => e.type === "game_won");
@@ -99,6 +99,7 @@ const r2 = await createMatch({
   game,
   drivers: names.map((n, i) => createWerewolfBot(`bot-${n}`, i)),
   seed: 6666,
+  id: "m-ww-det", // bot 话术含 match_id salt——同 seed 确定性比对须同 id
 }).run();
 check("同 seed 重跑事件序列一致", hashEvents(r1.events) === hashEvents(r2.events), `hash=${hashEvents(r1.events)}`);
 const rp = replayEvents(game, r1.events);

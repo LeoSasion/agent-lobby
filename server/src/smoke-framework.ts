@@ -137,10 +137,49 @@ for (const c of suites) {
     check(`私有事件零泄漏（seed ${seed}）`, leak === 0, `${priv} 个私有事件 · ${leak} 处泄漏`);
   }
 
-  // 6) 同 seed 确定性（正常 bot 对局）
-  const r1 = await createMatch({ game: c.game, drivers: c.makeBots(), seed: 999 }).run();
-  const r2 = await createMatch({ game: c.game, drivers: c.makeBots(), seed: 999 }).run();
+  // 6) 同 seed 确定性（正常 bot 对局；bot 话术含 match_id salt，须显式同 id 才可比对）
+  const r1 = await createMatch({ game: c.game, drivers: c.makeBots(), seed: 999, id: "m-det" }).run();
+  const r2 = await createMatch({ game: c.game, drivers: c.makeBots(), seed: 999, id: "m-det" }).run();
   check("同 seed 确定性", hashEvents(r1.events) === hashEvents(r2.events), `hash=${hashEvents(r1.events)}`);
+  console.log("");
+}
+
+// 7) nonce 幂等绑定回合（内核级）：同回合重发 → 幂等成功；跨回合重发 → NONCE_EXPIRED 显式拒绝（绝不吞回合）
+{
+  const game = createOthello();
+  let stage = 0;
+  const probe: SeatDriver = {
+    name: "nonce-probe",
+    act: async (view, submit) => {
+      const la = view.legal_actions[0];
+      if (!la) return;
+      if (la.type !== "place") return; // 无子可下等情形不参与探针
+      const cell = (la.schema?.values as number[] | undefined)?.[0] ?? 0;
+      if (stage === 0) {
+        const r1 = submit({ type: "place", cell }, { nonce: "n-probe" });
+        const r2 = submit({ type: "place", cell }, { nonce: "n-probe" });
+        check("nonce 同回合重发幂等成功", r1.ok && r2.ok, JSON.stringify([r1.ok, r2.ok]));
+        stage = 1;
+        return;
+      }
+      const stale = submit({ type: "place", cell }, { nonce: "n-probe" });
+      check(
+        "nonce 跨回合重发显式拒绝（NONCE_EXPIRED）",
+        !stale.ok && String(stale.error).startsWith("NONCE_EXPIRED"),
+        JSON.stringify(stale).slice(0, 90),
+      );
+      const real = submit({ type: "place", cell });
+      check("新 nonce 正常提交", real.ok, JSON.stringify(real).slice(0, 90));
+      stage = 2;
+    },
+  };
+  const m = createMatch({ game, drivers: [probe, createOthelloBot("白", 1)], seed: 7 });
+  const r = await m.run();
+  check(
+    "nonce 探针对局正常完赛",
+    stage === 2 && !r.events.some((e) => e.type === "match_failed"),
+    `stage=${stage}`,
+  );
   console.log("");
 }
 
