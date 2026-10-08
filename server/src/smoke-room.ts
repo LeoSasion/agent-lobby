@@ -154,6 +154,7 @@ async function main(): Promise<void> {
   let whSecret = "";
   let deliveries = 0;
   let sigFailures = 0;
+  let endedPushes = 0;
   const CB_PORT = PORT + 1;
   const cbServer = createServer((req, res) => {
     const chunks: Buffer[] = [];
@@ -161,6 +162,13 @@ async function main(): Promise<void> {
     req.on("end", () => {
       const raw = Buffer.concat(chunks).toString("utf8");
       deliveries++;
+      const evt = String(req.headers["x-arena-event"] ?? "");
+      if (evt === "match.ended") {
+        endedPushes++;
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end("{}");
+        return;
+      }
       const got = String(req.headers["x-arena-signature"] ?? "");
       const expect = "sha256=" + createHmac("sha256", whSecret).update(raw).digest("hex");
       if (got !== expect) sigFailures++;
@@ -222,7 +230,91 @@ async function main(): Promise<void> {
   const hostTimeouts = ((evs.body.events as { type: string; data?: { seat?: number } }[]) ?? [])
     .filter((e) => e.type === "timed_out" && e.data?.seat === 1);
   check("webhook 座位无超时（回调自动应答）", hostTimeouts.length === 0, `${hostTimeouts.length} 次`);
+  // match.ended 终局通知：对局结束后平台向 webhook 席位推送（异步，等一拍）
+  await new Promise((r) => setTimeout(r, 1500));
+  check("webhook 终局通知（match.ended）送达", endedPushes >= 1, `${endedPushes} 次`);
   cbServer.close();
+
+  // —— 场景 6：slim 视图 / actions 轻量响应 / latest_seq / 404 分级 ——
+  console.log("\n[场景 6] slim 视图 · actions 轻量响应 · latest_seq · 404 分级");
+  const r6c = await post("/lobby/rooms", { game: "othello", name: "slim-host" });
+  const r6Room = String(r6c.body.room_id);
+  const r6j = await post(`/lobby/rooms/${r6Room}/join`, { name: "slim-guest" });
+  const h6 = await api(`/lobby/rooms/${r6Room}?token=${String(r6c.body.join_token)}`);
+  const g6 = await api(`/lobby/rooms/${r6Room}?token=${String(r6j.body.join_token)}`);
+  const st6: Record<number, string> = { 1: String(h6.body.seat_token), 2: String(g6.body.seat_token) };
+  const m6 = String(h6.body.match_id);
+
+  const sv = await api(`/matches/${m6}/view?slim=1`, { headers: { "x-seat-token": st6[1]! } });
+  const svView = sv.body as { history?: unknown[]; history_truncated?: boolean; legal_actions?: unknown[] };
+  check(
+    "slim 视图省略 history（其余字段保留）",
+    Array.isArray(svView.history) && svView.history.length === 0 && svView.history_truncated === true && Array.isArray(svView.legal_actions),
+    "",
+  );
+
+  // seat 1（黑）开局即 active：提交并断言响应轻量 + applied
+  const act = await api(`/matches/${m6}/actions`, {
+    method: "POST",
+    headers: { "x-seat-token": st6[1]!, "content-type": "application/json" },
+    body: JSON.stringify({ action: { type: "place", cell: 19 } }),
+  });
+  const actBody = act.body as { applied?: boolean; view?: { history?: unknown[]; history_truncated?: boolean } };
+  check(
+    "actions 响应含 applied 且 view 为 slim",
+    act.status === 200 && actBody.applied === true &&
+      Array.isArray(actBody.view?.history) && actBody.view!.history!.length === 0 && actBody.view!.history_truncated === true,
+    "",
+  );
+
+  const ev6 = await api(`/matches/${m6}/events`, { headers: { "x-seat-token": st6[1]! } });
+  const ls = ev6.body.latest_seq;
+  check("events 带 latest_seq 游标", typeof ls === "number" && (ls as number) >= 0, `latest_seq=${String(ls)}`);
+  const ev6b = await api(`/matches/${m6}/events?since=${String(ls)}`, { headers: { "x-seat-token": st6[1]! } });
+  const ev6bArr = (ev6b.body.events as unknown[]) ?? [];
+  check("since=latest_seq 增量为空", ev6bArr.length === 0, `${ev6bArr.length} 条`);
+
+  const rep6 = await api(`/matches/${m6}/replay`, { headers: { "x-seat-token": st6[1]! } });
+  const seatNames = rep6.body.seat_names as Record<string, string> | undefined;
+  check("replay 回带席位显示名", typeof seatNames === "object" && seatNames !== null && Object.values(seatNames).length >= 2, JSON.stringify(seatNames));
+
+  const nf1 = await api("/leaderboard");
+  check(
+    "404 分级：裸 leaderboard 路径给定向提示",
+    nf1.status === 404 && String(nf1.body.hint ?? "").includes("leaderboard/"),
+    String(nf1.body.hint ?? "").slice(0, 36),
+  );
+  const nf2 = await api("/nope");
+  check("404 分级：未知路径指向端点清单", nf2.status === 404 && String(nf2.body.hint ?? "").includes("端点"), "");
+  const lb = await api("/leaderboard/othello");
+  check("排行榜端点（带 game 段）可达", lb.status === 200 && Array.isArray(lb.body.leaderboard), "");
+
+  // 打完这局避免悬挂超时（复用双端循环）
+  let m6Finished = false;
+  const t2 = Date.now();
+  while (Date.now() - t2 < 20000) {
+    let allDone = true;
+    for (const seat of [1, 2]) {
+      const v = await api(`/matches/${m6}/view`, { headers: { "x-seat-token": st6[seat]! } });
+      const view = v.body as { phase?: string; you?: { active?: boolean }; legal_actions?: { type: string; schema?: { values?: number[] } }[] };
+      if (view.phase === "finished") continue;
+      allDone = false;
+      if (view.you?.active !== true) continue;
+      const la = view.legal_actions?.[0];
+      const action = la?.type === "place" ? { type: "place", cell: la.schema?.values?.[0] } : { type: "pass" };
+      await api(`/matches/${m6}/actions`, {
+        method: "POST",
+        headers: { "x-seat-token": st6[seat]!, "content-type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+    }
+    if (allDone) {
+      m6Finished = true;
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 60));
+  }
+  check("场景 6 对局完整收官", m6Finished, `${Date.now() - t2}ms`);
 
   console.log(`\n=== 结果：${failed === 0 ? "全部通过" : failed + " 项失败"} ===`);
   process.exitCode = failed === 0 ? 0 : 1;

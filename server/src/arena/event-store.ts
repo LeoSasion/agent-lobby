@@ -14,7 +14,8 @@ export class EventStore {
     data: Record<string, unknown> = {},
     visibility: MatchEvent["visibility"] = "all",
   ): MatchEvent {
-    const ev: MatchEvent = { seq: this.events.length, type, data, visibility };
+    // ts 为观测性元数据（epoch ms）：hashEvents 只取 type/data/visibility，回放只按 seed+acted 重放——两者均与 ts 正交
+    const ev: MatchEvent = { seq: this.events.length, ts: Date.now(), type, data, visibility };
     this.events.push(ev);
     for (const cb of this.subscribers) {
       try { cb(ev); } catch { /* 订阅者异常不影响写入 */ }

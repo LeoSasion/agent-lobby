@@ -86,7 +86,7 @@ function tryResolveNight(s: State, events: GameEvent[], rng: Rng): void {
     if (!s.nightActions.has(seat)) return; // 还没收齐，等下一个 apply
   }
 
-  // 狼刀：狼队以最后提交（座位序最高）的 kill 为准
+  // 狼刀：狼队意见不一致时，以座位号最大的狼的 kill 为准（v0 简化；分歧以 night_kill_decided.disagreed 标记，文档需写明）
   const wolves = wolfSeats(s);
   let target: SeatId | null = null;
   let disagreed = false;
@@ -388,7 +388,8 @@ export function createWerewolfLite(): GameModule<State> {
       return { state: s, events };
     },
 
-    viewOf(s, viewer) {      const pub: Record<string, unknown> = {
+    viewOf(s, viewer) {
+      const pub: Record<string, unknown> = {
         round: s.round,
         phase: s.phase,
         seats: s.seats,
@@ -397,6 +398,20 @@ export function createWerewolfLite(): GameModule<State> {
         last_day_says: s.lastSays,
         pk_candidates: s.pkCandidates,
       };
+      // 相位进度（纯公开信息，不含票向/身份）：谁在发言、谁还没投票——消除真人局盲等（r6 三方反馈）
+      if (s.phase === "day_discuss") {
+        if (s.lwIndex < s.lwQueue.length) {
+          pub.speaking_seat = s.lwQueue[s.lwIndex];
+          pub.pending_speakers = [...s.lwQueue.slice(s.lwIndex + 1), ...s.sayQueue];
+        } else {
+          pub.speaking_seat = s.sayQueue[s.sayIndex];
+          pub.pending_speakers = s.sayQueue.slice(s.sayIndex + 1);
+        }
+      }
+      if (s.phase === "day_vote") {
+        pub.votes_cast = [...s.votes.keys()].sort((a, b) => a - b);
+        pub.pending_voters = aliveSeats(s).filter((t) => !s.votes.has(t));
+      }
       if (viewer === "spectator") return { public: pub, private: {} };
       const role = s.roles.get(viewer);
       if (role === undefined) return { public: pub, private: {} };

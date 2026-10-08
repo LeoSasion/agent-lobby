@@ -20,11 +20,15 @@ export interface ActOptions {
 
 export interface ActResult {
   ok: boolean;
+  /** HTTP 状态码（422=业务拒绝可自纠；其余非 2xx 已抛 ArenaApiError） */
+  status?: number;
+  /** 动作已入账的显式确认（r6 反馈：ok 与 applied 语义区分） */
+  applied?: boolean;
   /** 422 时可自纠的错误码（NOT_YOUR_TURN / ILLEGAL_ACTION / NONCE_EXPIRED / DUPLICATE_ACTION …） */
   code?: string;
   error?: string;
   legal_actions?: LegalAction[];
-  /** 提交成功时回带结算后的 AgentView（幂等重放时 replayed=true） */
+  /** 提交成功时回带结算后的 AgentView（slim：不含 history；幂等重放时 replayed=true） */
   view?: AgentView;
   replayed?: boolean;
 }
@@ -71,14 +75,20 @@ export class ArenaApiError extends Error {
 
 export class ArenaClient {
   readonly url: string;
+  /** 单请求超时（毫秒）；超时/网络错误抛异常，绝不无限挂起（r6 ot-h1 反馈） */
+  readonly requestTimeoutMs: number;
 
-  constructor(url: string) {
+  constructor(url: string, opts?: { requestTimeoutMs?: number }) {
     this.url = url.replace(/\/$/, "");
+    this.requestTimeoutMs = opts?.requestTimeoutMs ?? 15_000;
   }
 
   /** 请求并解析 JSON；非 2xx 抛 ArenaApiError（保留 body 供自纠） */
   private async request(path: string, opts: RequestInit = {}): Promise<{ status: number; body: Record<string, unknown> }> {
-    const res = await fetch(this.url + "/api/v1" + path, opts);
+    const res = await fetch(this.url + "/api/v1" + path, {
+      ...opts,
+      signal: opts.signal ?? AbortSignal.timeout(this.requestTimeoutMs),
+    });
     let body: Record<string, unknown>;
     try {
       body = (await res.json()) as Record<string, unknown>;
@@ -143,6 +153,80 @@ export class ArenaClient {
       house: x.house as boolean | undefined,
     }));
   }
+
+  /** 挂载进行中/已结束的对局（从房间流程或外部拿到 match_id + seat_token 时使用——r6 ot-h1 反馈：quickstart 曾是唯一入口） */
+  attach(matchId: string, seatToken: string, opts?: { apiKey?: string; agentId?: string }): MatchHandle {
+    return new MatchHandle(this, {
+      matchId,
+      seatToken,
+      apiKey: opts?.apiKey ?? "",
+      agentId: opts?.agentId ?? "",
+    });
+  }
+
+  /** 创建多人房间（创建者即 1 号位；满员自动开局） */
+  async createRoom(opts: {
+    game: string;
+    seats?: number;
+    name?: string;
+    timeoutMs?: number;
+    apiKey?: string;
+    channel?: "http" | "webhook";
+  }): Promise<{ roomId: string; joinToken: string; status: string }> {
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (opts.apiKey) headers.authorization = `Bearer ${opts.apiKey}`;
+    const body: Record<string, unknown> = { game: opts.game };
+    if (opts.seats !== undefined) body.seats = opts.seats;
+    if (opts.name !== undefined) body.name = opts.name;
+    if (opts.timeoutMs !== undefined) body.timeout_ms = opts.timeoutMs;
+    if (opts.channel) body.channel = opts.channel;
+    const r = (await this.request("/lobby/rooms", { method: "POST", headers, body: JSON.stringify(body) })).body;
+    return { roomId: r.room_id as string, joinToken: r.join_token as string, status: r.status as string };
+  }
+
+  /** 加入房间（webhook 通道需 apiKey 且该身份注册时带 callback_url） */
+  async joinRoom(
+    roomId: string,
+    opts: { name?: string; apiKey?: string; channel?: "http" | "webhook" },
+  ): Promise<{ roomId: string; joinToken: string; status: string; playerIndex: number }> {
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (opts.apiKey) headers.authorization = `Bearer ${opts.apiKey}`;
+    const body: Record<string, unknown> = {};
+    if (opts.name !== undefined) body.name = opts.name;
+    if (opts.channel) body.channel = opts.channel;
+    const r = (await this.request(`/lobby/rooms/${roomId}/join`, { method: "POST", headers, body: JSON.stringify(body) })).body;
+    return {
+      roomId,
+      joinToken: r.join_token as string,
+      status: r.status as string,
+      playerIndex: r.player_index as number,
+    };
+  }
+
+  /** 房间状态（waiting 公开；started 需本人 join_token 换座位分配） */
+  async roomStatus(roomId: string, joinToken?: string): Promise<Record<string, unknown>> {
+    return (await this.request(`/lobby/rooms/${roomId}${joinToken ? `?token=${joinToken}` : ""}`)).body;
+  }
+
+  /** 轮询等待开局，返回座位分配（官方轮询模板——r6 反馈：每个 agent 都在重造这个循环） */
+  async waitForStart(
+    roomId: string,
+    joinToken: string,
+    opts?: { pollMs?: number; timeoutMs?: number },
+  ): Promise<{ matchId: string; seatId: SeatId; seatToken: string }> {
+    const pollMs = opts?.pollMs ?? 2000;
+    const deadline = opts?.timeoutMs !== undefined ? Date.now() + opts.timeoutMs : Number.POSITIVE_INFINITY;
+    for (;;) {
+      const r = await this.roomStatus(roomId, joinToken);
+      if (r.status === "started" && typeof r.match_id === "string" && typeof r.seat_token === "string") {
+        return { matchId: r.match_id, seatId: r.seat_id as SeatId, seatToken: r.seat_token };
+      }
+      if (Date.now() > deadline) {
+        throw new ArenaApiError(408, { error: `waitForStart 超时（room=${roomId}）` });
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
+  }
 }
 
 export interface MatchHandleInit {
@@ -170,9 +254,9 @@ export class MatchHandle {
     this.agentId = init.agentId;
   }
 
-  /** 获取当前 AgentView */
-  async view(): Promise<AgentView> {
-    const r = await this.client.api(`/matches/${this.matchId}/view`, {
+  /** 获取当前 AgentView（slim=true 省略 history——高频轮询省流量，完整历史走 pollEvents） */
+  async view(slim = false): Promise<AgentView> {
+    const r = await this.client.api(`/matches/${this.matchId}/view${slim ? "?slim=1" : ""}`, {
       headers: { "x-seat-token": this.seatToken },
     });
     return r as unknown as AgentView;
@@ -180,8 +264,8 @@ export class MatchHandle {
 
   /**
    * 提交动作（可选 reasoning + nonce）。
-   * 业务拒绝（422）不抛异常，返回 {ok:false, code, legal_actions} 供自纠；
-   * 网络/服务端故障（非 2xx）抛 ArenaApiError。
+   * 业务拒绝（422）不抛异常，返回 {ok:false, status:422, code, legal_actions} 供自纠；
+   * 基础设施错误（401/403/404/5xx）抛 ArenaApiError——绝不把配置问题吞成"动作被拒"（r6 ot-h1 反馈）。
    * 幂等建议：每回合生成唯一 nonce（如 `${matchId}:${turn}:act`）；同 nonce 跨回合重试将得到
    * 网关重放缓存的成功（replayed=true）或 NONCE_EXPIRED——都不会消耗新回合。
    */
@@ -192,6 +276,7 @@ export class MatchHandle {
     const res = await fetch(this.client.url + `/api/v1/matches/${this.matchId}/actions`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-seat-token": this.seatToken },
+      signal: AbortSignal.timeout(this.client.requestTimeoutMs),
       body: JSON.stringify(body),
     });
     let r: Record<string, unknown>;
@@ -200,7 +285,10 @@ export class MatchHandle {
     } catch {
       throw new ArenaApiError(res.status, { error: `提交响应不是合法 JSON（${res.status}）` });
     }
-    return r as unknown as ActResult;
+    if (!res.ok && res.status !== 422) {
+      throw new ArenaApiError(res.status, r);
+    }
+    return { ...(r as unknown as ActResult), status: res.status };
   }
 
   /** 拉取增量事件 */
@@ -211,6 +299,18 @@ export class MatchHandle {
     return (r.events ?? []) as MatchEvent[];
   }
 
+  /** 拉取增量事件（结构化：latestSeq 作下次 since 游标，finished 标记终局——r6 两方反馈） */
+  async pollEvents(since = -1): Promise<{ events: MatchEvent[]; latestSeq: number; finished: boolean }> {
+    const r = await this.client.api(`/matches/${this.matchId}/events?since=${since}`, {
+      headers: { "x-seat-token": this.seatToken },
+    });
+    return {
+      events: (r.events ?? []) as MatchEvent[],
+      latestSeq: typeof r.latest_seq === "number" ? r.latest_seq : since,
+      finished: r.finished === true,
+    };
+  }
+
   /**
    * 异步迭代 AgentView —— 核心参赛循环
    * ```ts
@@ -219,10 +319,23 @@ export class MatchHandle {
    * }
    * ```
    * 视图缺少 phase/you 字段（网关异常等）时抛错，绝不静默继续。
+   * 网络抖动自动退避重试（默认 3 次，1s/2s/4s），连续失败才抛出——单次 fetch 故障不再终止整个参赛循环（r6 ot-h1 反馈）。
    */
-  async *views(pollMs = 1000, activePollMs = 200): AsyncGenerator<AgentView, void, void> {
+  async *views(pollMs = 1000, activePollMs = 200, opts?: { maxRetries?: number; slim?: boolean }): AsyncGenerator<AgentView, void, void> {
+    const maxRetries = opts?.maxRetries ?? 3;
+    const slim = opts?.slim ?? false;
+    let retries = 0;
     while (!this._finished) {
-      const v = await this.view();
+      let v: AgentView;
+      try {
+        v = await this.view(slim);
+        retries = 0;
+      } catch (e) {
+        if (retries >= maxRetries) throw e;
+        retries++;
+        await new Promise((r) => setTimeout(r, 1000 * 2 ** (retries - 1)));
+        continue;
+      }
       if (typeof v?.phase !== "string" || typeof v?.you?.active !== "boolean") {
         throw new Error(`views() 收到异常视图：${JSON.stringify(v).slice(0, 200)}`);
       }

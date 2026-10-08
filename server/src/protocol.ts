@@ -25,6 +25,8 @@ export type EventVisibility = "all" | { seats: SeatId[] };
 /** 追加式事件：回放 = seed + acted 序列重放 */
 export interface MatchEvent {
   seq: number;
+  /** 事件发生时刻（epoch ms）——纯观测性元数据：不参与确定性哈希与回放重放（r6 ot-h1：回放时间压力分析依赖） */
+  ts?: number;
   type: string;
   data: Record<string, unknown>;
   visibility: EventVisibility;

@@ -91,6 +91,8 @@ interface RunningMatch {
   seatTokens: Map<string, SeatId>;
   httpDrivers: Map<SeatId, HttpSeatDriver>;
   seatAgents: Map<SeatId, string>;
+  /** webhook 席位的终局通知回调（对局结束后推送 match.ended——r6 ot-s1 反馈：v0 从不发送该事件，Agent 只能轮询探终局） */
+  webhookNotices: Map<SeatId, { url: string; secret: string }>;
   result: MatchResult | null;
   ratings: RatingDelta[] | null;
   headline: string | null;
@@ -237,6 +239,7 @@ export class Gateway {
               seatTokens: new Map(),
               httpDrivers: new Map(),
               seatAgents,
+              webhookNotices: new Map(),
               result: null,
               ratings: null,
               headline: m.headline,
@@ -368,11 +371,40 @@ export class Gateway {
     }
     const m = /^\/api\/v1\/matches\/([^/]+)\/(view|actions|events|replay)$/.exec(path);
     if (m) return this.matchOp(m[1], m[2], method, url, req, res);
-    return this.json(res, 404, {
-      error: "NOT_FOUND",
-      path,
-      hint: "对局子路径仅支持 view|actions|events|replay（另有 /stream 与 /replay/step）",
-    });
+    return this.json(res, 404, this.notFoundHint(path));
+  }
+
+  /** 404 提示按路径分级——定向提示优于通用清单（r6 实测：误导性 hint 让测试者得出"排行榜不存在"的错误结论并反向印证） */
+  private notFoundHint(path: string): { error: string; path: string; hint: string } {
+    if (path.startsWith("/api/v1/leaderboard")) {
+      return {
+        error: "NOT_FOUND",
+        path,
+        hint: "排行榜需指定游戏：GET /api/v1/leaderboard/{game}（游戏 id 见 GET /api/v1/games）",
+      };
+    }
+    if (path.startsWith("/api/v1/lobby")) {
+      return {
+        error: "NOT_FOUND",
+        path,
+        hint: "大厅端点：GET /lobby/rooms（列表）· POST /lobby/rooms（建房）· POST /lobby/rooms/:id/join|start · GET /lobby/rooms/:id?token= · POST /lobby/quickstart",
+      };
+    }
+    if (/^\/api\/v1\/matches\/[^/]+/.test(path)) {
+      return {
+        error: "NOT_FOUND",
+        path,
+        hint: "对局子路径仅支持 view|actions|events|replay（另有 /stream 与 /replay/step）",
+      };
+    }
+    if (path.startsWith("/api/v1/agents") || path.startsWith("/api/v1/webhook")) {
+      return {
+        error: "NOT_FOUND",
+        path,
+        hint: "注册：POST /api/v1/agents；webhook 自检：POST /api/v1/webhook/test（Bearer）",
+      };
+    }
+    return { error: "NOT_FOUND", path, hint: "未知端点；完整清单见 GET /api/v1" };
   }
 
   private quickstart(req: IncomingMessage, body: Record<string, unknown>, res: ServerResponse): void {
@@ -429,6 +461,9 @@ export class Gateway {
       seatTokens: new Map([[seatToken, 1]]),
       httpDrivers,
       seatAgents,
+      webhookNotices: useWebhook
+        ? new Map([[1, { url: known!.callback_url!, secret: known!.webhook_secret! }]])
+        : new Map(),
       result: null,
       ratings: null,
       headline: null,
@@ -450,7 +485,7 @@ export class Gateway {
     });
   }
 
-  /** 对局终局记账（headline + Elo），quickstart 与房间开局共用 */
+  /** 对局终局记账（headline + Elo + webhook 终局通知），quickstart 与房间开局共用 */
   private runMatchBookkeeping(rm: RunningMatch): void {
     rm.match
       .run()
@@ -460,8 +495,38 @@ export class Gateway {
         if (!r.events.some((e) => e.type === "match_failed")) {
           rm.ratings = this.ratings.applyMatch(rm.gameId, rm.seatAgents, r.scores);
         }
+        this.notifyWebhookEnd(rm, r.scores);
       })
       .catch((e) => console.error("[match error]", rm.match.id, e));
+  }
+
+  /** 终局通知：向 webhook 席位推送 match.ended（HMAC 签名同 turn.start；fire-and-forget，失败仅记日志不影响对局） */
+  private notifyWebhookEnd(rm: RunningMatch, scores: Record<SeatId, number>): void {
+    if (rm.webhookNotices.size === 0) return;
+    const body = JSON.stringify({
+      event: "match.ended",
+      match_id: rm.match.id,
+      game: rm.gameId,
+      result: { scores },
+    });
+    for (const [seat, cb] of rm.webhookNotices) {
+      const sig = createHmac("sha256", cb.secret).update(body).digest("hex");
+      withTimeout(
+        fetch(cb.url, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-arena-event": "match.ended",
+            "x-arena-delivery": "d-end-" + randomId(""),
+            "x-arena-signature": "sha256=" + sig,
+          },
+          body,
+        }),
+        8000,
+      )
+        .then(() => {})
+        .catch((e) => console.error(`[webhook] match.ended 推送失败 seat=${seat}:`, e));
+    }
   }
 
   /** 请求者身份：Bearer api_key 关联老选手（Elo 累积），否则匿名游客 */
@@ -668,6 +733,10 @@ export class Gateway {
     humanDrivers.forEach((d, i) => {
       if (d instanceof HttpSeatDriver) httpDrivers.set(i + 1, d);
     });
+    const webhookNotices = new Map<SeatId, { url: string; secret: string }>();
+    room.players.forEach((p, i) => {
+      if (p.channel === "webhook" && p.callback) webhookNotices.set(i + 1, p.callback);
+    });
 
     const rm: RunningMatch = {
       match,
@@ -676,6 +745,7 @@ export class Gateway {
       seatTokens,
       httpDrivers,
       seatAgents,
+      webhookNotices,
       result: null,
       ratings: null,
       headline: null,
@@ -850,6 +920,7 @@ export class Gateway {
       seatTokens: new Map(),
       httpDrivers: new Map(),
       seatAgents,
+      webhookNotices: new Map(),
       result: null,
       ratings: null,
       headline: null,
@@ -982,7 +1053,12 @@ export class Gateway {
     const viewer: SeatId | "spectator" = seat ?? "spectator";
 
     if (op === "view" && method === "GET") {
-      return this.json(res, 200, rm.match.viewFor(viewer));
+      const v = rm.match.viewFor(viewer);
+      // ?slim=1：省略 history——高频轮询省流量（r6 实测全量 view 最重 41KB；完整历史走 /events?since= 增量）
+      if (url.searchParams.get("slim") === "1") {
+        return this.json(res, 200, { ...v, history: [], history_truncated: true });
+      }
+      return this.json(res, 200, v);
     }
     if (op === "actions" && method === "POST") {
       if (seat === undefined) return this.json(res, 403, { error: "SEAT_INVALID" });
@@ -1001,7 +1077,13 @@ export class Gateway {
       const replayKey = nonce0 ? `${matchId}:${seat}:${nonce0}` : null;
       if (replayKey && this.nonceReplay.has(replayKey)) {
         await new Promise((r) => setImmediate(r)); // 若原动作正在结算，等一拍取结算后视图
-        return this.json(res, 200, { ok: true, replayed: true, view: rm.match.viewFor(seat) });
+        const full = rm.match.viewFor(seat);
+        return this.json(res, 200, {
+          ok: true,
+          replayed: true,
+          applied: true,
+          view: { ...full, history: [], history_truncated: true },
+        });
       }
       const probe = rm.match.viewFor(seat);
       if (probe.you.submitted) {
@@ -1031,10 +1113,15 @@ export class Gateway {
           this.nonceReplay.set(replayKey, true);
           if (this.nonceReplay.size > 2000) this.nonceReplay.clear(); // 粗粒度防膨胀
         }
-        // 提交成功 ≠ 已结算：等一拍让本回合 apply 跑完，回带结算后的视图
+        // 提交成功 ≠ 已结算：等一拍让本回合 apply 跑完，回带结算后的视图。
+        // 视图为 slim（无 history）——r6 六方反馈：actions 响应最重 41KB，历史应走 /events?since= 增量
         await new Promise((r2) => setImmediate(r2));
-        const view = rm.match.viewFor(seat);
-        return this.json(res, 200, { ok: true, view });
+        const full = rm.match.viewFor(seat);
+        return this.json(res, 200, {
+          ok: true,
+          applied: true,
+          view: { ...full, history: [], history_truncated: true },
+        });
       }
       const code =
         ["MATCH_FINISHED", "NOT_YOUR_TURN", "NONCE_REUSED", "NONCE_EXPIRED", "DUPLICATE_ACTION", "ILLEGAL_ACTION", "SEAT_INVALID"].find(
@@ -1045,8 +1132,12 @@ export class Gateway {
     if (op === "events" && method === "GET") {
       const sinceParam = Number(url.searchParams.get("since"));
       const since = Number.isFinite(sinceParam) ? sinceParam : -1;
+      const all = rm.match.eventsFor(viewer);
+      const latestSeq = all.length > 0 ? all[all.length - 1]!.seq : -1;
       return this.json(res, 200, {
         events: rm.match.eventsFor(viewer, since),
+        // next-since 游标：下次请求 ?since=latest_seq 即为增量（r6 两方反馈）
+        latest_seq: latestSeq,
         // 赛中 acted.reasoning 脱敏、终局后公开——finished 标记帮助调用方区分两种语义
         finished: rm.match.isFinished(),
       });
@@ -1058,6 +1149,8 @@ export class Gateway {
         finished: rm.match.isFinished(),
         scores: r?.scores ?? null,
         ratings: rm.ratings,
+        // 席位 → 显示名映射（r6 ot-h1 反馈：只有 agent_id 对人不友好）
+        seat_names: Object.fromEntries([...rm.seatAgents.entries()].map(([s, a]) => [String(s), this.nameOf(a)])),
         events: rm.match.eventsFor(viewer),
       });
     }
