@@ -39,6 +39,19 @@ function withViewCheck(inner: SeatDriver): SeatDriver {
         if (ev.type === "night_kill_decided" && role !== "werewolf") violations.push(`seat${view.you.seat}: 非狼看到狼刀`);
         if (ev.type === "checked" && role !== "seer") violations.push(`seat${view.you.seat}: 非预言家看到验人`);
       }
+      // r8：speaking_kind 一致性——发言席位的 legal_actions[0].type 必须与 public.speaking_kind 一致
+      //（day_discuss 单席位相位，act() 只会在当前发言人身上调用）
+      if (view.phase === "day_discuss") {
+        const pub = view.public as { speaking_seat?: number; speaking_kind?: string };
+        const myAction = view.legal_actions[0]?.type;
+        if (pub.speaking_seat !== view.you.seat) {
+          violations.push(`seat${view.you.seat}: day_discuss 行动者 ≠ speaking_seat(${pub.speaking_seat})`);
+        }
+        const expect = myAction === "last_words" ? "last_words" : "say";
+        if (pub.speaking_kind !== expect) {
+          violations.push(`seat${view.you.seat}: speaking_kind=${pub.speaking_kind} ≠ legal_actions[0]=${myAction}`);
+        }
+      }
       await inner.act(view, submit);
     },
   };

@@ -400,13 +400,11 @@ export function createWerewolfLite(): GameModule<State> {
       };
       // 相位进度（纯公开信息，不含票向/身份）：谁在发言、谁还没投票——消除真人局盲等（r6 三方反馈）
       if (s.phase === "day_discuss") {
-        if (s.lwIndex < s.lwQueue.length) {
-          pub.speaking_seat = s.lwQueue[s.lwIndex];
-          pub.pending_speakers = [...s.lwQueue.slice(s.lwIndex + 1), ...s.sayQueue];
-        } else {
-          pub.speaking_seat = s.sayQueue[s.sayIndex];
-          pub.pending_speakers = s.sayQueue.slice(s.sayIndex + 1);
-        }
+        const inLw = s.lwIndex < s.lwQueue.length;
+        pub.speaking_seat = inLw ? s.lwQueue[s.lwIndex] : s.sayQueue[s.sayIndex];
+        // r8：显式标注当前发言种类——开场遗言与普通发言对外观感一致，2/2 死亡席位实测错过遗言窗口
+        pub.speaking_kind = inLw ? "last_words" : "say";
+        pub.pending_speakers = inLw ? [...s.lwQueue.slice(s.lwIndex + 1), ...s.sayQueue] : s.sayQueue.slice(s.sayIndex + 1);
       }
       if (s.phase === "day_vote") {
         // 已投票席位来自内核 ctx.submittedSeats（received 实时缓冲）——s.votes 要等批量 apply 才写入，

@@ -1082,6 +1082,8 @@ export class Gateway {
       }
       const body0 = await readJson(req);
       const nonce0 = typeof body0.nonce === "string" ? body0.nonce.slice(0, 64) : undefined;
+      // reasoning >500 字将被截断入账（r8 w8-s2：静默丢数据不可接受）——200 响应显式回显
+      const reasonTruncated = typeof body0.reasoning === "string" && body0.reasoning.length > 500;
       // nonce 重放：同 (对局, 席位, nonce) 已成功过 → 直接幂等成功（快照早已入账，绝不消耗新回合）
       const replayKey = nonce0 ? `${matchId}:${seat}:${nonce0}` : null;
       if (replayKey && this.nonceReplay.has(replayKey)) {
@@ -1091,6 +1093,7 @@ export class Gateway {
           ok: true,
           replayed: true,
           applied: true,
+          ...(reasonTruncated ? { reasoning_truncated: true } : {}),
           view: { ...full, history: [], history_truncated: true },
         });
       }
@@ -1125,6 +1128,8 @@ export class Gateway {
         return this.json(res, 200, {
           ok: true,
           applied: true,
+          // r8 w8-s2：reasoning 超 500 字静默截断——显式回显，杜绝无声丢数据
+          ...(reasonTruncated ? { reasoning_truncated: true } : {}),
           view: { ...full, history: [], history_truncated: true },
         });
       }

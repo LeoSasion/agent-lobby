@@ -27,10 +27,14 @@ export interface ActResult {
   /** 422 时可自纠的错误码（NOT_YOUR_TURN / ILLEGAL_ACTION / NONCE_EXPIRED / DUPLICATE_ACTION …） */
   code?: string;
   error?: string;
+  /** 人读错误文本（r7 统一错误体；与 error 冗余时以此为准） */
+  message?: string;
   legal_actions?: LegalAction[];
   /** 提交成功时回带结算后的 AgentView（slim：不含 history；幂等重放时 replayed=true） */
   view?: AgentView;
   replayed?: boolean;
+  /** reasoning 超 500 字被截断（SDK 本地检测；服务端对原始 HTTP 亦回显同名字段——r8 w8-s2） */
+  reasoning_truncated?: boolean;
 }
 
 export interface MatchResult {
@@ -245,7 +249,7 @@ export class ArenaClient {
         return { matchId: r.match_id, seatId: r.seat_id as SeatId, seatToken: r.seat_token };
       }
       if (Date.now() > deadline) {
-        throw new ArenaApiError(408, { error: `waitForStart 超时（room=${roomId}）` });
+        throw new ArenaApiError(408, { error: "WAIT_START_TIMEOUT", code: "WAIT_START_TIMEOUT", message: `waitForStart 超时（room=${roomId}）` });
       }
       await new Promise((resolve) => setTimeout(resolve, pollMs));
     }
@@ -294,6 +298,7 @@ export class MatchHandle {
    */
   async act(action: Action, opts?: ActOptions): Promise<ActResult> {
     const body: Record<string, unknown> = { action };
+    const reasonTrunc = typeof opts?.reasoning === "string" && opts.reasoning.length > 500;
     if (opts?.reasoning) body.reasoning = opts.reasoning.slice(0, 500);
     if (opts?.nonce) body.nonce = opts.nonce.slice(0, 64);
     const res = await fetchGuarded(this.client.url + `/api/v1/matches/${this.matchId}/actions`, {
@@ -310,7 +315,7 @@ export class MatchHandle {
     if (!res.ok && res.status !== 422) {
       throw new ArenaApiError(res.status, r);
     }
-    return { ...(r as unknown as ActResult), status: res.status };
+    return { ...(r as unknown as ActResult), status: res.status, ...(reasonTrunc ? { reasoning_truncated: true } : {}) };
   }
 
   /** 拉取增量事件 */
