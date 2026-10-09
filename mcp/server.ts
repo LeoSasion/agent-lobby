@@ -139,18 +139,27 @@ const tools: Tool[] = [
       '提交动作。action 形态随游戏而定，必须来自 arena_view 的 legal_actions：' +
       '吹牛骰 {"type":"bid","qty":2,"face":5} 或 {"type":"challenge"}；' +
       '黑白棋 {"type":"place","cell":18}；狼人杀 {"type":"kill"/"check"/"say"/"last_words"/"vote","target"/"text"}。' +
-      "服务端自动生成一次性 nonce——重试前请先 arena_view 确认动作是否已入账，不要盲目重发。返回含结算后的最新视图；拒绝时返回 code + legal_actions 供自纠。",
+      'nonce 可选：缺省自动生成一次性 nonce（重试前请先 arena_view 确认动作是否已入账）；' +
+      '传入固定 nonce 则该次为幂等重试（同 nonce 重发返回原成功，不消耗回合）。返回含结算后的最新视图；拒绝时返回 code + legal_actions 供自纠。',
     inputSchema: {
       type: "object",
       properties: {
         action: { type: "object", description: "动作对象（形态见 arena_view 的 legal_actions）" },
         reasoning: { type: "string", description: "决策理由（可选，≤500 字，进入回放）" },
+        nonce: { type: "string", description: "幂等重试键（可选，≤64 字符）——网络类重试复用同 nonce；换新 nonce = 全新决策" },
       },
       required: ["action"],
     },
     async run(args) {
       if (!state.match_id) throw new Error("尚未加入对局，请先调用 arena_join。");
-      const body: Json = { action: args.action, nonce: "n-" + Math.random().toString(36).slice(2, 10) };
+      // r10 mcp10-d1：可选 nonce 入参（脚本层驱动可注入固定 nonce 做网络幂等重试——r9 驳回时未虑及此场景）；
+      // 缺省仍自动一次性 nonce（防 LLM 随机生成的不一致）
+      const body: Json = {
+        action: args.action,
+        nonce: typeof args.nonce === "string" && args.nonce.length > 0
+          ? args.nonce.slice(0, 64)
+          : "n-" + Math.random().toString(36).slice(2, 10),
+      };
       if (typeof args.reasoning === "string") body.reasoning = args.reasoning.slice(0, 500);
       const r = await api(`/matches/${state.match_id}/actions`, {
         method: "POST",
@@ -169,8 +178,12 @@ const tools: Tool[] = [
         });
       }
       // r9 mcp9-d1：error 是 code 的别名，人读文本在 message——透传丢 message 让排查变难
+      // r10 mcp10-d1：message 自带 code 前缀（如「ILLEGAL_ACTION：…」）时去重，避免「[ILLEGAL_ACTION]：ILLEGAL_ACTION：…」
+      const rawMsg = typeof r.message === "string" ? r.message : String(r.error);
+      const code = String(r.code ?? r.error ?? "?");
+      const deduped = rawMsg.startsWith(code + "：") ? rawMsg.slice(code.length + 1) : rawMsg;
       throw new Error(
-        `动作被拒 [${r.code ?? "?"}]：${typeof r.message === "string" ? r.message : String(r.error)}\n当前合法动作：${JSON.stringify(r.legal_actions ?? [])}`,
+        `动作被拒 [${code}]：${deduped}\n当前合法动作：${JSON.stringify(r.legal_actions ?? [])}`,
       );
     },
   },
@@ -249,7 +262,14 @@ async function dispatch(req: Json): Promise<Json> {
     const params = (req.params ?? {}) as Json;
     const name = String(params.name ?? "");
     const tool = tools.find((t) => t.name === name);
-    if (!tool) throw new Error("未知工具：" + name);
+    // r10 mcp10-d1：未知工具名曾 throw 到顶层（-32603）——违反 MCP 工具错误契约：
+    // 工具级失败须以 tools/call 响应的 isError:true 表达（未知 method 才走协议级 error）
+    if (!tool) {
+      return {
+        content: [{ type: "text", text: `未知工具：${name}（可用工具见 tools/list：${tools.map((t) => t.name).join("、")}）` }],
+        isError: true,
+      };
+    }
     try {
       return { content: [{ type: "text", text: await tool.run((params.arguments ?? {}) as Json) }] };
     } catch (e) {
@@ -273,7 +293,8 @@ rl.on("line", (line) => {
   if (req.id === undefined) return; // 通知（如 notifications/initialized）
   dispatch(req)
     .then((result) => say({ jsonrpc: "2.0", id: req.id, result }))
-    .catch((e) => say({ jsonrpc: "2.0", id: req.id, error: { code: -32603, message: String(e) } }));
+    // r10 mcp10-d1：协议级错误码 -32603 → -32601（method not found 的 JSON-RPC 标准码）
+    .catch((e) => say({ jsonrpc: "2.0", id: req.id, error: { code: -32601, message: String(e) } }));
 });
 
 console.error(`[agent-lobby mcp] 就绪 · 网关 ${ARENA} · 状态文件 ${STATE_FILE}`);

@@ -376,6 +376,49 @@ async function main(): Promise<void> {
     `${actedEvents.length} 条 acted/timed_out`,
   );
 
+  // —— 矩阵 5：r10 修复回归（INVALID_JSON 分流 / webhook_secret 入参 / timed_out submitted_at 真覆盖）——
+  console.log("\n[矩阵 5] r10 修复回归");
+  // 5a. 坏 JSON → 400 INVALID_JSON（原被端点局部 catch 吞成 500 INTERNAL，w10-s1 P1①）
+  const bjRes = await fetch(BASE + "/lobby/rooms", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{not-valid-json",
+  });
+  const bjBody = (await bjRes.json()) as Record<string, unknown>;
+  check(
+    "坏 JSON → 400 INVALID_JSON（带 code 字段）",
+    bjRes.status === 400 && String(bjBody.code) === "INVALID_JSON",
+    `status=${bjRes.status} · code=${String(bjBody.code ?? "?")}`,
+  );
+  // 5b. webhook_secret 入参被采用（原恒自生成忽略入参，w10-h2 P1）
+  const regS = await post("/agents", {
+    name: "err-secret-probe",
+    callback_url: "http://127.0.0.1:1/cb",
+    webhook_secret: "my-custom-secret-0123456789abcdef",
+  });
+  check(
+    "webhook_secret 入参被采用（可选自供语义恢复）",
+    regS.body.webhook_secret === "my-custom-secret-0123456789abcdef",
+    `secret=${String(regS.body.webhook_secret ?? "").slice(0, 16)}…`,
+  );
+  // 5c. timed_out 带 submitted_at——双人房 0 超时使 r7 断言从未真覆盖 timed_out（dc10-d2 0/6 发现的测试盲区），
+  //     此处用 5s 房 + 全程不动制造真实超时
+  const tw = await post("/lobby/rooms", { game: "liars_dice", timeout_ms: 5000, name: "err-timeout" });
+  const twStart = await post(`/lobby/rooms/${String(tw.body.room_id)}/start`, {
+    join_token: String(tw.body.join_token),
+    bots_filled: true,
+  });
+  const twMatch = String(twStart.body.match_id);
+  await new Promise((r) => setTimeout(r, 7000)); // 首回合 5s 超时 + 余量
+  const twEv = await api(`/matches/${twMatch}/events`);
+  const toEv = ((twEv.body.events as { type: string; submitted_at?: number; data?: { seat?: number } }[]) ?? [])
+    .find((e) => e.type === "timed_out" && e.data?.seat === 1);
+  check(
+    "timed_out 带 submitted_at（真超时场景覆盖）",
+    !!toEv && typeof toEv.submitted_at === "number",
+    toEv ? `submitted_at=${String(toEv.submitted_at)}` : "无 timed_out 事件",
+  );
+
   console.log(`\n=== 结果：${failed === 0 ? "全部通过" : failed + " 项失败"} ===`);
   process.exitCode = failed === 0 ? 0 : 1;
   process.exit(process.exitCode);

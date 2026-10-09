@@ -149,11 +149,10 @@ export class Gateway {
   listen(port: number, onReady?: () => void): void {
     const server = createServer((req, res) => {
       this.handle(req, res).catch((e) => {
+        // r10 w10-s1：INVALID_JSON 统一 400 且带 code 字段（原裸 json 无 code）
         const badJson = String((e as Error)?.message ?? "").includes("INVALID_JSON");
-        this.json(res, badJson ? 400 : 500, {
-          error: badJson ? "INVALID_JSON" : "INTERNAL",
-          message: String(e),
-        });
+        this.err(res, badJson ? 400 : 500, badJson ? "INVALID_JSON" : "INTERNAL",
+          badJson ? "请求 body 不是合法 JSON" : `服务端内部错误：${String(e)}`);
       });
     });
     server.listen(port, onReady);
@@ -306,7 +305,12 @@ export class Gateway {
       const name = String(body.name ?? "agent-" + randomId(""));
       const apiKey = "sk_" + randomId("");
       const callbackUrl = typeof body.callback_url === "string" ? body.callback_url : undefined;
-      const webhookSecret = callbackUrl ? "whsec_" + randomId("") : undefined;
+      // r10 w10-h2 P1：webhook_secret 入参曾被忽略（恒自生成）——协议 §3.1 "可选自供"语义恢复：
+      // 入参为非空 string 时采用（Agent 可预置 secret，免"注册→读响应→再配验签"往返），否则平台生成
+      const providedSecret = typeof body.webhook_secret === "string" && body.webhook_secret.length > 0
+        ? body.webhook_secret
+        : undefined;
+      const webhookSecret = callbackUrl ? (providedSecret ?? "whsec_" + randomId("")) : undefined;
       // r9 backlog：webhook 推送 slim 选项（wh9-h1 实测全量 view 14.9KB/推送）——true 时 turn.start 不带 history
       const pushSlim = body.push_slim === true;
       const agentId = "a_" + randomId("");
@@ -684,7 +688,7 @@ export class Gateway {
           ? "你是 webhook 通道：开局后回合将推送到你的 callback（x-arena-signature 验签），回 200 + {action, reasoning?}，无需轮询。"
           : "其他人 POST /lobby/rooms/" + room.id + "/join 加入；满员自动开局。轮询 GET 本房间（带 join_token）获取座位分配。",
       });
-    })().catch((e) => this.err(res, 500, "INTERNAL", `服务端内部错误：${String(e)}`));
+    })().catch((e) => this.failErr(res, e));
   }
 
   /** 加入房间（按加入顺序定座） */
@@ -723,7 +727,7 @@ export class Gateway {
           ? "你是 webhook 通道：开局后回合将推送到你的 callback，无需轮询。"
           : "轮询 GET /lobby/rooms/" + room.id + "?token=" + joinToken + " 直至 status=started，凭 seat_token 参赛。",
       });
-    })().catch((e) => this.err(res, 500, "INTERNAL", `服务端内部错误：${String(e)}`));
+    })().catch((e) => this.failErr(res, e));
   }
 
   /** 房主强制开局：余位由 house bot 补齐（至少 1 名真人） */
@@ -756,7 +760,7 @@ export class Gateway {
         seat_token: me.seatToken,
         bots_filled: room.seats - room.players.length,
       });
-    })().catch((e) => this.err(res, 500, "INTERNAL", `服务端内部错误：${String(e)}`));
+    })().catch((e) => this.failErr(res, e));
   }
 
   /** 尝试开局：满员自动开；fillWithBots 时余位补 house bot。开局成功返回 true */
@@ -1286,6 +1290,13 @@ export class Gateway {
     extra: Record<string, unknown> = {},
   ): void {
     this.json(res, status, { error: code, code, message: message ?? code, ...extra });
+  }
+
+  /** r10 w10-s1：端点局部 catch 统一分流——readJson 的 INVALID_JSON 转为 400（原被吞成 500 INTERNAL） */
+  private failErr(res: ServerResponse, e: unknown): void {
+    const badJson = String((e as Error)?.message ?? "").includes("INVALID_JSON");
+    this.err(res, badJson ? 400 : 500, badJson ? "INVALID_JSON" : "INTERNAL",
+      badJson ? "请求 body 不是合法 JSON" : `服务端内部错误：${String(e)}`);
   }
 }
 

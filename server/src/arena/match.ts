@@ -269,7 +269,9 @@ export class Match {
         }
         this.received.set(seat, action);
         this.submittedAt.set(seat, Date.now());
-        this.store.append("timed_out", { seat, default_action: action }, this.eventVisibility(seat, action));
+        // r10 dc10-d2：timed_out 也带 submitted_at（=兜底时刻，与配对 acted 的 Δ0 一致）——
+        // 文档 §6.1/§6.3 写的是 acted/timed_out 均有，原实现漏了 timed_out（0/6 不带）
+        this.store.append("timed_out", { seat, default_action: action }, this.eventVisibility(seat, action), this.submittedAt.get(seat));
       }
     }
     // 确定性：同时相位按座位号顺序应用；游戏模块异常不外抛，转为 match_failed 优雅终局

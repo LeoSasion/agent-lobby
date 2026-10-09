@@ -405,6 +405,11 @@ export function createWerewolfLite(): GameModule<State> {
         // r8：显式标注当前发言种类——开场遗言与普通发言对外观感一致，2/2 死亡席位实测错过遗言窗口
         pub.speaking_kind = inLw ? "last_words" : "say";
         pub.pending_speakers = inLw ? [...s.lwQueue.slice(s.lwIndex + 1), ...s.sayQueue] : s.sayQueue.slice(s.sayIndex + 1);
+        // r10 w10-s1 P2④：待发言队列的 kind 标注（等长数组，与 pending_speakers 按位对应）——
+        // 真人无法预判队列里哪些是遗言，错估遗言窗口会错过一次性动作
+        pub.pending_kinds = inLw
+          ? [...s.lwQueue.slice(s.lwIndex + 1).map(() => "last_words"), ...s.sayQueue.map(() => "say")]
+          : s.sayQueue.slice(s.sayIndex + 1).map(() => "say");
       }
       if (s.phase === "day_vote") {
         // 已投票席位来自内核 ctx.submittedSeats（received 实时缓冲）——s.votes 要等批量 apply 才写入，

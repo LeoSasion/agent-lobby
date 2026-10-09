@@ -42,6 +42,9 @@ function pick<T>(arr: T[], key: string): T {
     h ^= key.charCodeAt(i);
     h = Math.imul(h, 16777619);
   }
+  // r10 w10-s1：模板池小（2-6 条）时首轮 FNV-1a 的同轮跨席撞车率偏高（实测 3/5 号同文本，
+  // 真人局易被误读为狼队串供信号）——二次雪崩（murmur3 终混）后再取模，显著降低小池撞车
+  h ^= h >>> 16; h = Math.imul(h, 2246822519); h ^= h >>> 13; h = Math.imul(h, 3266489917); h ^= h >>> 16;
   return arr[Math.abs(h) % arr.length];
 }
 

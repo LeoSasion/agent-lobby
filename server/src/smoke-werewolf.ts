@@ -42,7 +42,7 @@ function withViewCheck(inner: SeatDriver): SeatDriver {
       // r8：speaking_kind 一致性——发言席位的 legal_actions[0].type 必须与 public.speaking_kind 一致
       //（day_discuss 单席位相位，act() 只会在当前发言人身上调用）
       if (view.phase === "day_discuss") {
-        const pub = view.public as { speaking_seat?: number; speaking_kind?: string };
+        const pub = view.public as { speaking_seat?: number; speaking_kind?: string; pending_speakers?: number[]; pending_kinds?: string[] };
         const myAction = view.legal_actions[0]?.type;
         if (pub.speaking_seat !== view.you.seat) {
           violations.push(`seat${view.you.seat}: day_discuss 行动者 ≠ speaking_seat(${pub.speaking_seat})`);
@@ -50,6 +50,14 @@ function withViewCheck(inner: SeatDriver): SeatDriver {
         const expect = myAction === "last_words" ? "last_words" : "say";
         if (pub.speaking_kind !== expect) {
           violations.push(`seat${view.you.seat}: speaking_kind=${pub.speaking_kind} ≠ legal_actions[0]=${myAction}`);
+        }
+        // r10 w10-s1 P2④：pending_kinds 与 pending_speakers 等长、值域 {say,last_words}
+        if (Array.isArray(pub.pending_speakers)) {
+          if (!Array.isArray(pub.pending_kinds) || pub.pending_kinds.length !== pub.pending_speakers.length) {
+            violations.push(`seat${view.you.seat}: pending_kinds 缺失或与 pending_speakers 不等长`);
+          } else if (!pub.pending_kinds.every((k) => k === "say" || k === "last_words")) {
+            violations.push(`seat${view.you.seat}: pending_kinds 值域异常=${JSON.stringify(pub.pending_kinds)}`);
+          }
         }
       }
       await inner.act(view, submit);
