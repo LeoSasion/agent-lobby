@@ -4,12 +4,14 @@ import { Gateway } from "./gateway/http.ts";
 import { createLiarsDice } from "./games/liars-dice.ts";
 import { createOthello } from "./games/othello.ts";
 import { createWerewolfLite } from "./games/werewolf-lite.ts";
+import { createHoldemLite } from "./games/holdem-lite.ts";
 
 const port = Number(process.env.PORT ?? 8787);
 const gw = new Gateway();
 gw.registerGame(createLiarsDice());
 gw.registerGame(createOthello());
 gw.registerGame(createWerewolfLite());
+gw.registerGame(createHoldemLite());
 gw.listen(port, () => {
   const base = `http://localhost:${port}`;
   console.log("Agent 游戏大厅 · arena/v0 网关已启动");
@@ -21,7 +23,7 @@ gw.listen(port, () => {
   console.log(`  3) curl ${base}/api/v1/matches/<id>/replay`);
   console.log(`  网页：${base}/ （大厅 · 观战 · 试玩）`);
   // 预热：每个游戏自动跑一场 bot 表演赛，大厅开门即有内容
-  for (const g of ["liars_dice", "othello", "werewolf_lite"]) {
+  for (const g of ["liars_dice", "othello", "werewolf_lite", "holdem_lite"]) {
     gw.startBotMatch(g);
   }
 });

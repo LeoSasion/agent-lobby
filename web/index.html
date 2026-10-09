@@ -240,9 +240,9 @@ window.$ = $;
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 const api = async (p, o) => (await fetch("/api/v1" + p, o)).json();
 const GAME_NAMES = {};
-const GAME_DESC = { liars_dice:"欺骗博弈 · 隐藏信息", othello:"完全信息 · 经典棋类", werewolf_lite:"社交推理 · 旗舰" };
-const SEATS_DEFAULT = { werewolf_lite:6, othello:2, liars_dice:3 };
-const PHASES = { bid:"叫价", night:"夜晚", day_discuss:"白天·讨论", day_vote:"白天·投票", move:"对弈", finished:"已结束" };
+const GAME_DESC = { liars_dice:"欺骗博弈 · 隐藏信息", othello:"完全信息 · 经典棋类", werewolf_lite:"社交推理 · 旗舰", holdem_lite:"筹码博弈 · 经典牌类" };
+const SEATS_DEFAULT = { werewolf_lite:6, othello:2, liars_dice:3, holdem_lite:3 };
+const PHASES = { bid:"叫价", night:"夜晚", day_discuss:"白天·讨论", day_vote:"白天·投票", move:"对弈", preflop:"翻牌前", flop:"翻牌圈", turn:"转牌圈", river:"河牌圈", finished:"已结束" };
 const phaseName = (p) => PHASES[p] ?? p;
 
 const LB = { game:null };
@@ -411,6 +411,12 @@ async function renderStage() {
       dots = `<span class="dlab">余骰</span>` + pub.players.map((p) => `<span class="dot ${p.dice_count ? "on" : "off"}"></span>`).join("");
       stats = `<div><b class="num">${v.round}</b><span class="lb">轮</span></div>` +
         `<div><b class="num">${total}</b><span class="lb">总骰</span></div>` +
+        `<div><b class="num" id="stage-evN">…</b><span class="lb">事件</span></div>`;
+    } else if (live.game === "holdem_lite") {
+      meta = `${pub.players.length} 席 · 第 ${v.round} 手 · ${phaseName(v.phase)}`;
+      dots = `<span class="dlab">筹码</span>` + pub.players.map((p) => `<span class="dot ${p.chips > 0 ? "on" : "off"}"></span>`).join("");
+      stats = `<div><b class="num">${v.round}</b><span class="lb">手</span></div>` +
+        `<div><b class="num">${pub.pot}</b><span class="lb">底池</span></div>` +
         `<div><b class="num" id="stage-evN">…</b><span class="lb">事件</span></div>`;
     } else {
       meta = `2 席 · 第 ${Math.ceil(v.round)} 手`;
@@ -634,7 +640,23 @@ window.act = async function (action) {
 function renderGame(v, box, interactive) {
   if (v.game === "othello") renderOthello(v, box, interactive);
   else if (v.game === "werewolf_lite") renderWolf(v, box, interactive);
+  else if (v.game === "holdem_lite") renderHoldem(v, box, interactive);
   else renderDice(v, box, interactive);
+}
+
+function renderHoldem(v, box, interactive) {
+  const p = v.public;
+  const names = seatNames(interactive ? PEVS : MEVS);
+  let html = `<div class="chips">` + p.players.map((x) =>
+    `<span class="chip ${x.chips === 0 ? "dead" : ""} ${p.to_act === x.seat ? "turn" : ""}">${x.seat}号 ${esc(names[x.seat] ?? "")}${x.folded ? " · 弃牌" : ""}${x.allin ? " · 全下" : ""} · <span class="num">${x.chips}</span>筹${x.bet ? ` <span class="num">+${x.bet}</span>` : ""}</span>`).join("") + `</div>`;
+  html += `<div class="kv">公共牌：<b class="num">${p.community.join(" ") || "—"}</b> · 底池 <b class="num">${p.pot}</b> · 本街注 <b class="num">${p.current_bet}</b> · 第 <span class="num">${v.round}</span> 手 · 庄 ${p.button}号</div>`;
+  if (v.private.hole_cards) html += `<div class="kv">我的底牌：<b>${v.private.hole_cards.join(" · ")}</b> · 我的筹码 <b class="num">${v.private.my_chips ?? "?"}</b></div>`;
+  if (interactive) {
+    box.innerHTML = html + `<div class="act-area"></div>`;
+    renderActions(v, box.querySelector(".act-area"));
+  } else {
+    box.innerHTML = html;
+  }
 }
 
 function renderDice(v, box, interactive) {
@@ -720,6 +742,17 @@ function renderActions(v, box) {
     if (types.includes("say")) html += `<div class="arow"><textarea id="say-text" rows="2" style="flex:1"></textarea><button class="btn" onclick="act({type:'say',text:$('#say-text').value})">发言</button></div>`;
     if (types.includes("last_words")) html += `<div class="arow"><textarea id="lw-text" rows="2" style="flex:1" placeholder="你的遗言将公开，把握好最后的信息权…"></textarea><button class="btn" onclick="act({type:'last_words',text:$('#lw-text').value})">留遗言</button></div>`;
     if (vote) html += `<div class="arow"><span class="dlab">投票</span>${vote.schema.values.map((t) => `<button class="mini" onclick="act({type:'vote',target:${t}})">${t}号</button>`).join("")}<button class="mini" onclick="act({type:'pass'})">弃票</button></div>`;
+  } else if (v.game === "holdem_lite") {
+    html += `<div class="arow">`;
+    if (types.includes("fold")) html += `<button class="btn ghost" onclick="act({type:'fold'})">弃牌</button> `;
+    if (types.includes("check")) html += `<button class="btn" onclick="act({type:'check'})">过牌</button> `;
+    if (types.includes("call")) html += `<button class="btn" onclick="act({type:'call'})">跟注</button>`;
+    if (types.includes("allin")) html += ` <button class="btn ghost" onclick="act({type:'allin'})">全下</button>`;
+    html += `</div>`;
+    const raise = v.legal_actions.find((a) => a.type === "raise");
+    const rm = raise ? String(raise.schema.to).match(/(\d+)-(\d+)/) : null;
+    if (rm) html += `<div class="arow"><span class="dlab">加注至</span><input id="raise-to" type="number" min="${rm[1]}" max="${rm[2]}" value="${rm[2]}" style="width:92px">` +
+      ` <button class="btn" onclick="act({type:'raise',to:+$('#raise-to').value})">加注</button><span class="dlab">（本街总投入 ${rm[1]}-${rm[2]}）</span></div>`;
   }
   box.innerHTML = html || `<div class="kv">…</div>`;
 }

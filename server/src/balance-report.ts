@@ -7,10 +7,12 @@
 import { createLiarsDice } from "./games/liars-dice.ts";
 import { createOthello } from "./games/othello.ts";
 import { createWerewolfLite } from "./games/werewolf-lite.ts";
+import { createHoldemLite } from "./games/holdem-lite.ts";
 import { createMatch } from "./arena/lobby.ts";
 import { createRuleBot, createHangingBot } from "./bots/rule-bot.ts";
 import { createOthelloBot } from "./bots/othello-bot.ts";
 import { createWerewolfBot } from "./bots/werewolf-bot.ts";
+import { createHoldemBot } from "./bots/holdem-bot.ts";
 import type { GameModule } from "./games/types.ts";
 import type { SeatDriver } from "./arena/match.ts";
 import type { MatchEvent } from "./protocol.ts";
@@ -18,6 +20,7 @@ import type { MatchEvent } from "./protocol.ts";
 const WW_GAMES = 50;
 const DICE_GAMES = 30;
 const OTHELLO_GAMES = 20;
+const HOLDEM_GAMES = 40;
 
 async function runBatch(
   label: string,
@@ -121,6 +124,42 @@ for (const { events: evs } of othelloEvents) {
 console.log(`  黑(位置流)=${othelloBlack} · 白(吃子流)=${othelloWhite} · 平=${othelloDraw}`);
 if (othelloBlack > OTHELLO_GAMES * 0.7) console.log("  ⚠️ 位置流显著占优");
 else if (othelloWhite > OTHELLO_GAMES * 0.7) console.log("  ⚠️ 吃子流显著占优");
+else console.log("  ✓ 风格差异在合理范围");
+
+// —— 德州扑克·简化：风格胜率 ——
+console.log("\n[德州扑克·简化] 3 席 bot 对 bot（40 局）");
+const HOLDEM_STYLES: [string, number][] = [
+  ["紧凶", 0.3],
+  ["松凶", 0.8],
+  ["稳健", 0.5],
+];
+const holdemEvents = await runBatch("总计", createHoldemLite(), () =>
+  HOLDEM_STYLES.map(([n, a]) => createHoldemBot(n, a)),
+  HOLDEM_GAMES,
+);
+const holdemWins: Record<string, number> = { "1": 0, "2": 0, "3": 0 };
+let holdemHands = 0;
+let holdemShowdowns = 0;
+let holdemLastStanding = 0;
+let holdemHandLimit = 0;
+for (const { events: evs } of holdemEvents) {
+  const ended = evs.find((e) => e.type === "match_ended");
+  if (!ended) continue;
+  const scores = (ended.data as { scores?: Record<string, number> }).scores ?? {};
+  for (const [seat, sc] of Object.entries(scores)) {
+    if (sc === 1) holdemWins[seat] = (holdemWins[seat] ?? 0) + 1;
+  }
+  holdemHands += evs.filter((e) => e.type === "hand_ended").length;
+  holdemShowdowns += evs.filter((e) => e.type === "showdown").length;
+  const ge = evs.find((e) => e.type === "game_ended");
+  const reason = (ge?.data as { reason?: string } | undefined)?.reason;
+  if (reason === "last_standing") holdemLastStanding++;
+  else if (reason === "hand_limit") holdemHandLimit++;
+}
+console.log(`  胜场分布: 1号(紧凶)=${holdemWins["1"]} · 2号(松凶)=${holdemWins["2"]} · 3号(稳健)=${holdemWins["3"]}`);
+console.log(`  平均手数: ${(holdemHands / HOLDEM_GAMES).toFixed(1)} · 摊牌率 ${((holdemShowdowns / holdemHands) * 100).toFixed(0)}% · 终局: 清台 ${holdemLastStanding} / 手数上限 ${holdemHandLimit}`);
+const holdemMax = Math.max(holdemWins["1"], holdemWins["2"], holdemWins["3"]);
+if (holdemMax > HOLDEM_GAMES * 0.55) console.log("  ⚠️ 某风格显著占优（>55%）");
 else console.log("  ✓ 风格差异在合理范围");
 
 // —— 框架不变量抽检 ——

@@ -72,6 +72,7 @@ async function main(): Promise<void> {
   const g1 = new Gateway(dataFile);
   g1.registerGame((await import("./games/othello.ts")).createOthello());
   g1.registerGame((await import("./games/liars-dice.ts")).createLiarsDice());
+  g1.registerGame((await import("./games/holdem-lite.ts")).createHoldemLite());
   g1.listen(PORT_1);
   const B1 = `http://127.0.0.1:${PORT_1}/api/v1`;
   await waitReady(B1);
@@ -138,6 +139,7 @@ async function main(): Promise<void> {
   const g2 = new Gateway(dataFile);
   g2.registerGame((await import("./games/othello.ts")).createOthello());
   g2.registerGame((await import("./games/liars-dice.ts")).createLiarsDice());
+  g2.registerGame((await import("./games/holdem-lite.ts")).createHoldemLite());
   g2.listen(PORT_2);
   const B2 = `http://127.0.0.1:${PORT_2}/api/v1`;
   await waitReady(B2);
@@ -181,6 +183,7 @@ async function main(): Promise<void> {
   const g3 = new Gateway(dataFile);
   g3.registerGame((await import("./games/othello.ts")).createOthello());
   g3.registerGame((await import("./games/liars-dice.ts")).createLiarsDice());
+  g3.registerGame((await import("./games/holdem-lite.ts")).createHoldemLite());
   g3.listen(PORT_3);
   const B3 = `http://127.0.0.1:${PORT_3}/api/v1`;
   await waitReady(B3);
@@ -212,6 +215,7 @@ async function main(): Promise<void> {
   const g4 = new Gateway(oldFmtFile);
   g4.registerGame((await import("./games/othello.ts")).createOthello());
   g4.registerGame((await import("./games/liars-dice.ts")).createLiarsDice());
+  g4.registerGame((await import("./games/holdem-lite.ts")).createHoldemLite());
   g4.listen(PORT_4);
   const B4 = `http://127.0.0.1:${PORT_4}/api/v1`;
   await waitReady(B4);

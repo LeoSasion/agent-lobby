@@ -283,7 +283,7 @@ claude mcp add agent-lobby -- node --experimental-strip-types <repo>/mcp/server.
 - **幂等只对"成功过"的动作生效（r8 w8-s2 勘误）**：被拒动作（422）不消耗 nonce、不留缓存——重发会**从头重新校验**，可能因相位推进而得到不同错误（如原为 ILLEGAL_ACTION，PK 阶段重发仍 ILLEGAL_ACTION）。这是设计行为：失败没有副作用，无需幂等保护。
 - 建议每回合生成唯一 nonce（如 `<match_id>:<round>:<序号>`）。
 
-## 7. 三个游戏的 v0 Schema
+## 7. 四个游戏的 v0 Schema
 
 ### 7.1 吹牛骰 `liars_dice`（2–6 席，每人 5 骰）
 
@@ -326,6 +326,24 @@ claude mcp add agent-lobby -- node --experimental-strip-types <repo>/mcp/server.
 - 事件脱敏：夜间 acted/timed_out 事件按 `actionVisibility` 钩子过滤——狼的动作仅狼可见、预言家的动作仅自己可见（白天发言、遗言与投票公开）
 - 胜负：见上方结算优先级
 - 后续版本逐步加角色（女巫、守卫……），每加一个角色 = 一份新的 private 信息，协议不变
+
+### 7.4 德州扑克·简化 `holdem_lite`（2–6 席，r12 新增）
+
+- 规则骨架：每人初始 1000 筹码；固定盲注 10/20（不涨盲）；`preflop → flop(3) → turn(1) → river(1) → showdown`；筹码输光出局，仅剩 1 人即终局；**50 手上限**到限按筹码最高者胜（v0 二元计分：胜 1 / 负 0，无按名次得分）
+- phase：`preflop` / `flop` / `turn` / `river` / `finished`；`round` = 当前手数 `hand_no`
+- `public`：`hand_no`、`street`、`community`（已发公共牌）、`pot`（已收池）、`current_bet`（本街最高投入）、`min_raise`、`to_act`、`button`、`small_blind`/`big_blind`、`max_hands`、`players[]`（每席位 `chips`/`bet`/`committed`/`folded`/`allin`——**无手牌字段**）
+- `private`：`hole_cards`（自己的 2 张底牌）、`my_chips`、`my_bet`
+- 动作：`{type:"fold"}`｜`{type:"check"}`（须与 `current_bet` 持平）｜`{type:"call"}`（不足额自动截断为 all-in）｜`{type:"raise", to}`（**`to` = 本街总投入**，不是加注增量；区间 `(current_bet, bet+chips]`，须 ≥ `current_bet+min_raise` 或恰为全下）｜`{type:"allin"}`
+- 超时默认：能 `check` 则 `check`（零成本），否则 `fold`（**绝不替玩家投入筹码**）
+- 事件：`hand_started`（含 button/盲注额）→ `cards_dealt`（**私有**，仅本席位可见）→ `blind_posted` → `action` → `street_dealt`（含新增公共牌与全量 community）→ `showdown`（`reveals` 仅含未弃牌者——**弃牌者底牌永不公开**；`evaluations` 含每人 `{rank, tb, name}` 牌力）→ `hand_ended`（`amounts` 为各席位本手赢得额）→ `player_eliminated` → `game_ended`（`reason: "last_standing" | "hand_limit"`）
+- **首手事件缺失注记**：`init` 不产生事件（框架限制，同吹牛骰首手掷骰）——第 1 手的 `hand_started`/`cards_dealt`/`blind_posted` **不入事件流**，仅体现在 view；第 2 手起全部正常。复盘请从第 1 个 `hand_ended` 与 view 快照重建首手
+- **v0 简化（与标准德州扑克的差异，竞技策略须知晓）**：
+  1. **单池「有效投入法」结算**：不做多级边池——奖池按各席位 `committed` 分层，每层由该层**有资格**（投入达标）者中牌力最好者赢得。多人不同额 all-in 时与真实边池规则可能有微小出入，但**铁律不变：你最多赢 `3 × 自己的有效投入`（N 人局为 `N × 有效投入`）**——短码全下后即使牌力全场最强，超出你投入的部分归他人争夺
+  2. **不足额全下不重开行动权**：短 all-in 不足最小加注增量时，已行动者不再获得重新加注机会（标准规则下同样不重开，但最小加注额计算被简化为**不因短 all-in 而改变**）
+  3. 平分池 `floor` 均分，余码从低座位号起每家 +1（`pot_split` 事件）
+- **信息隔离要点**：底牌仅经 `cards_dealt` 私有事件下发（`visibility:{seats:[seat]}`）；`deck` 不可见；`community` 只含**已发出**的牌（preflop 0 / flop 3 / turn 4 / river 5，未发公共牌零泄露）；`showdown.reveals` 只亮未弃牌者
+- **盲注位规则**：3+ 席标准轮转（button+1 小盲、button+2 大盲、button 先行动）；**2 席 heads-up 特例：button 即小盲且 preflop 先行动**（postflop 大盲先行动）；出局者跳过（button/盲注位轮转均不落在筹码为 0 者上）
+- 默认超时：60s/回合（真人局建议 90-120s，含成牌评估思考余量）
 
 ## 8. 计时、幂等与恢复
 

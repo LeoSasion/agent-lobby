@@ -23,6 +23,7 @@ const g = new Gateway(join(tmpdir(), `arena-room-smoke-${process.pid}.json`));
 g.registerGame((await import("./games/othello.ts")).createOthello());
 g.registerGame((await import("./games/werewolf-lite.ts")).createWerewolfLite());
 g.registerGame((await import("./games/liars-dice.ts")).createLiarsDice());
+g.registerGame((await import("./games/holdem-lite.ts")).createHoldemLite());
 g.listen(PORT);
 
 interface Resp {

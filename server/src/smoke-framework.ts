@@ -13,12 +13,14 @@
 import { createLiarsDice } from "./games/liars-dice.ts";
 import { createOthello } from "./games/othello.ts";
 import { createWerewolfLite } from "./games/werewolf-lite.ts";
+import { createHoldemLite } from "./games/holdem-lite.ts";
 import { createMatch } from "./arena/lobby.ts";
 import { replayEvents } from "./arena/replay.ts";
 import { hashEvents } from "./arena/event-store.ts";
 import { createHangingBot, createRuleBot } from "./bots/rule-bot.ts";
 import { createOthelloBot } from "./bots/othello-bot.ts";
 import { createWerewolfBot } from "./bots/werewolf-bot.ts";
+import { createHoldemBot } from "./bots/holdem-bot.ts";
 import type { GameModule } from "./games/types.ts";
 import type { Match, SeatDriver } from "./arena/match.ts";
 import type { Action, SeatId } from "./protocol.ts";
@@ -86,6 +88,27 @@ const suites: Suite[] = [
         { seat: wolf, action: { type: "kill", target: teammate }, mustInclude: "非狼" },
         { seat: wolf, action: { type: "kill", target: 99 }, mustInclude: "ILLEGAL" },
         { seat: villager, action: { type: "kill", target: 1 }, mustInclude: "NOT_YOUR_TURN" },
+      ];
+    },
+  },
+  {
+    name: "德州扑克·简化",
+    game: createHoldemLite(),
+    seats: 3,
+    makeBots: () => [
+      createHoldemBot("紧凶", 0.3),
+      createHoldemBot("松凶", 0.8),
+      createHoldemBot("稳健", 0.5),
+    ],
+    seeds: [5, 99, 4242],
+    illegal: (g, state) => {
+      // 用 viewOf 取当前行动者（不依赖游戏内部字段命名；viewOf 是唯一出口）
+      const pub = g.viewOf(state, "spectator").public as { to_act: number | null };
+      const actor = pub.to_act ?? 1;
+      return [
+        { seat: actor, action: { type: "raise", to: 5 }, mustInclude: "ILLEGAL" },
+        { seat: actor, action: { type: "nonsense" }, mustInclude: "未知动作" },
+        { seat: actor === 1 ? 2 : 1, action: { type: "fold" }, mustInclude: "NOT_YOUR_TURN" },
       ];
     },
   },
