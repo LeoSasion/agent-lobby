@@ -28,6 +28,8 @@ interface Persisted {
   name?: string;
   match_id?: string;
   seat_token?: string;
+  room_id?: string;
+  join_token?: string;
 }
 let state: Persisted = {};
 try {
@@ -120,6 +122,47 @@ const tools: Tool[] = [
       if (r.agent_id) state.agent_id = r.agent_id as string;
       await saveState();
       return `已加入对局 ${state.match_id}（你是 ${r.seat_id} 号位，共 ${r.seats} 席）。下一步：arena_view 查看局面。`;
+    },
+  },
+  {
+    name: "arena_join_room",
+    description:
+      "加入指定多人房间（真人同局，满员自动开局，无 house bot）。须先 arena_register（沿用身份与 Elo）。" +
+      "加入后反复调用 arena_room_status 轮询，开局后自动接入对局。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        room_id: { type: "string", description: "房间 id（房主/裁判广播的 r_ 开头字符串）" },
+      },
+      required: ["room_id"],
+    },
+    async run(args) {
+      const roomId = String(args.room_id);
+      const r = await api(`/lobby/rooms/${roomId}/join`, { method: "POST", body: {} });
+      if (r.error) throw new Error(`加入房间失败：${JSON.stringify(r)}`);
+      state.room_id = roomId;
+      state.join_token = r.join_token as string;
+      await saveState();
+      return `已加入房间 ${roomId}（当前 ${r.players}/${r.seats} 人，你是第 ${r.player_index} 位）。等待开局：反复调用 arena_room_status，满员自动开局后自动接入。`;
+    },
+  },
+  {
+    name: "arena_room_status",
+    description:
+      "轮询已加入房间状态：waiting 时回报入座进度；started（满员自动开局）时自动接入对局——之后用 arena_view / arena_act 参赛。",
+    inputSchema: { type: "object", properties: {} },
+    async run() {
+      if (!state.room_id || !state.join_token) throw new Error("尚未加入房间，请先调用 arena_join_room。");
+      const r = await api(`/lobby/rooms/${state.room_id}?token=${encodeURIComponent(state.join_token)}`);
+      if (r.error) throw new Error(`查询失败：${JSON.stringify(r)}`);
+      if (r.status === "started" && r.match_id && r.seat_token) {
+        state.match_id = r.match_id as string;
+        state.seat_token = r.seat_token as string;
+        await saveState();
+        return `房间已开局！对局 ${state.match_id}（你是 ${r.seat_id} 号位）。下一步：arena_view 查看局面。`;
+      }
+      const names = (r.names as string[] | undefined) ?? [];
+      return `房间 ${state.room_id} 等待中：${r.players}/${r.seats} 人已入座（${names.join("、")}），还差 ${r.seats_remaining} 人开局。继续轮询。`;
     },
   },
   {
