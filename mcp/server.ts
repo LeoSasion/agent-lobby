@@ -7,7 +7,7 @@
  *   claude mcp add agent-lobby -- node --experimental-strip-types <本文件绝对路径>
  * 环境变量：
  *   ARENA_URL   网关地址，默认 http://localhost:8787
- *   ARENA_STATE 身份/对局状态文件，默认 <本目录>/.mcp-state.json
+ *   ARENA_STATE 身份/对局状态文件，默认 ~/.agent-lobby-mcp-state.json（homedir；多客户端并发须各自设置隔离路径）
  *
  * 注意：stdout 仅承载协议消息，诊断信息一律走 stderr。
  */
@@ -83,9 +83,12 @@ const tools: Tool[] = [
       const name = String(args.name ?? "mcp-agent");
       const r = await api("/agents", { method: "POST", body: { name } });
       state.api_key = r.api_key as string;
+      if (r.agent_id) state.agent_id = r.agent_id as string;
       state.name = name;
       await saveState();
-      return `注册成功：${name}（api_key 已保存，战绩将累积到该身份）`;
+      // r11 w11-m1 P2-3：纯 MCP 客户端拿不到 key（不读文件）——返回前缀 + 状态文件路径
+      const key = state.api_key ?? "";
+      return `注册成功：${name}（api_key ${key.slice(0, 8)}…已保存至 ${STATE_FILE}，战绩将累积到该身份；完整 key 见状态文件）`;
     },
   },
   {
@@ -203,7 +206,16 @@ const tools: Tool[] = [
           ? args.nonce.slice(0, 64)
           : "n-" + Math.random().toString(36).slice(2, 10),
       };
-      if (typeof args.reasoning === "string") body.reasoning = args.reasoning.slice(0, 500);
+      // r11 w11-m1 P1-3：客户端侧截断也须回填 reasoning_truncated（跨通道一致——此前只有网关 HTTP 响应带该字段时才转发）
+      let clientTruncated = false;
+      if (typeof args.reasoning === "string") {
+        if (args.reasoning.length > 500) {
+          body.reasoning = args.reasoning.slice(0, 500);
+          clientTruncated = true;
+        } else {
+          body.reasoning = args.reasoning;
+        }
+      }
       const r = await api(`/matches/${state.match_id}/actions`, {
         method: "POST",
         seat: true,
@@ -216,7 +228,7 @@ const tools: Tool[] = [
           ok: true,
           applied: r.applied === true,
           replayed: r.replayed === true,
-          ...(r.reasoning_truncated ? { reasoning_truncated: true } : {}),
+          ...(r.reasoning_truncated || clientTruncated ? { reasoning_truncated: true } : {}),
           view: r.view ?? null,
         });
       }
@@ -270,7 +282,12 @@ const tools: Tool[] = [
         try {
           const v = await api(`/matches/${state.match_id}/view`, { seat: true });
           const you = v.you as { active?: boolean } | undefined;
-          lines.push(`阶段：${v.phase}（第 ${v.round} 轮）· 我方${you?.active ? "行动中" : "等待中"}`);
+          // r11 w11-m1 P2-4：终局与等待语义分开——"finished · 我方等待中"易误读为还在等相位
+          if (v.phase === "finished") {
+            lines.push(`阶段：对局已结束（终局比分见 view.result.scores；复盘可 arena_events {since:-1}）`);
+          } else {
+            lines.push(`阶段：${v.phase}（第 ${v.round} 轮）· 我方${you?.active ? "行动中" : "等待中"}`);
+          }
         } catch {
           lines.push("（对局信息获取失败）");
         }
