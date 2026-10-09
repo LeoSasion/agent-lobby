@@ -44,6 +44,8 @@ export interface MatchOptions {
   graceMs?: number;
   /** 相位最短持续时长：防止 bot 秒应导致相位闪过（观战/轮询不可见） */
   minPhaseMs?: number;
+  /** r13：house bot 补位的席位号——写入 match_started 的 human_seats / bot_filled，供选手与复盘识别"这桌有多少真人" */
+  botSeats?: SeatId[];
 }
 
 /** 组装 AgentView（Match 实时视图与回放步骤视图共用；viewOf 是信息隔离唯一出口） */
@@ -110,6 +112,8 @@ export class Match {
   private readonly timeoutMs: number;
   private readonly graceMs: number;
   private readonly minPhaseMs: number;
+  /** r13：house bot 补位的席位集合（写入 match_started.bot_filled / human_seats） */
+  private readonly botSeats: Set<SeatId>;
   private firstStep = true;
   private readonly rng: Rng;
   private readonly store = new EventStore();
@@ -138,16 +142,21 @@ export class Match {
     this.minPhaseMs = opts.minPhaseMs ?? 0;
     this.rng = mulberry32(this.seed);
     this.seats = [...opts.drivers.keys()].sort((a, b) => a - b);
+    this.botSeats = new Set(opts.botSeats ?? []);
   }
 
   async run(): Promise<MatchResult> {
     if (this.state !== undefined) throw new Error("match already run");
     this.state = this.game.init(this.seats, this.rng);
+    // r13 修复（P1）：明示本局真人/补位构成——房间强制开局时 bot 补位曾让人误以为是满员真人桌（主桌 4 真人 + 2 bot）
+    const bot = this.botSeats;
     this.store.append("match_started", {
       seed: this.seed,
       game: this.game.meta.id,
       seats: this.seats,
       drivers: this.seats.map((s) => this.drivers.get(s)?.name ?? "?"),
+      bot_filled: this.seats.filter((s) => bot.has(s)),
+      human_seats: this.seats.filter((s) => !bot.has(s)),
     });
     // r13 修复：初始事件钩子——init 产生的开局事件（首手发牌/盲注）入账，
     // 纯事件流重建首手账本不再缺手（P1：首手 30 筹码账本误差）

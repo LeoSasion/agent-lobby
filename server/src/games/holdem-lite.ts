@@ -251,7 +251,8 @@ export function createHoldemLite(config: HoldemConfig = {}): GameModule<State> {
     if (p.chips === 0) p.allin = true;
     events.push({
       type: "blind_posted",
-      data: { seat: p.seat, amount: pay, blind: amount === sb ? "small" : "big" },
+      // r13 修复（P2）：补 hand_no——50 手局 98 条盲注事件原本全为 null，归因只能靠顺序
+      data: { hand_no: s.handNo, seat: p.seat, amount: pay, blind: amount === sb ? "small" : "big" },
     });
   }
 
@@ -329,13 +330,29 @@ export function createHoldemLite(config: HoldemConfig = {}): GameModule<State> {
       if (eligible.length > 0) splitPot(layerPot, eligible, evals, amounts, events);
       prev = level;
     }
+    // r13 修复（P2）：「超额投入退回」显式化——h13-f / h13-b 都遇到「摊牌输了却出现在 winners 里」，
+    // 那部分其实是退回额。现 winners 只留真正赢得底池者，退回额单列 uncalled{seat:amount}，复盘不再反推。
+    const calledCap = new Map<SeatId, number>();
+    for (const p of s.players) {
+      const others = s.players.filter((q) => q.seat !== p.seat && q.committed > 0).map((q) => q.committed);
+      calledCap.set(p.seat, others.length ? Math.max(...others) : 0);
+    }
+    const uncalled: Record<number, number> = {};
+    for (const p of s.players) {
+      const back = Math.max(0, p.committed - (calledCap.get(p.seat) ?? 0));
+      if (back > 0) uncalled[p.seat] = back;
+    }
+    const realWinners = Object.entries(amounts)
+      .filter(([k, v]) => v > 0 && (uncalled[Number(k)] ?? 0) < v)
+      .map(([k]) => Number(k));
     events.push({
       type: "hand_ended",
       data: {
         hand_no: s.handNo,
         pot: s.pot,
-        winners: Object.entries(amounts).filter(([, v]) => v > 0).map(([k]) => Number(k)),
+        winners: realWinners.length > 0 ? realWinners : Object.entries(amounts).filter(([, v]) => v > 0).map(([k]) => Number(k)),
         amounts,
+        uncalled,
         reason: "showdown",
       },
     });
@@ -534,9 +551,19 @@ export function createHoldemLite(config: HoldemConfig = {}): GameModule<State> {
           const w = s.players.find((q) => !q.folded)!;
           const win = s.pot + s.players.reduce((a, q) => a + q.bet, 0);
           w.chips += win;
+          // r13 修复（P2）：amounts 补齐全席位（输家 0）——原 all_folded 只含赢家键，
+          // 与 showdown 形态不一致，客户端要写两套解析（h13-a 实测踩到）
+          const allAmounts: Record<number, number> = {};
+          for (const q of s.players) allAmounts[q.seat] = q.seat === w.seat ? win : 0;
+          const uncalledAll: Record<number, number> = {};
+          for (const q of s.players) {
+            const others = s.players.filter((o) => o.seat !== q.seat).map((o) => o.committed);
+            const back = Math.max(0, q.committed - (others.length ? Math.max(...others) : 0));
+            if (back > 0) uncalledAll[q.seat] = back;
+          }
           events.push({
             type: "hand_ended",
-            data: { hand_no: s.handNo, pot: win, winners: [w.seat], amounts: { [w.seat]: win }, reason: "all_folded" },
+            data: { hand_no: s.handNo, pot: win, winners: [w.seat], amounts: allAmounts, uncalled: uncalledAll, reason: "all_folded" },
           });
           return [...events, ...endHand(s, rng)];
         }
@@ -569,16 +596,22 @@ export function createHoldemLite(config: HoldemConfig = {}): GameModule<State> {
         return events;
       };
 
+      // r13 修复（P2）：action 事件自带 hand_no / street——此前一只 action 只带 seat/action，
+      // 属于哪一手的哪一街只能靠 hand_started 与 street_dealt 的先后顺序推断（首手尤难）
+      const actEvent = (data: Record<string, unknown>): void => {
+        events.push({ type: "action", data: { ...data, hand_no: s.handNo, street: s.street } });
+      };
+
       switch (action.type) {
         case "fold": {
           p.folded = true;
           s.acted[idx] = true;
-          events.push({ type: "action", data: { seat, action: "fold" } });
+          actEvent({ seat, action: "fold" });
           return { state: s, events: advance() };
         }
         case "check": {
           s.acted[idx] = true;
-          events.push({ type: "action", data: { seat, action: "check" } });
+          actEvent({ seat, action: "check" });
           return { state: s, events: advance() };
         }
         case "call": {
@@ -588,7 +621,7 @@ export function createHoldemLite(config: HoldemConfig = {}): GameModule<State> {
           p.committed += need;
           if (p.chips === 0) p.allin = true;
           s.acted[idx] = true;
-          events.push({ type: "action", data: { seat, action: "call", amount: need, to: p.bet } });
+          actEvent({ seat, action: "call", amount: need, to: p.bet });
           return { state: s, events: advance() };
         }
         case "raise": {
@@ -610,7 +643,7 @@ export function createHoldemLite(config: HoldemConfig = {}): GameModule<State> {
             }
           }
           s.currentBet = Math.max(s.currentBet, to);
-          events.push({ type: "action", data: { seat, action: isAllin ? "allin" : "raise", to, amount: pay } });
+          actEvent({ seat, action: isAllin ? "allin" : "raise", to, amount: pay });
           return { state: s, events: advance() };
         }
         case "allin": {
@@ -630,7 +663,7 @@ export function createHoldemLite(config: HoldemConfig = {}): GameModule<State> {
             }
           }
           s.currentBet = Math.max(s.currentBet, to);
-          events.push({ type: "action", data: { seat, action: "allin", to, amount: pay } });
+          actEvent({ seat, action: "allin", to, amount: pay });
           return { state: s, events: advance() };
         }
         default:
@@ -664,15 +697,27 @@ export function createHoldemLite(config: HoldemConfig = {}): GameModule<State> {
           committed: p.committed,
           folded: p.folded,
           allin: p.allin,
+          // r13 修复（P2）：出局态显式化——此前只能靠 chips===0 反推（h13-b 出局后脚本仍在用
+          // 上一手残留的 hole_cards 算胜率）。观战/复盘的席位归属不再需要猜。
+          eliminated: s.bustedOrder.includes(p.seat),
+          elimination_order: s.bustedOrder.includes(p.seat) ? s.bustedOrder.indexOf(p.seat) + 1 : null,
         })),
       };
       if (viewer === "spectator") return { public: pub, private: {} };
       const me = s.players.find((p) => p.seat === viewer);
+      if (!me) return { public: pub, private: {} };
+      const busted = s.bustedOrder.includes(me.seat);
       return {
         public: pub,
-        private: me
-          ? { hole_cards: me.hole.map(cardStr), my_chips: me.chips, my_bet: me.bet }
-          : {},
+        private: {
+          // 出局者底牌置空：既无牌可下，也不该让脚本拿过期数据继续算
+          hole_cards: busted ? [] : me.hole.map(cardStr),
+          my_chips: me.chips,
+          my_bet: me.bet,
+          my_committed: me.committed,
+          eliminated: busted,
+          elimination_order: busted ? s.bustedOrder.indexOf(me.seat) + 1 : null,
+        },
       };
     },
 

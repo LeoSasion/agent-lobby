@@ -507,6 +507,8 @@ export class Gateway {
       drivers,
       graceMs: 15000,
       minPhaseMs: gameId === "werewolf_lite" ? 4000 : 0,
+      // r13：席位 2..N 为 house bot 补位（写入 match_started.bot_filled）
+      botSeats: house.map((_h, i) => i + 2),
     });
     const seatToken = "st_" + randomId("");
     const seatAgents = new Map<SeatId, string>();
@@ -809,6 +811,8 @@ export class Gateway {
       graceMs: 15000,
       minPhaseMs: room.game === "werewolf_lite" ? 4000 : 0,
       timeoutMs: room.timeoutMs,
+      // r13：补位的 house bot 席位（人类席位之后）——写入 match_started.bot_filled
+      botSeats: house.map((_h, i) => room.players.length + i + 1),
     });
     const seatAgents = new Map<SeatId, string>();
     room.players.forEach((p, i) => {
@@ -1003,7 +1007,7 @@ export class Gateway {
     if (!game) throw new Error("unknown game: " + gameId);
     const total = Math.min(game.meta.maxSeats, Math.max(game.meta.minSeats, 3));
     const house = houseBotsFor(gameId, total);
-    const match = createMatch({ game, drivers: house.map((h) => h.driver) });
+    const match = createMatch({ game, drivers: house.map((h) => h.driver), botSeats: house.map((_h, i) => i + 1) });
     const seatAgents = new Map<SeatId, string>();
     house.forEach((h, i) => {
       seatAgents.set(i + 1, h.agent);
@@ -1279,13 +1283,43 @@ export class Gateway {
     }
     if (op === "replay" && method === "GET") {
       const r = rm.match.currentResult();
+      // r13 修复（P2）：/replay 此前只有二元 scores，终局筹码/名次/结束原因要自己翻事件或到别处拼（h13-a / h13-d / h13-f / h13-i 四方各自提出）。现把 result / reason / final_chips /
+      // standings / bot_filled 一并给出——复盘端点自足，与 view.result 形态对齐。
+      const all = rm.match.rawEvents();
+      const gameEnded = [...all].reverse().find((e) => e.type === "game_ended");
+      let finalChips: Record<string, number> | null = null;
+      try {
+        const game = this.games.get(rm.gameId);
+        if (game && all.length > 0) {
+          const { state } = replayToState(game, all, all.length - 1);
+          const players = (game.viewOf(state, "spectator").public as { players?: { seat: number; chips?: number }[] }).players;
+          if (Array.isArray(players) && players.some((p) => typeof p.chips === "number")) {
+            finalChips = Object.fromEntries(players.map((p) => [String(p.seat), p.chips ?? 0]));
+          }
+        }
+      } catch {
+        finalChips = null; // 回放不可用时静默降级：事件列表与 scores 仍可用
+      }
+      const standings = finalChips
+        ? Object.entries(finalChips).sort((a, b) => b[1] - a[1]).map(([seat, chips], i) => ({ seat: Number(seat), chips, rank: i + 1 }))
+        : null;
+      const botFilled = [...rm.seatAgents.entries()].filter(([, a]) => a.startsWith("house:")).map(([s]) => s);
       return this.json(res, 200, {
         match_id: matchId,
         finished: rm.match.isFinished(),
+        // r13：与 view.result 同构（此前 replay 无 result 字段，客户端要写两套解析）
+        result: r ? { scores: r.scores, winners: Object.entries(r.scores).filter(([, v]) => v > 0).map(([k]) => Number(k)) } : null,
         scores: r?.scores ?? null,
         ratings: rm.ratings,
         // 席位 → 显示名映射（r6 ot-h1 反馈：只有 agent_id 对人不友好）
         seat_names: Object.fromEntries([...rm.seatAgents.entries()].map(([s, a]) => [String(s), this.nameOf(a)])),
+        reason: (gameEnded?.data.reason as string | undefined) ?? null,
+        hands_played: (gameEnded?.data.hands_played as number | undefined) ?? null,
+        final_chips: finalChips,
+        standings,
+        // r13：明示哪些席位由 house bot 补位——主桌实际只有 4 名真人却被当成 6 人真人桌
+        bot_filled: botFilled,
+        human_seats: [...rm.seatAgents.entries()].filter(([, a]) => !a.startsWith("house:")).map(([s]) => s),
         events: rm.match.eventsFor(viewer),
       });
     }

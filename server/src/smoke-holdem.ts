@@ -108,16 +108,25 @@ function withViewCheck(inner: SeatDriver): SeatDriver {
         street: string;
         community: string[];
         current_bet: number;
+        pot: number;
+        total_pot: number;
         players: Record<string, unknown>[];
       };
       const me = view.you.seat;
+      // r13：total_pot 必须与 pot + Σplayers[].bet 恒等（否则脚本会系统性算错赔率）
+      const realPot = pub.pot + pub.players.reduce((a, p) => a + ((p.bet as number) ?? 0), 0);
+      if (pub.total_pot !== realPot) violations.push(`seat${me}: total_pot=${pub.total_pot} ≠ pot+Σbet=${realPot}`);
       // 私有字段白名单 + 恰两张手牌
       const priv = view.private as Record<string, unknown>;
       for (const k of Object.keys(priv)) {
-        if (!["hole_cards", "my_chips", "my_bet"].includes(k)) violations.push(`seat${me}: 私有字段越权 ${k}`);
+        // r13：my_committed / eliminated / elimination_order 为本人视角派生字段（等价于 public.players[me]）
+        if (!["hole_cards", "my_chips", "my_bet", "my_committed", "eliminated", "elimination_order"].includes(k)) violations.push(`seat${me}: 私有字段越权 ${k}`);
       }
       const hole = priv.hole_cards as string[] | undefined;
-      if (!Array.isArray(hole) || hole.length !== 2) violations.push(`seat${me}: 手牌数异常 ${JSON.stringify(hole)}`);
+      // r13：出局者的私有底牌被显式置空（不再残留上一手），此时 legal_actions 恒为空
+      if (priv.eliminated === true) {
+        if (Array.isArray(hole) && hole.length !== 0) violations.push(`seat${me}: 出局者仍残留 ${hole.length} 张底牌`);
+      } else if (!Array.isArray(hole) || hole.length !== 2) violations.push(`seat${me}: 手牌数异常 ${JSON.stringify(hole)}`);
       else for (const c of hole) if (!/^[2-9TJQKA][shdc]$/.test(c)) violations.push(`seat${me}: 非法手牌 ${c}`);
       // 未发公共牌不泄露：community 与 street 严格一致
       const expectLen: Record<string, number> = { preflop: 0, flop: 3, turn: 4, river: 5 };
@@ -129,7 +138,8 @@ function withViewCheck(inner: SeatDriver): SeatDriver {
       if ("deck" in pub) violations.push(`seat${me}: 公共面出现 deck`);
       for (const p of pub.players) {
         for (const k of Object.keys(p)) {
-          if (!["seat", "chips", "bet", "committed", "folded", "allin"].includes(k)) {
+          // r13：eliminated / elimination_order 与公开的 player_eliminated 事件同源，不构成越权
+          if (!["seat", "chips", "bet", "committed", "folded", "allin", "eliminated", "elimination_order"].includes(k)) {
             violations.push(`seat${me}: players 含越权字段 ${k}`);
           }
         }
@@ -638,6 +648,76 @@ if (hu8a) assertHeadsUpOrder("减员 heads-up", hu8a.events, 2);
     timeoutMs: 150,
   }).run();
   assertHeadsUpOrder("原生 2 席", r8b.events);
+}
+
+// ---------- 场景 9：事件字段完备性（r13 修复回归） ----------
+
+console.log("\n[场景 9] 事件字段完备性（hand_no/street · blind_posted · amounts 全席位 · uncalled）");
+/** 全弃牌脚本：seat1 之外一律 fold，保证产出 all_folded 形态的 hand_ended */
+const allFold: SeatDriver[] = [
+  { name: "独苗", act: async (_v, submit) => { submit({ type: "call" }); } },
+  { name: "弃1", act: async (_v, submit) => { submit({ type: "fold" }); } },
+  { name: "弃2", act: async (_v, submit) => { submit({ type: "fold" }); } },
+];
+{
+  const r9 = await createMatch({ game: createHoldemLite({ maxHands: 3 }), drivers: allFold, seed: 7, timeoutMs: 150 }).run();
+  const evs = r9.events;
+  const actions = evs.filter((e) => e.type === "action");
+  const blinds = evs.filter((e) => e.type === "blind_posted");
+  const hands = evs.filter((e) => e.type === "hand_ended");
+  check(
+    "action 事件带 hand_no + street",
+    actions.length > 0 && actions.every((e) => Number.isInteger(e.data.hand_no) && typeof e.data.street === "string"),
+    `${actions.length} 条 action`,
+  );
+  check(
+    "street 值域合法（preflop/flop/turn/river）",
+    actions.every((e) => ["preflop", "flop", "turn", "river"].includes(String(e.data.street))),
+    [...new Set(actions.map((e) => String(e.data.street)))].join(","),
+  );
+  check(
+    "blind_posted 带 hand_no（原恒为 null）",
+    blinds.length > 0 && blinds.every((e) => Number.isInteger(e.data.hand_no)),
+    `${blinds.length} 条盲注 · 首条 hand_no=${String(blinds[0]?.data.hand_no)}`,
+  );
+  check("产生了 all_folded 手", hands.some((e) => e.data.reason === "all_folded"), `${hands.length} 手结算`);
+  check(
+    "hand_ended.amounts 含全部席位（含 0 值）",
+    hands.length > 0 && hands.every((e) => Object.keys(e.data.amounts as Record<string, number>).length === 3),
+    `amounts 键数=${[...new Set(hands.map((e) => Object.keys(e.data.amounts as Record<string, number>).length))].join(",")}`,
+  );
+  const sumOk = hands.every((e) => {
+    const a = e.data.amounts as Record<string, number>;
+    return Object.values(a).reduce((x, y) => x + y, 0) === (e.data.pot as number);
+  });
+  check("每手 Σamounts == pot（含 all_folded）", sumOk, `${hands.length} 手`);
+}
+{
+  // showdown 侧的 uncalled / winners 语义：搜出一个「有人超额投入」的分层样本
+  const evs6 = await (async () => {
+    // 用场景 6 的分层脚本（手 1 造出不等筹码），搜索出现超额投入退回的手
+    for (let seed = 1; seed <= 8; seed++) {
+      const r = await createMatch({
+        game: createHoldemLite({ maxHands: 2 }),
+        drivers: [layeredScript("甲"), layeredScript("乙"), layeredScript("丙")],
+        seed,
+        timeoutMs: 150,
+      }).run();
+      const he = r.events.filter((e) => e.type === "hand_ended" && Object.keys(e.data.uncalled as object).length > 0);
+      if (he.length > 0) return he;
+    }
+    return [];
+  })();
+  const h = evs6[0];
+  check("存在 uncalled 手（超额投入退回）", h !== undefined, h ? `金额 ${JSON.stringify(h.data.uncalled)}` : "8 seed 未出现");
+  if (h) {
+    const amounts = h.data.amounts as Record<string, number>;
+    const uncalled = h.data.uncalled as Record<string, number>;
+    const winners = h.data.winners as number[];
+    const pureRefund = Object.keys(uncalled).filter((k) => uncalled[Number(k)] === amounts[Number(k)]);
+    check("纯退回席位不再混入 winners", pureRefund.every((k) => !winners.includes(Number(k))), `winners=${JSON.stringify(winners)} · uncalled=${JSON.stringify(uncalled)}`);
+    check("Σamounts == pot", Object.values(amounts).reduce((a, b) => a + b, 0) === (h.data.pot as number), `pot=${String(h.data.pot)}`);
+  }
 }
 
 console.log(`\n=== 结果：${failed === 0 ? "全部通过" : failed + " 项失败"} ===`);

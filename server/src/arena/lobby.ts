@@ -16,6 +16,8 @@ export interface CreateMatchOptions {
   timeoutMs?: number;
   graceMs?: number;
   minPhaseMs?: number;
+  /** r13：house bot 补位的席位号（1..N）——写入 match_started 的 bot_filled / human_seats */
+  botSeats?: number[];
 }
 
 /** 按驱动列表创建比赛（座位号 1..N），校验游戏座位数约束 */
@@ -35,5 +37,6 @@ export function createMatch(opts: CreateMatchOptions): Match {
     timeoutMs: opts.timeoutMs,
     graceMs: opts.graceMs,
     minPhaseMs: opts.minPhaseMs,
+    botSeats: opts.botSeats,
   });
 }
