@@ -696,13 +696,30 @@ export class Gateway {
     void (async () => {
       const room = this.rooms.get(roomId);
       if (!room) return this.err(res, 404, "ROOM_NOT_FOUND", "房间不存在或已过期", { room_id: roomId, path: `/api/v1/lobby/rooms/${roomId}/join`, hint: "room_id 有误或已过期；房间列表见 GET /api/v1/lobby/rooms" });
-      if (room.players.length >= room.seats) return this.err(res, 409, "ROOM_FULL", "房间已满", { room_id: roomId });
-      if (room.status === "started") return this.err(res, 409, "ROOM_STARTED", "对局已开始，不可加入", { room_id: roomId });
       const body = await readJson(req);
       const name = String(body.name ?? "player-" + randomId(""));
+      // r13 P0 修复：join 幂等化——同 agent 重复 join 返回原 join_token，不重复占座。
+      // 废局事故根因：join_token 只回传一次且仅存内存，进程被杀即席位永久失联（无按 agent 找回通道）。
+      // 幂等检查在 ROOM_FULL/ROOM_STARTED 之前——已入座者重连（含对局进行中）必须能拿回 token 续战。
+      const me = this.identityOf(req, name);
+      const existing = room.players.find((p) => p.agentId === me.agentId);
+      if (existing) {
+        return this.json(res, 200, {
+          room_id: room.id,
+          join_token: existing.joinToken,
+          player_index: room.players.indexOf(existing) + 1,
+          seats: room.seats,
+          players: room.players.length,
+          status: room.status,
+          channel: existing.channel,
+          replay: true,
+          hint: "你已在本房间（幂等返回原 join_token）——进程重启后凭此续接；轮询 GET /lobby/rooms/" + room.id + "?token=" + existing.joinToken + " 获取座位分配（started 后含 seat_token）。",
+        });
+      }
+      if (room.players.length >= room.seats) return this.err(res, 409, "ROOM_FULL", "房间已满", { room_id: roomId });
+      if (room.status === "started") return this.err(res, 409, "ROOM_STARTED", "对局已开始，不可加入", { room_id: roomId });
       const ch = this.roomChannelOf(req, body);
       if (!ch.ok) return this.err(res, ch.status, ch.code, ch.message);
-      const me = this.identityOf(req, name);
       this.agentNames.set(me.agentId, me.name);
       const joinToken = "jt_" + randomId("");
       room.players.push({
@@ -1194,8 +1211,11 @@ export class Gateway {
         // 语义陷阱：本次请求未发生任何新入账（原动作可能在若干回合前已结算），
         // 客户端若以 applied 判"本回合已提交"会被误导（实测：真入账丢失 + 无声跳过新回合）。
         // 修正：replayed 响应 applied:false；入账自检 = ok && applied && !replayed（见 docs §3.1）
+        // r13 修复（P2）：补机器可读 code=REPLAYED——实测（h13-a 9 次 / h13-b 22 回合 / h13-d 60 次）
+        // 客户端无法程序化区分「重放命中 / 非你的回合 / 非法动作」三态，只能盲重试。
         return this.json(res, 200, {
           ok: true,
+          code: "REPLAYED",
           replayed: true,
           applied: false,
           ...(reasonTruncated ? { reasoning_truncated: true } : {}),

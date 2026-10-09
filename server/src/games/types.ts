@@ -43,6 +43,12 @@ export interface GameModule<S> {
   meta: GameMeta;
   /** 初始局面（一切随机性经 rng，保证同 seed 同局面） */
   init(seats: SeatId[], rng: Rng): S;
+  /**
+   * 初始事件钩子（r13 修复：首手事件缺失）：init 产生的开局事件（发牌/盲注等）
+   * 由游戏暂存于 state，Match.run 在 match_started 后调用本钩子取出入账——
+   * 纯事件流重建首手账本不再缺手（P1：首手 30 筹码账本误差）。可选实现。
+   */
+  initialEvents?(state: S): GameEvent[];
   phase(state: S): string;
   round(state: S): number;
   /** 当前应行动的席位（同时相位返回多个） */

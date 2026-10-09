@@ -149,6 +149,15 @@ export class Match {
       seats: this.seats,
       drivers: this.seats.map((s) => this.drivers.get(s)?.name ?? "?"),
     });
+    // r13 修复：初始事件钩子——init 产生的开局事件（首手发牌/盲注）入账，
+    // 纯事件流重建首手账本不再缺手（P1：首手 30 筹码账本误差）
+    const init0 = this.game.initialEvents?.(this.state);
+    if (init0) {
+      for (const ev of init0) {
+        this.store.append(ev.type, ev.data ?? {}, ev.visibility ?? "all");
+        this.gameEvents.push({ type: ev.type, data: ev.data ?? {} });
+      }
+    }
     for (;;) {
       if (this.finished || this.game.isTerminal(this.state)) break;
       this.announcePhase();

@@ -324,6 +324,45 @@ async function main(): Promise<void> {
   }
   check("场景 6 对局完整收官", m6Finished, `${Date.now() - t2}ms`);
 
+  // —— 场景 7：join 幂等化（r13 P0 修复：同 agent 重复 join 返回原 join_token）——
+  console.log("\n[场景 7] join 幂等化 · 凭据救济链");
+  {
+    const regA = await post("/agents", { name: "idem-agent-a" });
+    const keyA = String(regA.body.api_key);
+    const cr7 = await post("/lobby/rooms", { game: "othello", name: "idem-room", seats: 2 }, keyA);
+    const rid7 = String(cr7.body.room_id);
+    const j1 = await post(`/lobby/rooms/${rid7}/join`, { name: "idem-a" }, keyA);
+    const jt1 = String(j1.body.join_token);
+    check("首次 join 正常", j1.status === 200 && jt1.startsWith("jt_"), `players=${String(j1.body.players)}`);
+    // 幂等重放：同 agent 再 join → 原 token、不占座、replay 标注
+    const j2 = await post(`/lobby/rooms/${rid7}/join`, { name: "idem-a-again" }, keyA);
+    check(
+      "重复 join 返回原 join_token（幂等）",
+      j2.status === 200 && String(j2.body.join_token) === jt1 && j2.body.replay === true,
+      `players=${String(j2.body.players)} · replay=${String(j2.body.replay)}`,
+    );
+    check("幂等重放不占座", String(j2.body.players) === "1", `players=${String(j2.body.players)}`);
+    // 房间状态：原 token 可查（救济链第一段）
+    const st1 = await api(`/lobby/rooms/${rid7}?token=${jt1}`);
+    check("原 join_token 仍可查房间状态", st1.status === 200, `status=${String(st1.body.status)}`);
+    // 第二人加入 → 满员自动开局
+    const jB = await post(`/lobby/rooms/${rid7}/join`, { name: "idem-b" });
+    check("第二人加入即满员开局", jB.status === 200 && jB.body.status === "started", "");
+    // 对局已开始后已入座者重连：仍能拿回原 token（ROOM_STARTED 不挡已入座者——死席救济核心场景）
+    const j3 = await post(`/lobby/rooms/${rid7}/join`, { name: "idem-a-reconnect" }, keyA);
+    check(
+      "对局进行中重连仍返回原 token",
+      j3.status === 200 && String(j3.body.join_token) === jt1 && String(j3.body.status) === "started",
+      `status=${String(j3.body.status)}`,
+    );
+    // 救济链第二段：凭原 join_token 查房间 → 拿回 seat_token
+    const st2 = await api(`/lobby/rooms/${rid7}?token=${jt1}`);
+    check("凭原 join_token 拿回 seat_token（救济链闭环）", typeof st2.body.seat_token === "string" && String(st2.body.seat_token).startsWith("st_"), `seat=${String(st2.body.seat)}`);
+    // 游客（无 Bearer）不享受幂等：agentId 每次随机
+    const g1 = await post(`/lobby/rooms/${rid7}/join`, { name: "guest-1" });
+    check("满员后游客 join 仍被拒 ROOM_FULL（无幂等误伤）", g1.status === 409 && String(g1.body.error).startsWith("ROOM_FULL"), `code=${String(g1.body.error ?? "").slice(0, 16)}`);
+  }
+
   console.log(`\n=== 结果：${failed === 0 ? "全部通过" : failed + " 项失败"} ===`);
   process.exitCode = failed === 0 ? 0 : 1;
   process.exit(process.exitCode);

@@ -551,5 +551,94 @@ if (splitInfo) {
   check("终局胜者出自并列者", d.winners.includes(win1), `winner=${win1}`);
 }
 
+// ---------- 场景 8：heads-up 盲注与行动顺序（r13 修复回归） ----------
+
+console.log("\n[场景 8] heads-up 盲注与行动顺序（减员至 2 人 + 原生 2 席）");
+/** 8a 专用：手 1 造出局（seat1 全下 · seat2 跟注全下 · seat3 弃牌），手 2+ check-down */
+const cullScript = (name: string): SeatDriver => ({
+  name,
+  act: async (view, submit) => {
+    const pub = view.public as { hand_no: number; current_bet: number };
+    if (pub.hand_no === 1) {
+      if (view.you.seat === 1) { submit({ type: "allin" }); return; }
+      if (view.you.seat === 2) { submit({ type: "call" }); return; }
+      submit({ type: "fold" }); return;
+    }
+    const my = view.private as { my_bet?: number };
+    const toCall = pub.current_bet - (my.my_bet ?? 0);
+    if (toCall > 0) { if (!submit({ type: "call" }).ok) submit({ type: "fold" }); }
+    else if (!submit({ type: "check" }).ok) submit({ type: "fold" });
+  },
+});
+/**
+ * 断言：每手 button=小盲；preflop 首行动=button(SB)；postflop 首行动≠button（heads-up 由 BB 先行动，
+ * 位置优势在庄家——标准规则）。r13 修复前：3+ 席减员至 2 人时 button 成了大盲且 preflop 错位。
+ */
+/** from：起始校验手号（3 席减员局的手 1 仍是满员手，须从手 2 起校验 heads-up 纪律） */
+function assertHeadsUpOrder(label: string, events: readonly MatchEvent[], from = 1): void {
+  type H = { handNo: number; button: number; sb: number | null; pre: number | null; post: number | null; street: string; blinds: number };
+  const hands = new Map<number, H>();
+  let cur: H | null = null;
+  for (const ev of events) {
+    if (ev.type === "hand_started") {
+      const d = ev.data as { hand_no: number; button: number };
+      cur = { handNo: d.hand_no, button: d.button, sb: null, pre: null, post: null, street: "preflop", blinds: 0 };
+      hands.set(d.hand_no, cur);
+    } else if (!cur) continue;
+    else if (ev.type === "street_dealt") cur.street = (ev.data as { street: string }).street;
+    else if (ev.type === "blind_posted") {
+      const d = ev.data as { seat: number; blind: string };
+      cur.blinds++;
+      if (d.blind === "small") cur.sb = d.seat;
+    } else if (ev.type === "action") {
+      const seat = (ev.data as { seat: number }).seat;
+      if (cur.street === "preflop") { if (cur.pre === null) cur.pre = seat; }
+      else if (cur.post === null) cur.post = seat;
+    }
+  }
+  let sbBad = 0, preBad = 0, postBad = 0, postN = 0, n = 0;
+  for (const h of hands.values()) {
+    if (h.handNo < from) continue;
+    if (h.blinds !== 2) continue; // 盲注恰好两席才成立 heads-up 断言
+    n++;
+    if (h.sb !== null && h.sb !== h.button) sbBad++;
+    if (h.pre !== null && h.pre !== h.button) preBad++;
+    if (h.post !== null) { postN++; if (h.post === h.button) postBad++; }
+  }
+  check(`${label}：button 席盲注 = small`, n > 0 && sbBad === 0, `heads-up ${n} 手 · ${sbBad} 处不符`);
+  check(`${label}：preflop 首行动 = button(SB)`, n > 0 && preBad === 0, `${n} 手 · ${preBad} 处不符`);
+  check(`${label}：postflop 首行动 ≠ button（位置优势在庄家）`, postN > 0 && postBad === 0, `${postN} 手到 postflop · ${postBad} 处不符`);
+  check(`${label}：含首手事件（initialEvents 钩子）`, hands.has(1), `手 1 hand_started ${hands.has(1) ? 1 : 0} 条`);
+}
+// 8a：3 席手 1 造出局 → 减员 heads-up（多 seed 搜索避开手 1 平局）
+let hu8a: { seed: number; events: readonly MatchEvent[] } | null = null;
+for (let seed = 1; seed <= 30 && !hu8a; seed++) {
+  const r = await createMatch({
+    game: createHoldemLite({ maxHands: 12 }),
+    drivers: [cullScript("甲"), cullScript("乙"), cullScript("丙")],
+    seed,
+    timeoutMs: 150,
+  }).run();
+  const seats = new Set<number>();
+  let h2 = false;
+  for (const ev of r.events) {
+    if (ev.type === "hand_started") h2 = (ev.data as { hand_no: number }).hand_no >= 2;
+    if (h2 && ev.type === "action") seats.add((ev.data as { seat: number }).seat);
+  }
+  if (seats.size === 2) hu8a = { seed, events: r.events };
+}
+check("减员 heads-up 场景构造（手 1 出局 1 人）", hu8a !== null, hu8a ? `seed=${hu8a.seed}` : "30 个 seed 未出现");
+if (hu8a) assertHeadsUpOrder("减员 heads-up", hu8a.events, 2);
+// 8b：原生 2 席 check-down
+{
+  const r8b = await createMatch({
+    game: createHoldemLite({ maxHands: 12 }),
+    drivers: [checkdown("甲"), checkdown("乙")],
+    seed: 42,
+    timeoutMs: 150,
+  }).run();
+  assertHeadsUpOrder("原生 2 席", r8b.events);
+}
+
 console.log(`\n=== 结果：${failed === 0 ? "全部通过" : failed + " 项失败"} ===`);
 if (failed > 0) process.exitCode = 1;

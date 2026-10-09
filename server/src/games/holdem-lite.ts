@@ -58,6 +58,7 @@ interface State {
   currentBet: number; // 本街最高投入
   minRaise: number; // 本街最小加注增量
   acted: boolean[]; // 本街各下标是否已行动（加注后重置）
+  initEvents?: GameEvent[]; // 首手事件暂存（r13：initialEvents 钩子取出后清空）
   handNo: number;
   finished: boolean;
   bustedOrder: SeatId[];
@@ -159,6 +160,14 @@ function nextCanActIdx(s: State, from: number): number | null {
   return null;
 }
 
+/** 从 from 起找下一个在局（未出局）的下标；出局者不再参与轮转 */
+function nextLiveFrom(s: State, from: number): number {
+  const n = s.players.length;
+  let i = ((from % n) + n) % n;
+  while (s.players[i].chips === 0) i = (i + 1) % n;
+  return i;
+}
+
 function aliveCount(s: State): number {
   return s.players.filter((p) => !p.folded).length;
 }
@@ -210,20 +219,20 @@ export function createHoldemLite(config: HoldemConfig = {}): GameModule<State> {
     }
 
     // 盲注位轮转跳过出局者（庄家位在 endHand 已保证落在在局者上）
-    const nextLive = (from: number): number => {
-      let i = ((from % n) + n) % n;
-      while (s.players[i].chips === 0) i = (i + 1) % n;
-      return i;
-    };
-    const sbIdx = n === 2 ? s.button : nextLive(s.button + 1);
-    const bbIdx = nextLive(sbIdx + 1);
+    // r13 修复：heads-up 判据用「存活人数」而非席位总数——3+ 席减员至 2 人时
+    // button 须转为小盲（原 n===players.length 使 heads-up 分支永不触发，实测 36/36 手 button=大盲）
+    const live = s.players.filter((q) => q.chips > 0).length;
+    const sbIdx = live === 2 ? s.button : nextLiveFrom(s, s.button + 1);
+    const bbIdx = nextLiveFrom(s, sbIdx + 1);
     postBlind(s, sbIdx, sb, events);
     postBlind(s, bbIdx, bb, events);
     s.currentBet = Math.max(s.players[sbIdx].bet, s.players[bbIdx].bet);
     s.minRaise = bb;
 
     if (canActCount(s) >= 2 && aliveCount(s) > 1) {
-      const startIdx = n === 2 ? s.button : (s.button + 3) % n;
+      // r13 修复：preflop 行动起点 = 大盲下一位在局者（UTG），通吃满员/减员/heads-up
+      // （原 (button+3)%n 按席位总数定位，减员后错位；heads-up 时自然地回到 SB=button 先行动）
+      const startIdx = nextLiveFrom(s, bbIdx + 1);
       s.toAct = nextCanActIdx(s, startIdx);
       if (s.toAct === null) {
         return [...events, ...runoutRest(s, rng), ...showdown(s, rng)];
@@ -416,9 +425,16 @@ export function createHoldemLite(config: HoldemConfig = {}): GameModule<State> {
         toAct: null, currentBet: 0, minRaise: bb, acted: players.map(() => false),
         handNo: 1, finished: false, bustedOrder: [],
       };
-      // init 不返回事件（框架限制，同骰子首手）：首手发牌/盲注直接写入 state，事件流从首个 apply 起
-      startHand(s, rng);
+      // r13 修复：首手事件不再丢弃——暂存于 state，由 Match 经 initialEvents 钩子入账
+      // （纯事件流重建首手账本不再缺 30 筹码；replay 同样经钩子对称重建）
+      s.initEvents = startHand(s, rng);
       return s;
+    },
+
+    initialEvents(state) {
+      const evs = state.initEvents ?? [];
+      state.initEvents = undefined; // 取出即清空：防二次入账（Match 与 replay 各自独立 state，互不影响）
+      return evs;
     },
 
     phase(s) {
@@ -448,6 +464,9 @@ export function createHoldemLite(config: HoldemConfig = {}): GameModule<State> {
             type: "raise",
             schema: {
               to: `int ${minTo}-${maxTo}`,
+              // r13：并列数值字段——脚本无需正则解析字符串区间（BRIEF P2：避开惟文本契约）
+              to_min: minTo,
+              to_max: maxTo,
               rule: `to = 本街总投入（含已投 ${p.bet}）；全下 to = ${maxTo} 恒合法（不足最小加注额时视为不足额全下，不重开他人行动权）`,
             },
           });
@@ -479,12 +498,15 @@ export function createHoldemLite(config: HoldemConfig = {}): GameModule<State> {
           const to = action.to as number;
           if (!Number.isInteger(to)) return { ok: false, error: "ILLEGAL_ACTION：to 须为整数" };
           const maxTo = p.bet + p.chips;
-          if (to <= s.currentBet || to > maxTo) {
-            return { ok: false, error: `ILLEGAL_ACTION：to 须在 (${s.currentBet}, ${maxTo}] 区间（to = 本街总投入）` };
-          }
+          // r13 修复（P1-②）：非法 raise 的 message 携带完整合法区间与决策要素——
+          // 原版拆两条且下界只写 currentBet，客户端把 (20, maxTo] 当合法区间（3 人独立踩坑：
+          // 短码加注按 currentBet+minRaise 算出 > 全下额的非法 to）。现在机器可解析、人可读。
           const minTo = Math.min(s.currentBet + s.minRaise, maxTo);
-          if (to < minTo && to !== maxTo) {
-            return { ok: false, error: `ILLEGAL_ACTION：加注不足最小增量（须 ≥ ${minTo}，或全下 to = ${maxTo}）` };
+          if (to <= s.currentBet || to > maxTo || (to < minTo && to !== maxTo)) {
+            return {
+              ok: false,
+              error: `ILLEGAL_ACTION：to=${to} 非法——合法区间 [${minTo}, ${maxTo}]（to=本街总投入；当前注 ${s.currentBet} · 最小加注增量 ${s.minRaise} · 全下 to=${maxTo}）`,
+            };
           }
           return { ok: true };
         }
@@ -529,7 +551,12 @@ export function createHoldemLite(config: HoldemConfig = {}): GameModule<State> {
             if (canActCount(s) >= 2 && aliveCount(s) > 1) {
               // 正常进入下一街（设行动权）
               events.push(...dealNextStreet(s));
-              s.toAct = nextCanActIdx(s, (s.button + 1) % s.players.length);
+              // postflop 行动起点 = 庄家下一位在局者起找第一个可行动者（标准规则）：
+              // 满员桌 = SB 先行动、button 最后（button 位置优势）；
+              // heads-up = BB 先行动、button 后行动（button 在 preflop 先动、postflop 拥有
+              // 位置优势——"button acts first preflop and last on every street after it"）。
+              // r13 裁定：h13-b 的此版规则正确（曾误改回 sbIdx 起点致 heads-up 顺序颠倒，已纠正）
+              s.toAct = nextCanActIdx(s, nextLiveFrom(s, s.button + 1));
             } else {
               // 无行动余地：发完剩余公共牌直接摊牌
               events.push(...runoutRest(s, rng));
@@ -612,11 +639,16 @@ export function createHoldemLite(config: HoldemConfig = {}): GameModule<State> {
     },
 
     viewOf(s, viewer) {
+      // r13 修复（P2）：total_pot = 已收池 + 本街在途投入——真实奖池一步可得。
+      // 原 public.pot 不含本街 bet（preflop 常见 pot=0/current_bet=20），4 名选手按 pot 直接算赔率
+      // 出现系统性虚高弃牌（实盘 -32% 净值）；此前口径需 pot + Σplayers[].bet 手工还原。
+      const totalPot = s.pot + s.players.reduce((a, p) => a + p.bet, 0);
       const pub: Record<string, unknown> = {
         hand_no: s.handNo,
         street: s.street,
         community: s.community.map(cardStr),
         pot: s.pot,
+        total_pot: totalPot,
         current_bet: s.currentBet,
         min_raise: s.minRaise,
         to_act: s.toAct === null ? null : s.players[s.toAct].seat,

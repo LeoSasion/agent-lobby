@@ -24,6 +24,12 @@ export function replayEvents(
   const rng = mulberry32(seed);
   let state: unknown = game.init(seats, rng);
   const gameEvents: RecordedGameEvent[] = [];
+  // r13 修复：与 Match.run 对称——初始事件（首手发牌/盲注）经钩子进 gameEvents，
+  // 保证「回放游戏事件」与真实对局完全一致（否则首手事件在回放重建中缺席）
+  const init0 = game.initialEvents?.(state);
+  if (init0) {
+    for (const g of init0) gameEvents.push({ type: g.type, data: g.data ?? {} });
+  }
   for (const ev of events) {
     if (ev.type !== "acted") continue;
     const seat = ev.data.seat as SeatId;
