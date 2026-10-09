@@ -720,5 +720,33 @@ const allFold: SeatDriver[] = [
   }
 }
 
+// ---------- 场景 10：出局席位视图（r13：eliminated 标记 + hole_cards 置空） ----------
+
+console.log("\n[场景 10] 出局席位视图（短码必被磨出局，事后查验本人视角）");
+{
+  // seat1 一律弃牌（只赔盲注），seat2/3 保守跟注——短起手筹码让 seat1 在数十手内必定归零
+  const shortGame = createHoldemLite({ startingChips: 200, maxHands: 400 });
+  const alwaysFold: SeatDriver = { name: "磨死者", act: async (_v, submit) => { submit({ type: "fold" }); } };
+  const passive: SeatDriver = {
+    name: "陪打",
+    act: async (view, submit) => {
+      const pub = view.public as { current_bet: number };
+      const my = view.private as { my_bet?: number };
+      if (pub.current_bet - (my.my_bet ?? 0) > 0) { if (!submit({ type: "call" }).ok) submit({ type: "fold" }); }
+      else if (!submit({ type: "check" }).ok) submit({ type: "fold" });
+    },
+  };
+  const m10 = createMatch({ game: shortGame, drivers: [alwaysFold, passive, passive], seed: 11, timeoutMs: 100 });
+  await m10.run();
+  const v10 = m10.viewFor(1);
+  const priv10 = v10.private as Record<string, unknown>;
+  check("seat1 终局筹码归零（出局）", (priv10.my_chips as number) === 0, `chips=${String(priv10.my_chips)}`);
+  check("出局者 private.eliminated = true", priv10.eliminated === true, `eliminated=${String(priv10.eliminated)}`);
+  check("出局者 elimination_order 为整数", Number.isInteger(priv10.elimination_order), `order=${String(priv10.elimination_order)}`);
+  check("出局者 hole_cards 已置空", Array.isArray(priv10.hole_cards) && (priv10.hole_cards as string[]).length === 0, JSON.stringify(priv10.hole_cards));
+  const p1 = (v10.public as { players: { seat: number; eliminated?: boolean }[] }).players.find((p) => p.seat === 1);
+  check("public.players 同步 eliminated 标记", p1?.eliminated === true, JSON.stringify(p1));
+}
+
 console.log(`\n=== 结果：${failed === 0 ? "全部通过" : failed + " 项失败"} ===`);
 if (failed > 0) process.exitCode = 1;
