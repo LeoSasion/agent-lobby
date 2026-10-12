@@ -145,22 +145,112 @@ select,textarea,input[type=number],input:not([type]){background:#10150f;color:va
 .ev.say{color:var(--ink)}
 .ev.sys{color:var(--grn)}
 .ev.win{color:var(--grn);font-weight:500}
-.board{display:grid;grid-template-columns:repeat(8,clamp(30px,4.6cqi,46px));gap:3px;background:#10150f;padding:10px;border:1px solid var(--line);width:max-content;max-width:100%;margin:14px auto}
-.cell{width:100%;aspect-ratio:1;background:#151b14;border:1px solid #1d261e;display:flex;align-items:center;justify-content:center;position:relative}
-.cell.legal{border:1px dashed var(--grn);cursor:pointer}
-.cell.legal:hover{background:#1c2a20}
-.cell.last::after{content:"";position:absolute;top:3px;right:3px;width:6px;height:6px;border-radius:50%;background:var(--amb)}
-.disc{width:76%;aspect-ratio:1;border-radius:50%}
-.disc.b{background:#070907;border:1px solid #3a463c}
-.disc.w{background:#d7e2d9}
-.chips{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
-.chip{border:1px solid var(--line);padding:5px 12px;font-size:13px;white-space:nowrap}
-.chip.dead{opacity:.35;text-decoration:line-through}
-.chip.wolf{border-color:var(--red)}
-.chip.turn{border-color:var(--grn)}
-.says{margin-top:10px}
-.says .line{padding:6px 0 6px 12px;border-left:2px solid var(--line);margin:6px 0}
-.says .who{color:var(--grn);margin-right:8px}
+/* r16 游戏专属渲染器（具象演武场 · 草案 A 选定落地）——骰面/圆桌/牌桌/棋枰 */
+.die{width:34px;height:34px;display:inline-grid;grid-template:repeat(3,1fr)/repeat(3,1fr);gap:2px;padding:4px;background:#101613;border:1px solid var(--line2);border-radius:6px;vertical-align:middle}
+.die i{border-radius:50%;background:transparent}
+.die i.on{background:#dfe8e2;box-shadow:0 0 4px rgba(223,232,226,.35)}
+.die.back{border-style:dashed}
+.die.back::after{content:"?";color:var(--dim);font-size:15px;display:grid;place-items:center;grid-column:1/4;grid-row:1/4}
+.die.wild{border-color:var(--amb-dim)}
+.die.wild i.on{background:var(--amb);box-shadow:0 0 5px rgba(217,177,63,.4)}
+.dice-ring{position:relative;height:300px}
+.dice-hub{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;width:320px}
+.dice-hub .lab{color:var(--grn);letter-spacing:.5em;font-size:10.5px;margin-bottom:2px}
+.dice-hub .big{font-family:var(--serif);font-size:52px;color:#e8f0ea;line-height:1.15}
+.dice-hub .big .q{color:var(--grn)}
+.dice-hub .sub{font-size:11px;margin-top:6px;color:var(--dim)}
+.seat-node{position:absolute;transform:translate(-50%,-50%);text-align:center;width:168px;transition:opacity .3s}
+.seat-node .nm{font-size:12px;color:var(--ink);margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.seat-node .nm b{color:var(--amb);font-weight:400}
+.seat-node .nm.turn::after{content:"▸ 行动中";color:var(--grn);font-size:10.5px;margin-left:6px}
+.seat-node .row{display:flex;gap:5px;justify-content:center;flex-wrap:wrap}
+.seat-node.dead{opacity:.32;filter:grayscale(1)}
+.seat-node.dead .nm{text-decoration:line-through}
+.priv-row{border-top:1px dashed var(--line2);margin-top:18px;padding-top:12px;display:flex;gap:10px;align-items:center;justify-content:center;flex-wrap:wrap}
+.priv-row .lab{color:var(--amb);font-size:11px;letter-spacing:.3em}
+.wolf-stage{display:grid;grid-template-columns:minmax(340px,1fr) minmax(280px,.9fr);gap:22px}
+@media (max-width:900px){.wolf-stage{grid-template-columns:1fr}}
+.round-table{position:relative;height:340px}
+.table-disc{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:240px;height:240px;border-radius:50%;border:1px solid var(--line2);background:radial-gradient(circle,#0c110e 0%,#0a0d0b 75%)}
+.table-disc::before{content:"";position:absolute;inset:14px;border-radius:50%;border:1px dashed var(--line)}
+.phase-core{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;width:200px}
+.phase-core .glyph{width:54px;height:54px;margin:0 auto 8px;position:relative}
+.phase-core .glyph.night .moon{position:absolute;inset:0;border-radius:50%;box-shadow:inset -12px 0 0 0 #3b4c6b;border:1px solid #3b4c6b}
+.phase-core .glyph.day .sun{position:absolute;inset:6px;border-radius:50%;border:2px solid var(--amb);box-shadow:0 0 18px rgba(217,177,63,.35)}
+.phase-core .ph{font-family:var(--serif);font-size:19px;letter-spacing:.2em;color:#dfe8e2}
+.phase-core .dy{color:var(--dim);font-size:11px;margin-top:2px;letter-spacing:.15em}
+.wseat{position:absolute;transform:translate(-50%,-50%);width:128px;text-align:center}
+.wseat .dot{width:44px;height:44px;margin:0 auto 5px;border-radius:50%;border:1px solid var(--line2);display:grid;place-items:center;font-family:var(--serif);font-size:17px;color:var(--ink);background:#101613;position:relative}
+.wseat .nm{font-size:10.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wseat.dead .dot{border-color:var(--line);color:var(--dim);background:none}
+.wseat.dead .dot::after{content:"✕";position:absolute;inset:0;display:grid;place-items:center;color:var(--red);font-size:20px}
+.wseat.dead .nm{text-decoration:line-through;opacity:.5}
+.wseat.wolf-known .dot{border-color:#7a3b3b;color:#d98080}
+.says{margin-top:4px;max-height:340px;overflow-y:auto}
+.says .lab{color:var(--grn);letter-spacing:.4em;font-size:10.5px;margin-bottom:10px}
+.say{margin-bottom:14px;position:relative;padding:0 0 0 22px}
+.say::before{content:"「";position:absolute;left:0;top:-4px;font-family:var(--serif);font-size:26px;color:var(--grn-dim)}
+.say .who{color:var(--amb);font-size:11px;margin-bottom:2px}
+.say .who .lw{color:var(--red)}
+.say .tx{font-family:var(--serif);font-size:14px;color:var(--ink);line-height:1.7}
+.voteline{margin-top:6px;padding-top:10px;border-top:1px dashed var(--line);color:var(--dim);font-size:11px}
+.voteline .ticks{display:inline-flex;gap:4px;margin-left:8px;vertical-align:middle}
+.voteline .ticks i{width:10px;height:10px;border:1px solid var(--grn-dim)}
+.voteline .ticks i.on{background:var(--grn)}
+.oval{position:relative;height:360px}
+.oval .felt{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(640px,92%);height:240px;border-radius:50%/50%;border:2px solid #1d3a2b;background:radial-gradient(ellipse at center,#0d1a12 0%,#0a120d 70%);box-shadow:inset 0 0 44px rgba(0,0,0,.55)}
+.oval .felt::before{content:"";position:absolute;inset:12px;border-radius:50%/50%;border:1px dashed #1d3a2b}
+.pub-board{position:absolute;left:50%;top:50%;transform:translate(-50%,-56%);display:flex;gap:8px}
+.pot{position:absolute;left:50%;top:50%;transform:translate(-50%,52%);text-align:center}
+.pot .lab{color:var(--dim);font-size:10px;letter-spacing:.4em}
+.pot .v{font-family:var(--serif);font-size:26px;color:var(--amb)}
+.pot .v small{font-size:12px;color:var(--dim);font-family:var(--mono)}
+.pcard{width:44px;height:62px;border-radius:5px;background:#e8f0ea;color:#101613;position:relative;font-family:var(--mono);box-shadow:0 2px 8px rgba(0,0,0,.5)}
+.pcard::before,.pcard::after{position:absolute;font-size:12px;font-weight:700;line-height:1.05;text-align:center;width:13px;content:attr(data-c)}
+.pcard::before{top:4px;left:4px}
+.pcard::after{bottom:4px;right:4px;transform:rotate(180deg)}
+.pcard.red{color:#b3402f}
+.pcard .pip{position:absolute;left:50%;top:50%;transform:translate(-50%,-30%);font-size:21px}
+.pcard.empty{background:none;border:1px dashed var(--line2);box-shadow:none}
+.pcard.empty::before,.pcard.empty::after{content:none}
+.pcard.empty .pip{color:var(--line2);font-size:15px}
+.hseat{position:absolute;transform:translate(-50%,-50%);text-align:center;width:150px}
+.hseat .nm{font-size:11.5px;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hseat .nm b{color:var(--amb);font-weight:400}
+.hseat .nm .btn-D{display:inline-block;width:14px;height:14px;border-radius:50%;border:1px solid var(--amb);color:var(--amb);font-size:8.5px;line-height:13px;margin-left:5px;vertical-align:middle}
+.hseat .chips{font-size:12.5px;color:var(--ink);display:block;margin:0}
+.hseat .chips .n{color:var(--grn)}
+.hseat .bet{margin-top:4px;display:inline-flex;align-items:center;gap:5px;color:var(--amb);font-size:11px}
+.hseat .bet .stack{display:inline-flex}
+.hseat .bet .stack i{width:12px;height:12px;border-radius:50%;border:1.5px solid var(--amb-dim);margin-left:-5px;background:#0e1310}
+.hseat .bet .stack i:first-child{margin-left:0}
+.hseat.turn .nm::after{content:"▸";color:var(--grn);margin-left:5px}
+.hseat.folded{opacity:.38}
+.hseat.folded .nm{text-decoration:line-through}
+.hseat.dead{opacity:.25;filter:grayscale(1)}
+.hseat.allin .chips::after{content:" ALL-IN";color:var(--red);font-size:9.5px;letter-spacing:.1em}
+.hole{border-top:1px dashed var(--line2);margin-top:16px;padding-top:12px;display:flex;gap:14px;align-items:center;justify-content:center;flex-wrap:wrap}
+.hole .lab{color:var(--amb);letter-spacing:.3em;font-size:11px}
+.hole .cards{display:flex;gap:6px}
+.goban{display:grid;grid-template-columns:18px repeat(8,clamp(30px,4.4cqi,44px)) 18px;grid-template-rows:18px repeat(8,clamp(30px,4.4cqi,44px)) 18px;width:max-content;max-width:100%;margin:10px auto}
+.goban .coord{display:grid;place-items:center;color:var(--dim);font-size:9.5px}
+.goban .cellc{border:1px solid var(--line);margin:-.5px;position:relative;background:#0c110e}
+.goban .cellc.legal{border:1px dashed var(--grn);cursor:pointer}
+.goban .cellc.legal:hover{background:#1c2a20}
+.goban .disc{position:absolute;inset:15%;border-radius:50%}
+.goban .disc.b{background:radial-gradient(circle at 38% 32%,#3a4741,#121815 70%);border:1px solid #2a3830}
+.goban .disc.w{background:radial-gradient(circle at 38% 32%,#f2f5f0,#b9c4bd 70%);border:1px solid #8f9c95}
+.goban .cellc.last::after{content:"";position:absolute;inset:0;border:1.5px solid var(--amb);pointer-events:none}
+.oth-stage{display:flex;gap:26px;align-items:flex-start;justify-content:center;flex-wrap:wrap}
+.oth-side{min-width:190px}
+.oth-side .h{font-family:var(--serif);font-size:15px;letter-spacing:.3em;margin-bottom:12px;color:#dfe8e2}
+.cnt{display:flex;align-items:center;gap:12px;margin:10px 0}
+.cnt .sw{width:22px;height:22px;border-radius:50%;border:1px solid var(--line2)}
+.cnt .sw.b{background:#121815}
+.cnt .sw.w{background:#e8f0ea}
+.cnt .v{font-family:var(--serif);font-size:27px;color:#e8f0ea}
+.cnt .who{color:var(--dim);font-size:11px;margin-left:auto}
+.cnt.turn-c .v{color:var(--grn)}
 .arow{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:10px 0}
 textarea{width:100%;min-height:44px;resize:vertical}
 .msg{color:var(--red);font-size:13px;min-height:18px;margin-top:8px}
@@ -800,13 +890,42 @@ function renderGame(v, box, interactive) {
   else renderDice(v, box, interactive);
 }
 
+/* r16 具象演武场（草案 A 选定）：骰面点阵 / 扑克牌面 / 昼夜相位——观战视角只画暗骰背面（信息差可视化） */
+const PIP = { 1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8] };
+function dieHTML(face, back, wild) {
+  if (back) return `<span class="die back"></span>`;
+  const on = new Set(PIP[face] ?? []);
+  let cells = "";
+  for (let i = 0; i < 9; i++) cells += `<i class="${on.has(i) ? "on" : ""}"></i>`;
+  return `<span class="die ${wild && face === 1 ? "wild" : ""}">${cells}</span>`;
+}
+const SUITS = { s: "♠", h: "♥", d: "♦", c: "♣" };
+function cardHTML(c) {
+  if (!c) return `<span class="pcard empty"><span class="pip">?</span></span>`;
+  const rank = c.slice(0, c.length - 1), suit = c.slice(-1), red = suit === "h" || suit === "d";
+  return `<span class="pcard ${red ? "red" : ""}" data-c="${rank}${SUITS[suit]}"><span class="pip">${SUITS[suit]}</span></span>`;
+}
+
 function renderHoldem(v, box, interactive) {
   const p = v.public;
   const names = seatNames(interactive ? PEVS : MEVS);
-  let html = `<div class="chips">` + p.players.map((x) =>
-    `<span class="chip ${x.chips === 0 ? "dead" : ""} ${p.to_act === x.seat ? "turn" : ""}">${x.seat}号 ${esc(names[x.seat] ?? "")}${x.folded ? " · 弃牌" : ""}${x.allin ? " · 全下" : ""} · <span class="num">${x.chips}</span>筹${x.bet ? ` <span class="num">+${x.bet}</span>` : ""}</span>`).join("") + `</div>`;
-  html += `<div class="kv">公共牌：<b class="num">${p.community.join(" ") || "—"}</b> · 底池 <b class="num">${p.pot}</b> · 本街注 <b class="num">${p.current_bet}</b> · 第 <span class="num">${v.round}</span> 手 · 庄 ${p.button}号</div>`;
-  if (v.private.hole_cards) html += `<div class="kv">我的底牌：<b>${v.private.hole_cards.join(" · ")}</b> · 我的筹码 <b class="num">${v.private.my_chips ?? "?"}</b></div>`;
+  const N = p.players.length, cx = 50, cy = 50, rx = 41, ry = 43;
+  let seats = "";
+  p.players.forEach((x) => {
+    const ang = (-90 + (360 / N) * x.seat) * Math.PI / 180;
+    const px = cx + rx * Math.cos(ang), py = cy + ry * Math.sin(ang);
+    const cls = ["hseat", x.chips === 0 ? "dead" : "", x.folded ? "folded" : "", x.allin ? "allin" : "", p.to_act === x.seat && v.phase !== "finished" ? "turn" : ""].join(" ");
+    const stacks = x.bet > 0 ? `<div class="bet"><span class="stack">${Array.from({ length: Math.min(5, Math.ceil(x.bet / 40) || 1) }, () => "<i></i>").join("")}</span>${x.bet}</div>` : "";
+    seats += `<div class="${cls}" style="left:${px}%;top:${py}%">` +
+      `<div class="nm"><b>${x.seat}号</b> ${esc(names[x.seat] ?? "")}${p.button === x.seat ? '<span class="btn-D">D</span>' : ""}</div>` +
+      `<div class="chips"><span class="n">${x.chips}</span> 筹</div>${stacks}</div>`;
+  });
+  const board = [0, 1, 2, 3, 4].map((i) => cardHTML(p.community[i])).join("");
+  let html = `<div class="oval"><div class="felt"></div>${seats}
+    <div class="pub-board">${board}</div>
+    <div class="pot"><div class="lab">底池</div><div class="v">${p.total_pot ?? p.pot}<small> / 本街注 ${p.current_bet}</small></div></div></div>` +
+    `<div class="kv" style="text-align:center;margin-top:10px;color:var(--dim);font-size:11px">第 ${p.hand_no}/${p.max_hands} 手 · ${phaseName(v.phase)}${v.phase !== "finished" ? ` · 轮到 ${p.to_act}号` : ""} · 盲注 ${p.small_blind}/${p.big_blind}</div>`;
+  if (v.private && v.private.hole_cards) html += `<div class="hole"><span class="lab">我的底牌</span><span class="cards">${v.private.hole_cards.map(cardHTML).join("")}</span><span class="kv" style="color:var(--dim)">我 ${v.private.my_chips} 筹${v.private.my_bet ? ` · 已下 ${v.private.my_bet}` : ""}${v.private.eliminated ? " · 已出局" : ""}</span></div>`;
   if (interactive) {
     box.innerHTML = html + `<div class="act-area"></div>`;
     renderActions(v, box.querySelector(".act-area"));
@@ -818,10 +937,28 @@ function renderHoldem(v, box, interactive) {
 function renderDice(v, box, interactive) {
   const p = v.public;
   const names = seatNames(interactive ? PEVS : MEVS);
-  let html = `<div class="chips">` + p.players.map((x) =>
-    `<span class="chip ${x.dice_count === 0 ? "dead" : ""} ${p.turn === x.seat ? "turn" : ""}">${x.seat}号 ${esc(names[x.seat] ?? "")} · <span class="num">${x.dice_count}</span>骰</span>`).join("") + `</div>`;
-  html += `<div class="kv">当前叫价：<b>${p.current_bid ? `${p.current_bid.seat}号 ${p.current_bid.qty} 个 ${p.current_bid.face}` : "尚无"}</b> · 第 <span class="num">${v.round}</span> 轮</div>`;
-  if (v.private.my_dice) html += `<div class="kv">我的骰子：<b>${v.private.my_dice.join(" · ")}</b></div>`;
+  const N = p.players.length, cx = 50, cy = 50, rx = 38, ry = 40;
+  let seats = "";
+  p.players.forEach((x) => {
+    const ang = (-90 + (360 / N) * (x.seat - 1)) * Math.PI / 180;
+    const px = cx + rx * Math.cos(ang), py = cy + ry * Math.sin(ang);
+    const isTurn = p.turn === x.seat && v.phase !== "finished";
+    const dead = x.dice_count === 0;
+    const diceHtml = interactive && x.seat === v.you.seat && v.private && v.private.my_dice
+      ? v.private.my_dice.map((f) => dieHTML(f, false, p.wildcard_ones)).join("")
+      : Array.from({ length: x.dice_count }, () => dieHTML(0, true)).join("");
+    seats += `<div class="seat-node ${dead ? "dead" : ""}" style="left:${px}%;top:${py}%">` +
+      `<div class="nm ${isTurn ? "turn" : ""}"><b>${x.seat}号</b> ${esc(names[x.seat] ?? "")}</div>` +
+      `<div class="row">${diceHtml || "<span style='color:var(--dim);font-size:11px'>出局</span>"}</div></div>`;
+  });
+  const bid = p.current_bid;
+  const bidDie = bid ? dieHTML(bid.face, false, p.wildcard_ones).replace('class="die', 'class="die" style="width:40px;height:40px;vertical-align:-6px;') : "";
+  let html = `<div class="dice-ring">${seats}
+    <div class="dice-hub">
+      <div class="lab">当前叫价</div>
+      ${bid ? `<div class="big"><span class="q">${bid.qty}</span> 个 ${bidDie}</div><div class="sub">${bid.seat}号所叫 · 第 ${v.round} 轮${p.wildcard_ones ? " · 1 为百搭" : ""}</div>` : `<div class="big" style="color:var(--dim)">—</div><div class="sub">等待开叫 · 第 ${v.round} 轮</div>`}
+    </div></div>`;
+  if (v.private && v.private.my_dice) html += `<div class="priv-row"><span class="lab">我的骰子</span>${v.private.my_dice.length ? v.private.my_dice.map((f) => dieHTML(f, false, p.wildcard_ones)).join("") : '<span style="color:var(--dim);font-size:11px">已无骰</span>'}</div>`;
   if (interactive) {
     box.innerHTML = html + `<div class="act-area"></div>`;
     renderActions(v, box.querySelector(".act-area"));
@@ -833,11 +970,26 @@ function renderDice(v, box, interactive) {
 function renderOthello(v, box, interactive) {
   const p = v.public;
   const legal = interactive && v.you.active ? (v.legal_actions.find((a) => a.type === "place")?.schema?.values ?? []) : [];
-  let html = `<div class="board">` + p.board.map((c, i) => {
-    const isL = legal.includes(i);
-    return `<div class="cell ${isL ? "legal" : ""} ${i === p.last_move ? "last" : ""}"${isL ? ` onclick="act({type:'place',cell:${i}})"` : ""}>${c === 0 ? "" : `<div class="disc ${c === 1 ? "b" : "w"}"></div>`}</div>`;
-  }).join("") + `</div>`;
-  html += `<div class="kv" style="text-align:center">黑 <b class="num">${p.counts.black}</b> : <b class="num">${p.counts.white}</b> 白${v.you.seat >= 1 ? ` · 我执${v.you.seat === p.colors.black ? "黑" : "白"}` : ""}</div>`;
+  const cols = "ABCDEFGH";
+  let grid = "";
+  for (let r = 0; r < 8; r++) {
+    grid += `<div class="coord">${r + 1}</div>`;
+    for (let c = 0; c < 8; c++) {
+      const i = r * 8 + c, cell = p.board[i], isL = legal.includes(i);
+      grid += `<div class="cellc ${isL ? "legal" : ""} ${i === p.last_move ? "last" : ""}"${isL ? ` onclick="act({type:'place',cell:${i}})"` : ""}>${cell === 0 ? "" : `<div class="disc ${cell === 1 ? "b" : "w"}"></div>`}</div>`;
+    }
+    grid += `<div class="coord"></div>`;
+  }
+  grid += `<div class="coord"></div>` + cols.split("").map((c) => `<div class="coord">${c}</div>`).join("") + `<div class="coord"></div>`;
+  const myColor = v.you && v.you.seat >= 1 ? (v.you.seat === p.colors.black ? "黑" : "白") : null;
+  let html = `<div class="oth-stage"><div class="goban">${grid}</div>
+    <div class="oth-side">
+      <div class="h">局势</div>
+      <div class="cnt ${p.turn === 1 ? "turn-c" : ""}"><span class="sw b"></span><span class="v">${p.counts.black}</span><span class="who">黑${myColor === "黑" ? " · 我" : ""}${p.turn === 1 ? " · 行棋" : ""}</span></div>
+      <div class="cnt ${p.turn === 2 ? "turn-c" : ""}"><span class="sw w"></span><span class="v">${p.counts.white}</span><span class="who">白${myColor === "白" ? " · 我" : ""}${p.turn === 2 ? " · 行棋" : ""}</span></div>
+      ${p.last_move !== null && p.last_move !== undefined ? `<div class="kv" style="color:var(--dim);font-size:11px;margin-top:8px">最后落子 <b style="color:var(--amb)">${cols[p.last_move % 8]}${Math.floor(p.last_move / 8) + 1}</b></div>` : ""}
+      ${v.phase === "finished" ? `<div class="kv" style="color:var(--grn);margin-top:8px">终局</div>` : ""}
+    </div></div>`;
   if (interactive) {
     box.innerHTML = html + `<div class="act-area" style="text-align:center"></div>`;
     renderActions(v, box.querySelector(".act-area"));
@@ -850,23 +1002,40 @@ function renderWolf(v, box, interactive) {
   const p = v.public;
   const names = seatNames(interactive ? PEVS : MEVS);
   const roles = revealedRoles(interactive ? PEVS : MEVS);
-  let html = `<div class="chips">` + p.seats.map((s) => {
+  const N = p.seats.length, cx = 50, cy = 50, rx = 40, ry = 42;
+  const isNight = v.phase === "night";
+  let seats = "";
+  p.seats.forEach((s) => {
+    const ang = (-90 + (360 / N) * (s - 1)) * Math.PI / 180;
+    const px = cx + rx * Math.cos(ang), py = cy + ry * Math.sin(ang);
     const alive = p.alive_seats.includes(s);
     const role = roles ? roles[String(s)] : null;
-    const cls = ["chip", alive ? "" : "dead", role === "werewolf" ? "wolf" : ""].join(" ");
-    const lb = role ? ({ werewolf: "狼", seer: "预言家", villager: "民" })[role] : "";
-    return `<span class="${cls}">${s}号 ${esc(names[s] ?? "")}${lb ? " · " + lb : ""}</span>`;
-  }).join("") + `</div>`;
-  html += `<div class="kv">第 <span class="num">${v.round}</span> 天 · <b>${phaseName(v.phase)}</b> · 存活 <span class="num">${p.alive_seats.length}</span> 人</div>`;
-  if (v.private.role) {
+    const lb = role ? ({ werewolf: " · 狼", seer: " · 预言家", villager: " · 民" })[role] : "";
+    seats += `<div class="wseat ${alive ? "" : "dead"} ${role === "werewolf" ? "wolf-known" : ""}" style="left:${px}%;top:${py}%">` +
+      `<div class="dot">${s}</div><div class="nm">${s}号 ${esc(names[s] ?? "")}${lb}</div></div>`;
+  });
+  const says = (p.today_says ?? []).slice(-5);
+  let sayHtml = `<div class="says"><div class="lab">当日发言</div>`;
+  if (!says.length) sayHtml += `<div class="kv" style="color:var(--dim)">（暂无公开演说）</div>`;
+  says.forEach((s) => {
+    sayHtml += `<div class="say"><div class="who">${s.seat}号${s.kind === "last_words" ? ` <span class="lw">· 遗言</span>` : ""}</div><div class="tx">${esc(s.text)}</div></div>`;
+  });
+  if (p.votes_cast !== undefined) {
+    const total = p.alive_seats.length, got = p.votes_cast;
+    sayHtml += `<div class="voteline">放逐投票${p.pending_voters ? ` · 待投 ${p.pending_voters.length} 人` : ""}<span class="ticks">${Array.from({ length: total }, (_, i) => `<i class="${i < got ? "on" : ""}"></i>`).join("")}</span></div>`;
+  }
+  sayHtml += `</div>`;
+  let html = `<div class="wolf-stage">
+    <div class="round-table"><div class="table-disc"></div>${seats}
+      <div class="phase-core"><div class="glyph ${isNight ? "night" : "day"}">${isNight ? '<div class="moon"></div>' : '<div class="sun"></div>'}</div>
+      <div class="ph">${phaseName(v.phase)}</div><div class="dy">第 ${v.round} 天 · 存活 ${p.alive_seats.length} / ${N}</div></div></div>
+    ${sayHtml}</div>`;
+  if (v.private && v.private.role) {
     const pr = v.private;
-    html += `<div class="kv">我的身份：<b>${({ werewolf: "狼人", seer: "预言家", villager: "平民" })[pr.role] ?? "?"}</b>`;
+    html += `<div class="priv-row"><span class="lab">我的身份</span><span class="kv">${({ werewolf: "狼人", seer: "预言家", villager: "平民" })[pr.role] ?? "?"}`;
     if (pr.role === "werewolf" && pr.teammates) html += ` · 队友 ${pr.teammates.join("、")}号`;
     if (pr.role === "seer" && pr.checks) html += ` · 查验：${pr.checks.map((c) => `${c.target}号${c.is_wolf ? "(狼)" : "(好)"}`).join("、") || "无"}`;
-    html += `</div>`;
-  }
-  if (p.today_says && p.today_says.length) {
-    html += `<div class="says">` + p.today_says.map((s) => `<div class="line"><span class="who">${s.seat}号${s.kind === "last_words" ? " · 遗言" : ""}</span>${esc(s.text)}</div>`).join("") + `</div>`;
+    html += `</span></div>`;
   }
   if (interactive) {
     box.innerHTML = html + `<div class="act-area"></div>`;
