@@ -85,7 +85,7 @@ console.log("════ Phase 2 · 自己局回放：座位视角可用（自�
 // 时序鲁棒性（r15 复盘）：view fetch 与 events 喂送完成顺序不定，且回放栏在
 // 每条事件后经 refreshMatchView 重渲染——轮询等待收敛（回放栏已渲染 + 事件流已到），
 // 固定 sleep 在慢机上会假失败（view 未返回 → #m-replay 空串 → 断言双失真）
-const waitReplayReady = async (needEvents, timeoutMs = 8000) => {
+const waitReplayReady = async (needEvents, timeoutMs = 20000) => {
   for (let i = 0; i < timeoutMs / 200; i++) {
     const b = els["#m-replay"]?.innerHTML ?? "";
     const log = els["#m-log"]?.innerHTML ?? "";

@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>r17 回放时间轴 AB 对照</title>
+<style>
+  :root {
+    --bg: #0a0d0b; --line: #1d2721; --line2: #2a3830;
+    --grn: #45d98e; --amb: #d9b13f; --ink: #c9d4cd; --dim: #6f7f77;
+    --serif: "Noto Serif SC","Songti SC",SimSun,serif;
+    --mono: "JetBrains Mono","Cascadia Mono",Consolas,monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--ink); font-family: var(--mono); font-size: 14px; padding: 32px 4vw 80px; }
+  header { border-bottom: 1px solid var(--line2); padding-bottom: 18px; margin-bottom: 26px; }
+  .eyebrow { color: var(--grn); letter-spacing: .5em; font-size: 11px; margin-bottom: 10px; }
+  h1 { font-family: var(--serif); font-size: 32px; letter-spacing: .12em; color: #e8f0ea; font-weight: 600; }
+  .sub { color: var(--dim); margin-top: 8px; font-size: 12.5px; max-width: 820px; line-height: 1.7; }
+  .mode { display: flex; gap: 8px; margin: 18px 0; }
+  .mbtn { background: none; border: 1px solid var(--line2); color: var(--dim); font-family: var(--mono); font-size: 11.5px; padding: 5px 14px; cursor: pointer; letter-spacing: .08em; }
+  .mbtn.on { border-color: var(--grn); color: var(--grn); }
+  .duo { display: grid; gap: 18px; }
+  .duo.two { grid-template-columns: 1fr 1fr; }
+  @media (max-width: 1100px) { .duo.two { grid-template-columns: 1fr; } }
+  .pane { border: 1px solid var(--line); }
+  .pane .ph { display: flex; align-items: baseline; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .pane .ph .t { font-family: var(--serif); font-size: 16px; letter-spacing: .1em; }
+  .pane .ph .a-c { color: var(--grn); } .pane .ph .b-c { color: var(--amb); }
+  .pane .ph .d { color: var(--dim); font-size: 11px; margin-left: auto; }
+  .pane iframe { width: 100%; height: 1500px; border: 0; display: block; background: var(--bg); }
+  table { width: 100%; border-collapse: collapse; margin-top: 34px; }
+  caption { text-align: left; font-family: var(--serif); font-size: 18px; color: #dfe8e2; letter-spacing: .1em; padding-bottom: 10px; }
+  th, td { border: 1px solid var(--line); padding: 9px 12px; text-align: left; vertical-align: top; font-size: 12.5px; }
+  th { color: var(--dim); font-weight: 400; letter-spacing: .1em; font-size: 11px; background: #0c110e; }
+  td.dim-k { color: var(--dim); width: 130px; font-size: 11.5px; }
+  td .a-c { color: var(--grn); } td .b-c { color: var(--amb); }
+  footer { margin-top: 40px; border-top: 1px solid var(--line); padding-top: 14px; color: var(--dim); font-size: 11.5px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">演武场 · r17 回放时间轴对照</div>
+  <h1>草案 A / B 对照总览</h1>
+  <div class="sub">同一批真实事件流驱动。A「事件刻度轨」看整局的呼吸节奏（全局视角）；B「席位泳道轨迹」看每个 Agent 的行为轨迹（个体视角，弃牌后的空泳道即沉默）。两者共享摘要卡叙事指针与日志同步截断高亮。切换模式对比后选定。</div>
+</header>
+
+<div class="mode">
+  <button class="mbtn on" onclick="setMode('two', this)">并排对照</button>
+  <button class="mbtn" onclick="setMode('a', this)">单看 A</button>
+  <button class="mbtn" onclick="setMode('b', this)">单看 B</button>
+</div>
+
+<div class="duo two" id="duo">
+  <div class="pane" id="pane-a">
+    <div class="ph"><span class="t a-c">草案 A · 事件刻度轨</span><span class="d">全局节奏 · 一条时间线</span></div>
+    <iframe src="r17-timeline.html" loading="lazy"></iframe>
+  </div>
+  <div class="pane" id="pane-b">
+    <div class="ph"><span class="t b-c">草案 B · 席位泳道轨迹</span><span class="d">个体行为 · 每席位一条泳道</span></div>
+    <iframe src="r17-B-lanes.html" loading="lazy"></iframe>
+  </div>
+</div>
+
+<table>
+  <caption>五维对照矩阵</caption>
+  <tr><th style="width:130px"></th><th>草案 A · 事件刻度轨</th><th>草案 B · 席位泳道轨迹</th></tr>
+  <tr><td class="dim-k">叙事视角</td><td><span class="a-c">全局节奏</span>——相位竖线与关键节点刻度勾勒整局呼吸</td><td><span class="b-c">个体轨迹</span>——谁在何时叫价/发言/弃牌/出局，横向对齐</td></tr>
+  <tr><td class="dim-k">Agent 观感</td><td><span class="a-c">★★</span> 事件归属需看摘要卡</td><td><span class="b-c">★★★</span> 行为人直接写在泳道标签上——「看 Agent 打牌」的题眼</td></tr>
+  <tr><td class="dim-k">密集局表现</td><td><span class="a-c">★★★</span> 610 事件成节奏条纹，不挤</td><td><span class="b-c">★★</span> 610 点均分 3 泳道 + 公共轨，单泳道较密</td></tr>
+  <tr><td class="dim-k">与 r16 场景契合</td><td><span class="a-c">★★★</span> 单轨横条与 range 滑条天然叠层</td><td><span class="b-c">★★</span> 多泳道高度较大，与场景并排需收折</td></tr>
+  <tr><td class="dim-k">信息差呈现</td><td><span class="a-c">★★</span> 观战流缺私有事件=刻度自然缺失</td><td><span class="b-c">★★★</span> 狼人杀夜里泳道全空——沉默本身就是信息</td></tr>
+</table>
+
+<footer>r17 回放时间轴 AB 对照 · 数据为 2026-10-12 真实对局事件流 · 共享组件：摘要卡 + 日志同步截断高亮 · 选定后落地观战页回放栏</footer>
+
+<script>
+function setMode(n, btn) {
+  document.querySelectorAll(".mbtn").forEach((b) => b.classList.remove("on"));
+  btn.classList.add("on");
+  const duo = document.getElementById("duo");
+  const pa = document.getElementById("pane-a"), pb = document.getElementById("pane-b");
+  duo.classList.toggle("two", n === "two");
+  pa.style.display = n === "b" ? "none" : "";
+  pb.style.display = n === "a" ? "none" : "";
+}
+</script>
+</body>
+</html>
