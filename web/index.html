@@ -251,6 +251,37 @@ select,textarea,input[type=number],input:not([type]){background:#10150f;color:va
 .cnt .v{font-family:var(--serif);font-size:27px;color:#e8f0ea}
 .cnt .who{color:var(--dim);font-size:11px;margin-left:auto}
 .cnt.turn-c .v{color:var(--grn)}
+/* r17 回放时间轴（草案 B 席位泳道选定）：摘要卡 + 泳道轨迹 + 日志同步高亮 */
+.nowcard{display:flex;align-items:center;gap:14px;border:1px solid var(--line);background:#0e1310;padding:10px 14px;margin-top:10px}
+.nowcard .seq{font-family:var(--serif);font-size:22px;color:var(--amb);min-width:64px}
+.nowcard .tx{flex:1;font-size:12.5px;color:var(--ink);line-height:1.5}
+.nowcard .tx .kind{color:var(--grn);font-size:10.5px;letter-spacing:.25em;display:block;margin-bottom:1px}
+.lanewrap{border:1px solid var(--line);background:#0e1310;margin-top:10px;position:relative;--laneLab:118px}
+.lane{display:flex;align-items:stretch;border-bottom:1px solid var(--line);position:relative;height:30px}
+.lane:last-child{border-bottom:0}
+.lane .lab{width:var(--laneLab);flex:none;border-right:1px solid var(--line);padding:3px 8px;font-size:10.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lane .lab b{color:var(--amb);font-weight:400}
+.lane .lab.pub{color:var(--grn);letter-spacing:.2em;font-size:9.5px}
+.lane .track{flex:1;position:relative}
+.pt{position:absolute;top:50%;transform:translate(-50%,-50%);cursor:pointer;border-radius:2px;opacity:.4;transition:opacity .2s}
+.pt:hover{opacity:1;transform:translate(-50%,-50%) scale(1.5);z-index:3}
+.pt.done{opacity:1}
+.pt-act{width:7px;height:7px;background:#2f4a3a;border-radius:50%}
+.pt-say{width:9px;height:9px;background:var(--grn-dim)}
+.pt-hot{width:12px;height:12px;background:var(--amb);box-shadow:0 0 7px rgba(217,177,63,.45);border-radius:50%}
+.pt-phase{width:2px;height:100%;background:var(--grn);opacity:.5;top:0;transform:translate(-50%,0);border-radius:0}
+.pt-phase.done{opacity:.85}
+.cursor{position:absolute;top:0;bottom:0;width:0;border-left:1.5px solid var(--red);z-index:2;pointer-events:none}
+.cursor::after{content:"";position:absolute;top:-1px;left:-4.5px;width:8px;height:8px;background:var(--red);border-radius:50%}
+.lanelegend{display:flex;gap:16px;margin:8px 2px;color:var(--dim);font-size:10.5px;letter-spacing:.08em;flex-wrap:wrap}
+.lanelegend span{display:inline-flex;align-items:center;gap:5px}
+.lanelegend i{display:inline-block;width:8px;height:8px;border-radius:50%}
+.lanelegend i.p{width:2px;height:12px;border-radius:0;background:var(--grn)}
+.lanelegend i.h{background:var(--amb)}
+.lanelegend i.s{background:var(--grn-dim)}
+.lanelegend i.a{background:#2f4a3a}
+.ev.cur{color:#e8f0ea;background:rgba(69,217,142,.07);border-left:2px solid var(--grn);padding-left:12px}
+.ev.past{color:var(--ink)}
 .arow{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:10px 0}
 textarea{width:100%;min-height:44px;resize:vertical}
 .msg{color:var(--red);font-size:13px;min-height:18px;margin-top:8px}
@@ -443,7 +474,15 @@ function evClass(e) {
   if (e.type === "game_won" || e.type === "match_ended") return "ev win";
   return "ev";
 }
-function renderLog(el, evs) {
+function renderLog(el, evs, uptoSeq) {
+  // r17：回放模式（uptoSeq 给定）——日志只渲染到当前步、当前行高亮居中（叙事随回放推进）
+  if (uptoSeq !== undefined) {
+    el.innerHTML = evs.slice(0, uptoSeq + 1).map((e) =>
+      `<div class="${evClass(e)} ${e.seq === uptoSeq ? "cur" : e.seq < uptoSeq ? "past" : ""}" id="ev-${e.seq}">#${String(e.seq).padStart(2, "0")} ${evText(e)}</div>`).join("");
+    const curEl = document.getElementById("ev-" + uptoSeq);
+    if (curEl) el.scrollTop = Math.max(0, curEl.offsetTop - el.clientHeight / 2 + curEl.offsetHeight / 2);
+    return;
+  }
   el.innerHTML = evs.slice(-200).map((e) => `<div class="${evClass(e)}">#${String(e.seq).padStart(2, "0")} ${evText(e)}</div>`).join("");
   el.scrollTop = el.scrollHeight;
 }
@@ -774,6 +813,41 @@ async function refreshMatchView() {
   }
 }
 
+/* r17 席位泳道（草案 B 选定）：事件点归属行使人——谁在何时叫价/发言/弃牌/出局；
+   公共事件（相位/发牌/计票）走公共轨；红游标线跨泳道指向当前步 */
+function evLane(e) { const d = e.data ?? {}; return Number.isInteger(d.seat) && d.seat >= 1 ? d.seat : 0; }
+function evPoint(e) {
+  if (e.type === "phase_started" || e.type === "round_started" || e.type === "hand_started") return "pt-phase";
+  if (["challenge_resolved", "vote_result", "vote_pk", "player_died", "player_eliminated", "game_won", "match_ended", "board_full", "street_dealt", "showdown", "pot_split"].includes(e.type)) return "pt-hot";
+  if (e.type === "said" || e.type === "last_words") return "pt-say";
+  return "pt-act";
+}
+function lanePct(seq, total) { return ((seq / Math.max(total, 1)) * 100).toFixed(2) + "%"; }
+function renderLanes() {
+  const w = $("#m-lanes");
+  if (!w) return;
+  const names = seatNames(MEVS);
+  const seats = Object.keys(names).map(Number);
+  const total = R.total;
+  let html = `<div class="lane"><div class="lab pub">公共轨</div><div class="track">` +
+    MEVS.filter((e) => evLane(e) === 0).map((e) =>
+      `<div class="pt ${evPoint(e)} ${e.seq <= R.pos ? "done" : ""}" style="left:${lanePct(e.seq, total)}" title="#${e.seq} ${evText(e).replace(/<[^>]+>/g, "")}" onclick="replaySeek(${e.seq})"></div>`).join("") + `</div></div>`;
+  for (const s of seats) {
+    html += `<div class="lane"><div class="lab"><b>${s}号</b> ${esc(names[s] ?? "")}</div><div class="track">` +
+      MEVS.filter((e) => evLane(e) === s).map((e) =>
+        `<div class="pt ${evPoint(e)} ${e.seq <= R.pos ? "done" : ""}" style="left:${lanePct(e.seq, total)}" title="#${e.seq} ${evText(e).replace(/<[^>]+>/g, "")}" onclick="replaySeek(${e.seq})"></div>`).join("") + `</div></div>`;
+  }
+  html += `<div class="cursor" style="left:calc(var(--laneLab) + (100% - var(--laneLab)) * ${R.pos / Math.max(total, 1)})"></div>`;
+  w.innerHTML = html;
+}
+function renderNowCard() {
+  const c = $("#m-now");
+  if (!c) return;
+  const e = MEVS[R.pos];
+  if (!e) { c.innerHTML = ""; return; }
+  const kinds = { phase_started: "相位", round_started: "轮次", hand_started: "手牌", challenge_resolved: "开盒对质", vote_result: "计票", player_died: "出局", street_dealt: "发牌", said: "发言", last_words: "遗言", match_ended: "终局", match_started: "开局" };
+  c.innerHTML = `<div class="seq">#${String(e.seq).padStart(2, "0")}</div><div class="tx"><span class="kind">${kinds[e.type] ?? "事件"}</span>${evText(e)}</div>`;
+}
 function renderReplayBar() {
   const names = seatNames(MEVS);
   // r15：座位视角仅对「自己参战的局」开放（loadStep 自动携带 x-seat-token）——
@@ -789,7 +863,12 @@ function renderReplayBar() {
     `<button class="mini" id="rp" onclick="replayToggle()">播放</button>` +
     `<select onchange="replaySeat(this.value)"><option value="spectator">上帝视角</option>${opts}</select>` +
     `${own ? "" : `<span class="kv" style="margin:0">座位视角需席位凭据（自己参战的局自动可用）</span>`}` +
-    `<span class="num" id="rp-pos" style="color:var(--dim);font-size:12px">${R.pos}/${R.total}</span></div>`;
+    `<span class="num" id="rp-pos" style="color:var(--dim);font-size:12px">${R.pos}/${R.total}</span></div>` +
+    `<div class="nowcard" id="m-now"></div>` +
+    `<div class="lanewrap" id="m-lanes"></div>` +
+    `<div class="lanelegend"><span><i class="p"></i>相位/手（公共轨）</span><span><i class="h"></i>关键节点</span><span><i class="s"></i>话语/遗言</span><span><i class="a"></i>行动</span><span style="color:var(--red)">│ 红线=当前步</span></div>`;
+  renderNowCard();
+  renderLanes();
 }
 window.replaySeek = async function (pos) { R.pos = pos; await loadStep(); };
 window.replaySeat = async function (s) { R.seat = s; await loadStep(); };
@@ -819,9 +898,14 @@ async function loadStep() {
     const j = await api(`/matches/${M.id}/replay/step?to=${R.pos}&seat=${R.seat}`, headers ? { headers } : undefined);
     if (j.view) renderGame(j.view, $("#m-game"), false);
     $("#m-eyebrow").innerHTML = `「 回 放 」 <span style="letter-spacing:0;color:var(--grn)">● 事件 ${R.pos}/${R.total} · ${R.seat === "spectator" ? "上帝视角" : R.seat + "号视角"}</span>`;
-    if (j.events) { MEVS = j.events; renderLog($("#m-log"), MEVS); }
+    if (j.events) { MEVS = j.events; renderLog($("#m-log"), MEVS, R.pos); }
     const p = $("#rp-pos");
     if (p) p.textContent = `${R.pos}/${R.total}`;
+    // r17：泳道 done 进度 + 红游标 + 摘要卡叙事指针随步进联动
+    renderNowCard();
+    renderLanes();
+    const sl2 = document.querySelector("#m-replay input[type=range]");
+    if (sl2) sl2.value = String(R.pos);
   } catch { /* 网关暂不可达 */ }
 }
 
