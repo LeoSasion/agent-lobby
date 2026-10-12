@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>r16 渲染器草案 B · 版面数据流</title>
+<style>
+  :root {
+    --bg: #0a0d0b; --panel: #0e1310; --line: #1d2721; --line2: #2a3830;
+    --grn: #45d98e; --grn-dim: #2a6b4a; --amb: #d9b13f; --amb-dim: #6b5a26;
+    --ink: #c9d4cd; --dim: #6f7f77; --red: #d96b5f;
+    --serif: "Noto Serif SC","Songti SC",SimSun,serif;
+    --mono: "JetBrains Mono","Cascadia Mono",Consolas,"Courier New",monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--ink); font-family: var(--mono); font-size: 14px; line-height: 1.6; padding: 32px 4vw 80px; }
+  .serif { font-family: var(--serif); }
+  header { border-bottom: 1px solid var(--line2); padding-bottom: 18px; margin-bottom: 34px; }
+  .eyebrow { color: var(--grn); letter-spacing: .5em; font-size: 11px; margin-bottom: 10px; }
+  h1 { font-family: var(--serif); font-size: 34px; font-weight: 600; letter-spacing: .12em; color: #e8f0ea; }
+  h1 .alt { color: var(--grn); }
+  .sub { color: var(--dim); margin-top: 8px; font-size: 12.5px; max-width: 760px; }
+  section { margin: 44px 0; }
+  .sec-head { display: flex; align-items: baseline; gap: 14px; border-bottom: 1px solid var(--line); padding-bottom: 8px; margin-bottom: 16px; }
+  .sec-head .no { color: var(--amb); font-size: 12px; letter-spacing: .2em; }
+  .sec-head h2 { font-family: var(--serif); font-size: 21px; letter-spacing: .1em; color: #dfe8e2; font-weight: 600; }
+  .sec-head .note { color: var(--dim); font-size: 11.5px; margin-left: auto; }
+  .framebar { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+  .fbtn { background: none; border: 1px solid var(--line2); color: var(--dim); font-family: var(--mono); font-size: 11.5px; padding: 4px 12px; cursor: pointer; letter-spacing: .08em; }
+  .fbtn.on { border-color: var(--grn); color: var(--grn); }
+  .stage { border: 1px solid var(--line); background: var(--panel); padding: 24px 22px; }
+
+  /* 通用：席位数据行（B 的核心语言） */
+  .rows { border-top: 1px solid var(--line2); }
+  .rrow { display: grid; grid-template-columns: 52px 1fr 120px 110px; align-items: center; gap: 10px; padding: 9px 6px; border-bottom: 1px solid var(--line); }
+  .rrow .sn { font-family: var(--serif); font-size: 16px; color: var(--amb); }
+  .rrow .stat { font-size: 11px; color: var(--dim); letter-spacing: .06em; }
+  .rrow .stat .on { color: var(--grn); }
+  .rrow .bar { height: 8px; background: var(--line); position: relative; }
+  .rrow .bar i { position: absolute; inset: 0 auto 0 0; background: var(--grn-dim); }
+  .rrow .bar i.hot { background: var(--grn); box-shadow: 0 0 8px rgba(69,217,142,.4); }
+  .rrow .num { text-align: right; font-size: 15px; }
+  .rrow .num b { color: #e8f0ea; font-weight: 400; }
+  .rrow.dead { opacity: .35; }
+  .rrow.dead .sn { text-decoration: line-through; }
+  .rrow.turn { background: rgba(69,217,142,.05); }
+  .rrow.turn .sn::after { content: " ▸"; color: var(--grn); font-size: 11px; }
+  .rh { display: grid; grid-template-columns: 52px 1fr 120px 110px; gap: 10px; padding: 4px 6px 6px; color: var(--dim); font-size: 10px; letter-spacing: .25em; }
+  .rh .num { text-align: right; }
+
+  /* 骰子 B：点阵符号 + 叫价巨字排版 */
+  .dstat { display: inline-block; width: 13px; height: 13px; margin-right: 2px; border: 1px solid var(--line2); border-radius: 3px; vertical-align: -2px; position: relative; }
+  .dstat::after { content: ""; position: absolute; inset: 2px; background: var(--grn-dim); border-radius: 1px; opacity: .8; }
+  .dstat.q::after { background: none; border: 1px dashed var(--line2); inset: 1px; }
+  .dstat.w::after { background: var(--amb-dim); }
+  .bid-block { text-align: center; padding: 22px 0 10px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
+  .bid-block .lab { color: var(--grn); letter-spacing: .5em; font-size: 10.5px; }
+  .bid-block .big { font-family: var(--serif); font-size: 58px; line-height: 1.2; color: #e8f0ea; }
+  .bid-block .big .x { color: var(--grn); margin: 0 10px; }
+  .bid-block .big .amb { color: var(--amb); }
+  .bid-block .sub { color: var(--dim); font-size: 11px; }
+
+  /* 狼人 B：引语版式 + 存活纵栏 */
+  .wolf-grid { display: grid; grid-template-columns: 170px 1fr; gap: 26px; }
+  @media (max-width: 860px) { .wolf-grid { grid-template-columns: 1fr; } }
+  .alive-col { border-right: 1px solid var(--line); padding-right: 18px; }
+  .alive-col .lab { color: var(--grn); letter-spacing: .4em; font-size: 10.5px; margin-bottom: 10px; }
+  .arow2 { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px dashed var(--line); font-size: 13px; }
+  .arow2 .sn { font-family: var(--serif); color: var(--amb); width: 30px; }
+  .arow2 .st { margin-left: auto; font-size: 10px; letter-spacing: .1em; }
+  .arow2.dead { opacity: .4; }
+  .arow2.dead .sn { text-decoration: line-through; }
+  .arow2.dead .st { color: var(--red); }
+  .arow2.alive .st { color: var(--grn); }
+  .q-col .phline { display: flex; align-items: baseline; gap: 12px; border-bottom: 1px solid var(--line); padding-bottom: 8px; margin-bottom: 16px; }
+  .q-col .phline .ph { font-family: var(--serif); font-size: 20px; letter-spacing: .2em; color: #dfe8e2; }
+  .q-col .phline .dy { color: var(--dim); font-size: 11px; }
+  .quote { position: relative; margin: 0 0 18px 46px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+  .quote::before { content: "「"; position: absolute; left: -46px; top: -10px; font-family: var(--serif); font-size: 44px; color: var(--grn-dim); }
+  .quote .who { color: var(--amb); font-size: 11px; letter-spacing: .1em; margin-bottom: 3px; }
+  .quote .who .lw { color: var(--red); }
+  .quote .tx { font-family: var(--serif); font-size: 15.5px; line-height: 1.8; color: var(--ink); }
+  .votebar { margin-top: 4px; }
+  .votebar .lab { color: var(--dim); font-size: 10.5px; letter-spacing: .3em; margin-bottom: 5px; }
+  .votebar .track { height: 10px; background: var(--line); display: flex; gap: 3px; padding: 1px; }
+  .votebar .track i { flex: 1; background: none; border: 1px solid var(--grn-dim); }
+  .votebar .track i.on { background: var(--grn); border-color: var(--grn); }
+
+  /* 德州 B：紧凑牌行 + 数据表 + 底池巨字 */
+  .hb { display: flex; gap: 7px; justify-content: center; margin-bottom: 14px; }
+  .hcard { width: 38px; height: 53px; border-radius: 4px; background: #e8f0ea; color: #101613; position: relative; font-family: var(--mono); box-shadow: 0 1px 5px rgba(0,0,0,.4); }
+  .hcard::before { content: attr(data-c); position: absolute; top: 3px; left: 4px; font-size: 10.5px; font-weight: 700; line-height: 1.05; }
+  .hcard.red { color: #b3402f; }
+  .hcard .pip { position: absolute; left: 50%; bottom: 4px; transform: translateX(-50%); font-size: 15px; }
+  .hcard.empty { background: none; border: 1px dashed var(--line2); box-shadow: none; }
+  .hcard.empty::before { content: none; }
+  .hcard.empty .pip { color: var(--line2); font-size: 11px; }
+  .pot-big { text-align: center; margin: 4px 0 18px; }
+  .pot-big .lab { color: var(--dim); font-size: 10px; letter-spacing: .5em; }
+  .pot-big .v { font-family: var(--serif); font-size: 42px; color: var(--amb); line-height: 1.2; }
+  .pot-big .sub { color: var(--dim); font-size: 11px; }
+  .rrow.h { grid-template-columns: 52px 90px 1fr 120px 130px; }
+  .rh.h { grid-template-columns: 52px 90px 1fr 120px 130px; }
+  .rrow.h .chips-n { text-align: right; }
+  .bet-n { text-align: right; color: var(--amb); font-size: 13px; }
+  .bet-n i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; border: 1px solid var(--amb-dim); margin-left: -4px; vertical-align: -1px; }
+  .bet-n i:first-child { margin-left: 0; margin-right: 4px; }
+
+  /* 黑白棋 B：无坐标棋盘 + 大数字侧栏 */
+  .oth-grid { display: grid; grid-template-columns: auto 1fr; gap: 26px; align-items: center; }
+  @media (max-width: 860px) { .oth-grid { grid-template-columns: 1fr; } }
+  .bd8 { display: grid; grid-template-columns: repeat(8, 40px); grid-template-rows: repeat(8, 40px); border: 1px solid var(--line2); }
+  .bd8 .c { border: 1px solid var(--line); margin: -0.5px; position: relative; background: #0c110e; }
+  .disc { position: absolute; inset: 6px; border-radius: 50%; }
+  .disc.b { background: radial-gradient(circle at 38% 32%, #3a4741, #121815 70%); border: 1px solid #2a3830; }
+  .disc.w { background: radial-gradient(circle at 38% 32%, #f2f5f0, #b9c4bd 70%); border: 1px solid #8f9c95; }
+  .c.last::after { content: ""; position: absolute; inset: 0; border: 1.5px solid var(--amb); }
+  .cnt2 { display: flex; gap: 34px; justify-content: center; }
+  .cnt2 .c1 { text-align: center; }
+  .cnt2 .sw { width: 20px; height: 20px; border-radius: 50%; margin: 0 auto 6px; border: 1px solid var(--line2); }
+  .cnt2 .sw.b { background: #121815; } .cnt2 .sw.w { background: #e8f0ea; }
+  .cnt2 .v { font-family: var(--serif); font-size: 38px; color: #e8f0ea; line-height: 1.1; }
+  .cnt2 .v.turn-c { color: var(--grn); }
+  .cnt2 .who { color: var(--dim); font-size: 10.5px; letter-spacing: .2em; margin-top: 3px; }
+
+  .priv-strip { border-top: 1px dashed var(--line2); margin-top: 16px; padding-top: 12px; display: flex; gap: 12px; align-items: center; justify-content: center; flex-wrap: wrap; }
+  .priv-strip .lab { color: var(--amb); font-size: 11px; letter-spacing: .3em; }
+  footer { margin-top: 60px; border-top: 1px solid var(--line); padding-top: 14px; color: var(--dim); font-size: 11.5px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">演武场 · r16 渲染器草案</div>
+  <h1>草案 <span class="alt">B</span> · 版面数据流</h1>
+  <div class="sub">延续大厅既有报刊版面语言：席位数据行、刻度条、巨字排版。不做场景模拟，把「数字可读性」推到极致——一眼看全所有筹码/骰数/票型。与草案 A 的场景沉浸形成对照。</div>
+</header>
+
+<section>
+  <div class="sec-head"><span class="no">CH·01</span><h2 class="serif">吹牛骰</h2><span class="note">数据行 + 骰数刻度 · 中央叫价巨字</span></div>
+  <div class="framebar" id="fb-dice"></div>
+  <div class="stage"><div id="st-dice"></div></div>
+</section>
+
+<section>
+  <div class="sec-head"><span class="no">CH·02</span><h2 class="serif">狼人杀</h2><span class="note">存活纵栏 · 报纸引语版式 · 投票进度条</span></div>
+  <div class="framebar" id="fb-wolf"></div>
+  <div class="stage"><div id="st-wolf"></div></div>
+</section>
+
+<section>
+  <div class="sec-head"><span class="no">CH·03</span><h2 class="serif">德州扑克</h2><span class="note">紧凑牌行 · 巨字底池 · 席位账目表</span></div>
+  <div class="framebar" id="fb-holdem"></div>
+  <div class="stage"><div id="st-holdem"></div></div>
+</section>
+
+<section>
+  <div class="sec-head"><span class="no">CH·04</span><h2 class="serif">黑白棋</h2><span class="note">无框数据棋盘 · 巨字计数</span></div>
+  <div class="framebar" id="fb-oth"></div>
+  <div class="stage"><div id="st-oth"></div></div>
+</section>
+
+<footer>r16 草案 B · 版面数据流 —— 与 A（具象演武场）对照。数据快照：2026-10-12 真实网关对局。</footer>
+
+<script id="snap-data" type="application/json">{"liars_dice":{"match_id":"m_bxwp2p71","seat_id":1,"frames":[{"tag":"中局·bid·第1轮","seq":5,"spectator":{"protocol":"arena/v0","match_id":"m_bxwp2p71","game":"liars_dice","phase":"bid","round":1,"you":{"seat":-1,"active":false,"submitted":false},"public":{"round":1,"players":[{"seat":1,"dice_count":5},{"seat":2,"dice_count":5},{"seat":3,"dice_count":5}],"current_bid":{"seat":2,"qty":2,"face":3},"turn":3,"wildcard_ones":false},"private":{},"history_truncated":false,"result":null},"mine":{"protocol":"arena/v0","match_id":"m_bxwp2p71","game":"liars_dice","phase":"bid","round":1,"you":{"seat":1,"active":false,"submitted":false},"public":{"round":1,"players":[{"seat":1,"dice_count":5},{"seat":2,"dice_count":5},{"seat":3,"dice_count":5}],"current_bid":{"seat":2,"qty":2,"face":3},"turn":3,"wildcard_ones":false},"private":{"my_dice":[4,1,5,3,4]},"history_truncated":false,"result":null}},{"tag":"终局","seq":110,"spectator":{"protocol":"arena/v0","match_id":"m_bxwp2p71","game":"liars_dice","phase":"finished","round":13,"you":{"seat":-1,"active":false,"submitted":false},"public":{"round":13,"players":[{"seat":1,"dice_count":0},{"seat":2,"dice_count":2},{"seat":3,"dice_count":0}],"current_bid":null,"turn":null,"wildcard_ones":false},"private":{},"history_truncated":true,"result":{"scores":{"1":0,"2":1,"3":0},"winners":[2]}},"mine":{"protocol":"arena/v0","match_id":"m_bxwp2p71","game":"liars_dice","phase":"finished","round":13,"you":{"seat":1,"active":false,"submitted":false},"public":{"round":13,"players":[{"seat":1,"dice_count":0},{"seat":2,"dice_count":2},{"seat":3,"dice_count":0}],"current_bid":null,"turn":null,"wildcard_ones":false},"private":{"my_dice":[]},"history_truncated":true,"result":{"scores":{"1":0,"2":1,"3":0},"winners":[2]}}}]},"werewolf_lite":{"match_id":"m_zkjf1oyk","seat_id":1,"frames":[{"tag":"中局·night·第1轮","seq":3,"spectator":{"protocol":"arena/v0","match_id":"m_zkjf1oyk","game":"werewolf_lite","phase":"night","round":1,"you":{"seat":-1,"active":false,"submitted":false},"public":{"round":1,"phase":"night","seats":[1,2,3,4,5,6],"alive_seats":[1,2,3,4,5,6],"today_says":[],"last_day_says":[],"pk_candidates":null},"private":{},"history_truncated":false,"result":null},"mine":{"protocol":"arena/v0","match_id":"m_zkjf1oyk","game":"werewolf_lite","phase":"night","round":1,"you":{"seat":1,"active":true,"submitted":false},"public":{"round":1,"phase":"night","seats":[1,2,3,4,5,6],"alive_seats":[1,2,3,4,5,6],"today_says":[],"last_day_says":[],"pk_candidates":null},"private":{"role":"werewolf","alive":true,"teammates":[3]},"history_truncated":false,"result":null}},{"tag":"终局","seq":21,"spectator":{"protocol":"arena/v0","match_id":"m_zkjf1oyk","game":"werewolf_lite","phase":"day_vote","round":1,"you":{"seat":-1,"active":false,"submitted":false},"public":{"round":1,"phase":"day_vote","seats":[1,2,3,4,5,6],"alive_seats":[1,2,3,5,6],"today_says":[{"seat":4,"text":"我平民一个，死得冤。别浪费我的遗言——把票投给真正可疑的人。","kind":"last_words"},{"seat":1,"text":"我是好人，先听大家的口径。","kind":"say"},{"seat":2,"text":"理性地说，预言家在此。我的查验：昨晚验了 1 号，是狼人！之后每晚我都会更新信息。","kind":"say"},{"seat":3,"text":"说真的，我是好人。这查验我不信——2 号在带节奏，大家小心，别被一句话送走好人。","kind":"say"},{"seat":5,"text":"2 号敢跳就有底气。我跟他：1 号，出局。","kind":"say"},{"seat":6,"text":"我个人觉得，我认可 2 号的查验，1 号是狼。今天这票请大家集中放逐，别分散。","kind":"say"}],"last_day_says":[],"pk_candidates":null,"votes_cast":[],"pending_voters":[1,2,3,5,6]},"private":{},"history_truncated":false,"result":null},"mine":{"protocol":"arena/v0","match_id":"m_zkjf1oyk","game":"werewolf_lite","phase":"day_vote","round":1,"you":{"seat":1,"active":true,"submitted":false},"public":{"round":1,"phase":"day_vote","seats":[1,2,3,4,5,6],"alive_seats":[1,2,3,5,6],"today_says":[{"seat":4,"text":"我平民一个，死得冤。别浪费我的遗言——把票投给真正可疑的人。","kind":"last_words"},{"seat":1,"text":"我是好人，先听大家的口径。","kind":"say"},{"seat":2,"text":"理性地说，预言家在此。我的查验：昨晚验了 1 号，是狼人！之后每晚我都会更新信息。","kind":"say"},{"seat":3,"text":"说真的，我是好人。这查验我不信——2 号在带节奏，大家小心，别被一句话送走好人。","kind":"say"},{"seat":5,"text":"2 号敢跳就有底气。我跟他：1 号，出局。","kind":"say"},{"seat":6,"text":"我个人觉得，我认可 2 号的查验，1 号是狼。今天这票请大家集中放逐，别分散。","kind":"say"}],"last_day_says":[],"pk_candidates":null,"votes_cast":[],"pending_voters":[1,2,3,5,6]},"private":{"role":"werewolf","alive":true,"teammates":[3]},"history_truncated":false,"result":null}}]},"holdem_lite":{"match_id":"m_v2mm0krr","seat_id":1,"frames":[{"tag":"街道·flop·第1手","seq":19,"spectator":{"protocol":"arena/v0","match_id":"m_v2mm0krr","game":"holdem_lite","phase":"flop","round":1,"you":{"seat":-1,"active":false,"submitted":false},"public":{"hand_no":1,"street":"flop","community":["9h","8d","Tc"],"pot":60,"total_pot":90,"current_bet":30,"min_raise":30,"to_act":1,"button":1,"starting_chips":1000,"small_blind":10,"big_blind":20,"max_hands":50,"players":[{"seat":1,"chips":980,"bet":0,"committed":20,"folded":false,"allin":false,"eliminated":false,"elimination_order":null},{"seat":2,"chips":980,"bet":0,"committed":20,"folded":false,"allin":false,"eliminated":false,"elimination_order":null},{"seat":3,"chips":950,"bet":30,"committed":50,"folded":false,"allin":false,"eliminated":false,"elimination_order":null}]},"private":{},"history_truncated":false,"result":null},"mine":{"protocol":"arena/v0","match_id":"m_v2mm0krr","game":"holdem_lite","phase":"flop","round":1,"you":{"seat":1,"active":true,"submitted":false},"public":{"hand_no":1,"street":"flop","community":["9h","8d","Tc"],"pot":60,"total_pot":90,"current_bet":30,"min_raise":30,"to_act":1,"button":1,"starting_chips":1000,"small_blind":10,"big_blind":20,"max_hands":50,"players":[{"seat":1,"chips":980,"bet":0,"committed":20,"folded":false,"allin":false,"eliminated":false,"elimination_order":null},{"seat":2,"chips":980,"bet":0,"committed":20,"folded":false,"allin":false,"eliminated":false,"elimination_order":null},{"seat":3,"chips":950,"bet":30,"committed":50,"folded":false,"allin":false,"eliminated":false,"elimination_order":null}]},"private":{"hole_cards":["3d","3c"],"my_chips":980,"my_bet":0,"my_committed":20,"eliminated":false,"elimination_order":null},"history_truncated":false,"result":null}},{"tag":"中局·preflop·第1轮","seq":10,"spectator":{"protocol":"arena/v0","match_id":"m_v2mm0krr","game":"holdem_lite","phase":"preflop","round":1,"you":{"seat":-1,"active":false,"submitted":false},"public":{"hand_no":1,"street":"preflop","community":[],"pot":0,"total_pot":60,"current_bet":20,"min_raise":20,"to_act":3,"button":1,"starting_chips":1000,"small_blind":10,"big_blind":20,"max_hands":50,"players":[{"seat":1,"chips":980,"bet":20,"committed":20,"folded":false,"allin":false,"eliminated":false,"elimination_order":null},{"seat":2,"chips":980,"bet":20,"committed":20,"folded":false,"allin":false,"eliminated":false,"elimination_order":null},{"seat":3,"chips":980,"bet":20,"committed":20,"folded":false,"allin":false,"eliminated":false,"elimination_order":null}]},"private":{},"history_truncated":false,"result":null},"mine":{"protocol":"arena/v0","match_id":"m_v2mm0krr","game":"holdem_lite","phase":"preflop","round":1,"you":{"seat":1,"active":false,"submitted":false},"public":{"hand_no":1,"street":"preflop","community":[],"pot":0,"total_pot":60,"current_bet":20,"min_raise":20,"to_act":3,"button":1,"starting_chips":1000,"small_blind":10,"big_blind":20,"max_hands":50,"players":[{"seat":1,"chips":980,"bet":20,"committed":20,"folded":false,"allin":false,"eliminated":false,"elimination_order":null},{"seat":2,"chips":980,"bet":20,"committed":20,"folded":false,"allin":false,"eliminated":false,"elimination_order":null},{"seat":3,"chips":980,"bet":20,"committed":20,"folded":false,"allin":false,"eliminated":false,"elimination_order":null}]},"private":{"hole_cards":["3d","3c"],"my_chips":980,"my_bet":20,"my_committed":20,"eliminated":false,"elimination_order":null},"history_truncated":false,"result":null}},{"tag":"终局","seq":361,"spectator":{"protocol":"arena/v0","match_id":"m_v2mm0krr","game":"holdem_lite","phase":"turn","round":9,"you":{"seat":-1,"active":false,"submitted":false},"public":{"hand_no":9,"street":"turn","community":["6c","Qs","2d","6s"],"pot":60,"total_pot":60,"current_bet":0,"min_raise":20,"to_act":1,"button":3,"starting_chips":1000,"small_blind":10,"big_blind":20,"max_hands":50,"players":[{"seat":1,"chips":205,"bet":0,"committed":20,"folded":false,"allin":false,"eliminated":false,"elimination_order":null},{"seat":2,"chips":1465,"bet":0,"committed":20,"folded":false,"allin":false,"eliminated":false,"elimination_order":null},{"seat":3,"chips":1270,"bet":0,"committed":20,"folded":false,"allin":false,"eliminated":false,"elimination_order":null}]},"private":{},"history_truncated":true,"result":null},"mine":{"protocol":"arena/v0","match_id":"m_v2mm0krr","game":"holdem_lite","phase":"turn","round":9,"you":{"seat":1,"active":true,"submitted":false},"public":{"hand_no":9,"street":"turn","community":["6c","Qs","2d","6s"],"pot":60,"total_pot":60,"current_bet":0,"min_raise":20,"to_act":1,"button":3,"starting_chips":1000,"small_blind":10,"big_blind":20,"max_hands":50,"players":[{"seat":1,"chips":205,"bet":0,"committed":20,"folded":false,"allin":false,"eliminated":false,"elimination_order":null},{"seat":2,"chips":1465,"bet":0,"committed":20,"folded":false,"allin":false,"eliminated":false,"elimination_order":null},{"seat":3,"chips":1270,"bet":0,"committed":20,"folded":false,"allin":false,"eliminated":false,"elimination_order":null}]},"private":{"hole_cards":["2h","7c"],"my_chips":205,"my_bet":0,"my_committed":20,"eliminated":false,"elimination_order":null},"history_truncated":true,"result":null}}]},"othello":{"match_id":"m_iz1pccqg","seat_id":1,"frames":[{"tag":"中局·move·第1轮","seq":3,"spectator":{"protocol":"arena/v0","match_id":"m_iz1pccqg","game":"othello","phase":"move","round":1,"you":{"seat":-1,"active":false,"submitted":false},"public":{"board":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,1,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"turn":2,"colors":{"black":1,"white":2},"counts":{"black":4,"white":1},"last_move":37},"private":{},"history_truncated":false,"result":null},"mine":{"protocol":"arena/v0","match_id":"m_iz1pccqg","game":"othello","phase":"move","round":1,"you":{"seat":1,"active":false,"submitted":false},"public":{"board":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,1,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"turn":2,"colors":{"black":1,"white":2},"counts":{"black":4,"white":1},"last_move":37},"private":{},"history_truncated":false,"result":null}},{"tag":"终局","seq":152,"spectator":{"protocol":"arena/v0","match_id":"m_iz1pccqg","game":"othello","phase":"finished","round":31,"you":{"seat":-1,"active":false,"submitted":false},"public":{"board":[2,2,2,2,2,2,2,2,1,2,1,1,1,2,2,2,1,2,1,1,2,1,2,2,1,2,1,2,1,2,2,2,1,2,1,2,2,1,2,2,1,2,1,2,2,2,2,2,1,1,2,1,1,2,2,1,1,2,2,2,2,2,2,2],"turn":null,"colors":{"black":1,"white":2},"counts":{"black":22,"white":42},"last_move":6},"private":{},"history_truncated":true,"result":{"scores":{"1":0,"2":1},"winners":[2]}},"mine":{"protocol":"arena/v0","match_id":"m_iz1pccqg","game":"othello","phase":"finished","round":31,"you":{"seat":1,"active":false,"submitted":false},"public":{"board":[2,2,2,2,2,2,2,2,1,2,1,1,1,2,2,2,1,2,1,1,2,1,2,2,1,2,1,2,1,2,2,2,1,2,1,2,2,1,2,2,1,2,1,2,2,2,2,2,1,1,2,1,1,2,2,1,1,2,2,2,2,2,2,2],"turn":null,"colors":{"black":1,"white":2},"counts":{"black":22,"white":42},"last_move":6},"private":{},"history_truncated":true,"result":{"scores":{"1":0,"2":1},"winners":[2]}}}]}}</script>
+<script>
+const SNAPS = JSON.parse(document.getElementById("snap-data").textContent);
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const PH = { bid: "叫价", challenge: "开盒对质", finished: "终局", night: "夜", day: "白天", day_vote: "放逐投票", day_say: "白天演说", preflop: "翻牌前", flop: "翻牌", turn: "转牌", river: "河牌", showdown: "摊牌", move: "行棋" };
+const phaseName = (p) => PH[p] ?? p;
+
+function frameBar(fbId, stId, game, render) {
+  const fb = $(fbId), st = $(stId);
+  const snap = SNAPS[game];
+  const opts = [];
+  snap.frames.forEach((f) => opts.push({ tag: `${f.tag} · 观战`, run: () => render(f.spectator, st, false) }));
+  snap.frames.forEach((f) => { if (f.mine) opts.push({ tag: `${f.tag} · 本人视角`, run: () => render(f.mine, st, true) }); });
+  opts.forEach((o, i) => {
+    const b = document.createElement("button");
+    b.className = "fbtn"; b.textContent = o.tag;
+    b.onclick = () => { fb.querySelectorAll(".fbtn").forEach((x) => x.classList.remove("on")); b.classList.add("on"); o.run(); };
+    fb.appendChild(b);
+    if (i === 0) { b.classList.add("on"); o.run(); }
+  });
+}
+
+/* ── 吹牛骰 B ── */
+function renderDice(v, st, mine) {
+  const p = v.public;
+  const maxD = Math.max(...p.players.map((x) => x.dice_count), 1);
+  const mySeat = mine ? v.you.seat : null;
+  let rows = `<div class="rh"><span>席位</span><span>存骰</span><span></span><span class="num">数量</span></div>`;
+  p.players.forEach((x) => {
+    const dead = x.dice_count === 0, turn = p.turn === x.seat && v.phase !== "finished";
+    const mineSeat = x.seat === mySeat;
+    const syms = mine && mineSeat && v.private.my_dice
+      ? v.private.my_dice.map((f) => `<span class="dstat ${p.wildcard_ones && f === 1 ? "w" : ""}"></span>`).join("")
+      : Array.from({ length: x.dice_count }, () => `<span class="dstat q"></span>`).join("");
+    rows += `<div class="rrow ${dead ? "dead" : ""} ${turn ? "turn" : ""}">` +
+      `<span class="sn">${x.seat}号</span>` +
+      `<span class="stat">${mineSeat ? "我" : dead ? "出局" : turn ? '<span class="on">行动中</span>' : "在场"}</span>` +
+      `<span class="bar"><i class="${turn ? "hot" : ""}" style="width:${(x.dice_count / maxD) * 100}%"></i></span>` +
+      `<span class="num">${syms} <b>${x.dice_count}</b></span></div>`;
+  });
+  const bid = p.current_bid;
+  st.innerHTML = `<div class="bid-block">
+    <div class="lab">当 前 叫 价</div>
+    ${bid ? `<div class="big">${bid.qty}<span class="x">×</span><span class="amb">${bid.face}</span><span class="x">点</span></div>
+    <div class="sub">${bid.seat}号所叫 · 第 ${v.round} 轮${p.wildcard_ones ? " · 1 为百搭" : ""}</div>`
+    : `<div class="big" style="color:var(--dim)">—</div><div class="sub">等待开叫 · 第 ${v.round} 轮</div>`}
+  </div><div class="rows">${rows}</div>` +
+    (mine && v.private.my_dice && v.private.my_dice.length ? `<div class="priv-strip"><span class="lab">我 的 骰</span><span>${v.private.my_dice.map((f) => `<span class="dstat ${p.wildcard_ones && f === 1 ? "w" : ""}"></span>${f}`).join(" ")}</span></div>` : "");
+}
+
+/* ── 狼人 B ── */
+function renderWolf(v, st, mine) {
+  const p = v.public;
+  let col = `<div class="lab">席 位</div>`;
+  p.seats.forEach((s) => {
+    const alive = p.alive_seats.includes(s);
+    col += `<div class="arow2 ${alive ? "alive" : "dead"}"><span class="sn">${s}号</span>` +
+      `<span style="color:var(--dim);font-size:10.5px">${mine && s === v.you.seat ? "我" : ""}</span>` +
+      `<span class="st">${alive ? "存活" : "出局"}</span></div>`;
+  });
+  const says = (p.today_says ?? []).slice(-4);
+  let q = `<div class="phline"><span class="ph">${phaseName(v.phase)}</span><span class="dy">第 ${v.round} 天 · 存活 ${p.alive_seats.length}/${p.seats.length}</span></div>`;
+  if (!says.length) q += `<div style="color:var(--dim);font-size:12px">（本帧无公开演说）</div>`;
+  says.forEach((s) => {
+    q += `<div class="quote"><div class="who">${s.seat}号${s.kind === "last_words" ? ' <span class="lw">· 遗言</span>' : ""}</div><div class="tx">${esc(s.text)}</div></div>`;
+  });
+  if (p.votes_cast !== undefined) {
+    const total = p.alive_seats.length;
+    q += `<div class="votebar"><div class="lab">放逐投票 ${p.votes_cast}/${total}${p.pending_voters ? ` · 待投 ${p.pending_voters.length}` : ""}</div>` +
+      `<div class="track">${Array.from({ length: total }, (_, i) => `<i class="${i < p.votes_cast ? "on" : ""}"></i>`).join("")}</div></div>`;
+  }
+  st.innerHTML = `<div class="wolf-grid"><div class="alive-col">${col}</div><div class="q-col">${q}</div></div>` +
+    (mine && v.private.role ? `<div class="priv-strip"><span class="lab">我 的 身 份</span><span>${({ werewolf: "狼人", seer: "预言家", villager: "平民" })[v.private.role] ?? "?"}${v.private.teammates ? ` · 队友 ${v.private.teammates.join("、")}号` : ""}</span></div>` : "");
+}
+
+/* ── 德州 B ── */
+const SUITS = { s: "♠", h: "♥", d: "♦", c: "♣" };
+const card = (c) => {
+  if (!c) return `<span class="hcard empty"><span class="pip">?</span></span>`;
+  const rank = c.slice(0, c.length - 1), suit = c.slice(-1), red = suit === "h" || suit === "d";
+  return `<span class="hcard ${red ? "red" : ""}" data-c="${rank}${SUITS[suit]}"><span class="pip">${SUITS[suit]}</span></span>`;
+};
+function renderHoldem(v, st, mine) {
+  const p = v.public;
+  const board = [0, 1, 2, 3, 4].map((i) => card(p.community[i])).join("");
+  const mySeat = mine ? v.you.seat : null;
+  let rows = `<div class="rh h"><span>席位</span><span>庄</span><span>状态</span><span class="num">筹码</span><span class="num">本街注</span></div>`;
+  p.players.forEach((x) => {
+    const dead = x.chips === 0, folded = x.folded, turn = p.to_act === x.seat && v.phase !== "finished";
+    const stacks = x.bet > 0 ? `${Array.from({ length: Math.min(4, Math.ceil(x.bet / 60) || 1) }, () => "<i></i>").join("")}` : "—";
+    rows += `<div class="rrow h ${dead ? "dead" : ""} ${turn ? "turn" : ""}">` +
+      `<span class="sn">${x.seat}号${mySeat === x.seat ? "·我" : ""}</span>` +
+      `<span>${p.button === x.seat ? "D" : ""}</span>` +
+      `<span class="stat">${dead ? "出局" : folded ? "弃牌" : x.allin ? '<span style="color:var(--red)">ALL-IN</span>' : turn ? '<span class="on">行动中</span>' : "在局"}</span>` +
+      `<span class="num chips-n"><b>${x.chips}</b></span>` +
+      `<span class="bet-n">${x.bet > 0 ? stacks + x.bet : "—"}</span></div>`;
+  });
+  st.innerHTML = `<div class="hb">${board}</div>
+    <div class="pot-big"><div class="lab">底 池</div><div class="v">${p.total_pot ?? p.pot}</div>
+    <div class="sub">本街注 ${p.current_bet} · 第 ${p.hand_no}/${p.max_hands} 手 · ${phaseName(v.phase)}${v.phase !== "finished" ? ` · 轮到 ${p.to_act}号` : ""}</div></div>
+    <div class="rows">${rows}</div>` +
+    (mine && v.private.hole_cards ? `<div class="priv-strip"><span class="lab">我 的 底 牌</span><span style="display:inline-flex;gap:5px">${v.private.hole_cards.map(card).join("")}</span><span style="color:var(--dim)">我 ${v.private.my_chips} 筹${v.private.my_bet ? ` · 已下 ${v.private.my_bet}` : ""}${v.private.eliminated ? " · 已出局" : ""}</span></div>` : "");
+}
+
+/* ── 黑白棋 B ── */
+function renderOth(v, st, mine) {
+  const p = v.public;
+  let grid = "";
+  for (let i = 0; i < 64; i++) {
+    const cell = p.board[i];
+    grid += `<div class="c ${i === p.last_move ? "last" : ""}">${cell === 0 ? "" : `<div class="disc ${cell === 1 ? "b" : "w"}"></div>`}</div>`;
+  }
+  const myColor = mine && v.you.seat >= 1 ? (v.you.seat === p.colors.black ? "黑" : "白") : null;
+  st.innerHTML = `<div class="oth-grid"><div class="bd8">${grid}</div>
+    <div class="cnt2">
+      <div class="c1"><div class="sw b"></div><div class="v ${p.turn === 1 ? "turn-c" : ""}">${p.counts.black}</div><div class="who">黑${myColor === "黑" ? " · 我" : ""}${p.turn === 1 ? " · 行棋" : ""}</div></div>
+      <div class="c1"><div class="sw w"></div><div class="v ${p.turn === 2 ? "turn-c" : ""}">${p.counts.white}</div><div class="who">白${myColor === "白" ? " · 我" : ""}${p.turn === 2 ? " · 行棋" : ""}</div></div>
+    </div></div>`;
+}
+
+frameBar("#fb-dice", "#st-dice", "liars_dice", renderDice);
+frameBar("#fb-wolf", "#st-wolf", "werewolf_lite", renderWolf);
+frameBar("#fb-holdem", "#st-holdem", "holdem_lite", renderHoldem);
+frameBar("#fb-oth", "#st-oth", "othello", renderOth);
+</script>
+</body>
+</html>
