@@ -499,7 +499,7 @@ function renderWall() {
       <div class="tvfoot">${stats}<span class="go">进入围观 →</span></div>
     </div>`;
   });
-  const over = CACHE.matches.find((m) => m.finished && m.headline);
+  const over = CACHE.matches.find((m) => m.finished && m.headline && !m.aborted);
   if (over) {
     cells.push(`<div class="tv over" id="tv-${esc(over.match_id)}" onclick="gotoMatch('${esc(over.match_id)}')">
       <div class="tvhead"><span class="tvno num">REPLAY · ${esc(over.match_id)}</span>
@@ -539,7 +539,9 @@ function renderSched() {
       <span class="vs">${live ? "进行中" : esc(m.headline ?? "已散场")}</span>
       <span class="rj">${live
         ? `<span class="tag live" onclick="jumpWall('${esc(m.match_id)}')">直播中</span>`
-        : `<span class="res num" style="cursor:pointer" onclick="gotoMatch('${esc(m.match_id)}')">看回放</span>`}</span>
+        : m.aborted
+          ? `<span class="res num" style="color:var(--dim);cursor:default">已中止</span>`
+          : `<span class="res num" style="cursor:pointer" onclick="gotoMatch('${esc(m.match_id)}')">看回放</span>`}</span>
     </div>`;
   });
   $("#sched").innerHTML = `<div class="srow head"><span>时间</span><span>游戏</span><span>同桌</span><span>看点</span><span style="text-align:right">状态</span></div>` +
@@ -568,7 +570,7 @@ function renderZones() {
 }
 
 function renderClassics() {
-  const fin = CACHE.matches.filter((m) => m.finished && m.headline).slice(0, 3);
+  const fin = CACHE.matches.filter((m) => m.finished && m.headline && !m.aborted).slice(0, 3);
   $("#classics").innerHTML = fin.length
     ? fin.map((m) => `
       <div class="mrow" style="flex-wrap:wrap;cursor:pointer" onclick="gotoMatch('${esc(m.match_id)}')">
@@ -614,7 +616,7 @@ async function updateTicker(matches) {
 }
 
 function renderReport() {
-  const fin = CACHE.matches.filter((m) => m.finished && m.headline).slice(0, 6);
+  const fin = CACHE.matches.filter((m) => m.finished && m.headline && !m.aborted).slice(0, 6);
   if (!fin.length) { $("#report").textContent = "暂无战报——开一局就有了。"; return; }
   $("#report").innerHTML = fin.map((m) => {
     const t = new Date(m.started_at ?? Date.now()).toTimeString().slice(0, 5);
@@ -684,13 +686,19 @@ async function refreshMatchView() {
 
 function renderReplayBar() {
   const names = seatNames(MEVS);
-  const opts = Object.keys(names).map((s) => `<option value="${s}" ${String(R.seat) === s ? "selected" : ""}>${s}号 ${esc(names[s])} 视角</option>`).join("");
+  // r15：座位视角仅对「自己参战的局」开放（loadStep 自动携带 x-seat-token）——
+  // 观战他人的局无席位凭据，服务端按私有信息隔离拒绝（403），选项隐藏并给出提示
+  const own = M.id && P.id === M.id && P.token;
+  const opts = own
+    ? Object.keys(names).map((s) => `<option value="${s}" ${String(R.seat) === s ? "selected" : ""}>${s}号（我）视角</option>`).join("")
+    : "";
   $("#m-replay").innerHTML =
-    `<div class="sect eyebrow">「 回 放 」 拖动时间轴 / 切换视角，看每个 Agent 当时到底知道什么</div>` +
+    `<div class="sect eyebrow">「 回 放 」 拖动时间轴${own ? " / 切换视角，看每个 Agent 当时到底知道什么" : "，重看整局走向"}</div>` +
     `<div class="rbar">` +
     `<input type="range" min="0" max="${R.total}" value="${R.pos}" oninput="replaySeek(+this.value)">` +
     `<button class="mini" id="rp" onclick="replayToggle()">播放</button>` +
     `<select onchange="replaySeat(this.value)"><option value="spectator">上帝视角</option>${opts}</select>` +
+    `${own ? "" : `<span class="kv" style="margin:0">座位视角需席位凭据（自己参战的局自动可用）</span>`}` +
     `<span class="num" id="rp-pos" style="color:var(--dim);font-size:12px">${R.pos}/${R.total}</span></div>`;
 }
 window.replaySeek = async function (pos) { R.pos = pos; await loadStep(); };
@@ -716,7 +724,9 @@ window.replayToggle = function () {
 };
 async function loadStep() {
   try {
-    const j = await api(`/matches/${M.id}/replay/step?to=${R.pos}&seat=${R.seat}`);
+    // r15：自己参战的局自动带席位凭据——座位视角（私有信息）可用
+    const headers = (M.id && P.id === M.id && P.token) ? { "x-seat-token": P.token } : undefined;
+    const j = await api(`/matches/${M.id}/replay/step?to=${R.pos}&seat=${R.seat}`, headers ? { headers } : undefined);
     if (j.view) renderGame(j.view, $("#m-game"), false);
     $("#m-eyebrow").innerHTML = `「 回 放 」 <span style="letter-spacing:0;color:var(--grn)">● 事件 ${R.pos}/${R.total} · ${R.seat === "spectator" ? "上帝视角" : R.seat + "号视角"}</span>`;
     if (j.events) { MEVS = j.events; renderLog($("#m-log"), MEVS); }
@@ -761,7 +771,8 @@ async function pollPlay() {
       const scoreTxt = rep.scores ? Object.entries(rep.scores).map(([k, x]) => `${k}号${x === 1 ? "胜" : x === 0.5 ? "平" : "负"}`).join(" ") : "";
       const my = (rep.ratings ?? []).find((r) => r.seat === v.you.seat);
       $("#p-status").innerHTML = `对局结束 · <span style="color:var(--grn)">${esc(scoreTxt)}</span>` +
-        (my ? ` · 我的 elo ${Math.round(my.old)}→<span style="color:var(--amb)">${Math.round(my.new)}</span>（${my.delta > 0 ? "+" : ""}${my.delta}）` : "");
+        (my ? ` · 我的 elo ${Math.round(my.old)}→<span style="color:var(--amb)">${Math.round(my.new)}</span>（${my.delta > 0 ? "+" : ""}${my.delta}）` : "") +
+        ` · <button class="mini" onclick="gotoMatch('${esc(P.id)}')">复盘本局（我的视角）</button>`;
     }
     renderGame(v, $("#p-board"), true);
     renderLog($("#p-log"), PEVS);

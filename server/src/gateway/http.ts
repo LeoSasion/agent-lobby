@@ -96,6 +96,8 @@ interface RunningMatch {
   result: MatchResult | null;
   ratings: RatingDelta[] | null;
   headline: string | null;
+  /** r15：恢复壳为「中止态」（落盘时对局仍在飞）——见 persistState 的 aborted 记录 */
+  aborted?: boolean;
 }
 
 /** 多人房间：真人选手按加入顺序定座，满员自动开局（房主可强制开局并 bot 补位） */
@@ -132,6 +134,8 @@ export class Gateway {
   private agentNames = new Map<string, string>();
   /** nonce 重放缓存：key = matchId:seat:nonce —— 跨回合重试返回原成功，不消耗任何回合（真幂等） */
   private nonceReplay = new Map<string, true>();
+  /** r15：曾持久化过的对局 id 簿记——404 三态依据（从未存在 / 超窗清理）；纯 id 上限 5000 防膨胀 */
+  private knownMatchIds = new Set<string>();
   private indexHtml: string | null = null;
   private dataFile: string;
   private persistTimer: ReturnType<typeof setInterval> | null = null;
@@ -173,29 +177,40 @@ export class Gateway {
     });
   }
 
-  /** 持久化到 JSON 文件（ratings + agents + 已结束对局全量事件——r9：恢复后 replay 可用，历史不再随重启清零） */
+  /** 持久化到 JSON 文件（ratings + agents + 对局记录——r9：恢复后 replay 可用，历史不再随重启清零）
+   *  r15（r13 P0 修复）：在飞对局也落盘为 aborted 快照——此前只存 isFinished，重启后正在进行的对局
+   *  无声蒸发（MATCH_NOT_FOUND 无法区分"从未存在/已清理/被中止"）。30s 滚动即留活快照，SIGKILL 至多丢 30s；
+   *  SIGTERM 走本方法兜底。进程存活期间对局继续打完时，下次落盘自然覆盖为终局记录（aborted 标记消失）。 */
   async persistState(): Promise<void> {
-    const finishedMatches = [...this.matches.values()]
-      .filter((rm) => rm.match.isFinished())
-      .slice(-100) // 最多保留 100 场
-      .map((rm) => ({
-        match_id: rm.match.id,
-        game: rm.gameId,
-        started_at: rm.startedAt,
-        headline: rm.headline,
-        seats: Object.fromEntries([...rm.seatAgents.entries()].map(([s, a]) => [String(s), a])),
-        // r9 自查 P1：此前只存元数据——重启后 replay 空壳 + persistState 的 isFinished 过滤
-        // 把恢复壳（恒报 false）排除在下次落盘之外，历史每重启一代即静默丢失一代（复利丢失）。
-        // 现随元数据一并落盘全量事件与终局比分；rawEvents 已被 RestoredMatch 覆写为透传持久化事件
-        events: rm.match.rawEvents(),
-        scores: rm.match.currentResult()?.scores ?? null,
-      }));
+    const records = [...this.matches.values()]
+      .sort((a, b) => a.startedAt - b.startedAt)
+      .slice(-100) // 最多保留 100 场（含中止快照），最老的挤出
+      .map((rm) => {
+        const finished = rm.match.isFinished();
+        return {
+          match_id: rm.match.id,
+          game: rm.gameId,
+          started_at: rm.startedAt,
+          // 在飞快照统一标注中止（列表可见）；终局沿用原 headline
+          headline: finished ? rm.headline : "进程退出时进行中（已中止）",
+          aborted: finished ? undefined : true,
+          seats: Object.fromEntries([...rm.seatAgents.entries()].map(([s, a]) => [String(s), a])),
+          // r9 自查 P1：此前只存元数据——重启后 replay 空壳 + persistState 的 isFinished 过滤
+          // 把恢复壳（恒报 false）排除在下次落盘之外，历史每重启一代即静默丢失一代（复利丢失）。
+          // 现随元数据一并落盘全量事件与终局比分；rawEvents 已被 RestoredMatch 覆写为透传持久化事件
+          events: rm.match.rawEvents(),
+          scores: finished ? (rm.match.currentResult()?.scores ?? null) : null,
+        };
+      });
+    for (const r of records) this.knownMatchIds.add(r.match_id);
     const data = {
       saved_at: new Date().toISOString(),
       ratings: this.ratings.export(),
       agents: Object.fromEntries([...this.agents.entries()].map(([k, v]) => [k, v])),
       agentNames: Object.fromEntries([...this.agentNames.entries()]),
-      matches: finishedMatches,
+      matches: records,
+      // r15：超窗清理后的 404 三态依据（被挤出 matches 窗口的 id 仍可识别"曾存在"）
+      known_ids: [...this.knownMatchIds].slice(-5000),
     };
     const dir = dirname(this.dataFile);
     await mkdir(dir, { recursive: true });
@@ -224,7 +239,11 @@ export class Gateway {
           /** r9：旧状态文件无此二字段（undefined → 空事件回放壳，仅列表展示） */
           events?: MatchEvent[];
           scores?: Record<string, number> | null;
+          /** r15：落盘时对局仍在飞（30s 滚动/SIGTERM 快照）→ 以中止态恢复 */
+          aborted?: boolean;
         }[];
+        /** r15：曾持久化过的对局 id（含被 100 场窗口挤出的）——旧文件无此字段 */
+        known_ids?: string[];
       };
       if (data.ratings) this.ratings.import(data.ratings);
       if (data.agents) {
@@ -237,16 +256,17 @@ export class Gateway {
           this.agentNames.set(k, v);
         }
       }
-      // 恢复历史对局元数据（无 events，仅列表展示；排行榜已由 ratings 覆盖）
+      // 恢复对局记录（终局壳 + r15 中止壳——无游戏状态，仅列表展示与事件回放；排行榜已由 ratings 覆盖）
       if (data.matches) {
         for (const m of data.matches) {
+          this.knownMatchIds.add(m.match_id);
           if (!this.matches.has(m.match_id)) {
             const seatAgents = new Map<SeatId, string>();
             for (const [s, a] of Object.entries(m.seats)) {
               seatAgents.set(Number(s), a);
             }
             this.matches.set(m.match_id, {
-              match: new RestoredMatch(m.match_id, { events: m.events, scores: m.scores }),
+              match: new RestoredMatch(m.match_id, { events: m.events, scores: m.scores, aborted: m.aborted === true }),
               gameId: m.game,
               startedAt: m.started_at,
               seatTokens: new Map(),
@@ -256,9 +276,14 @@ export class Gateway {
               result: null,
               ratings: null,
               headline: m.headline,
+              aborted: m.aborted === true,
             });
           }
         }
+      }
+      // r15：known_ids 回填（含被 100 场窗口挤出、不再出现在 matches 里的历史 id）
+      if (data.known_ids) {
+        for (const id of data.known_ids) this.knownMatchIds.add(id);
       }
       console.log(`[持久化] 已恢复 ${this.agents.size} 选手 · ${this.matches.size} 对局 · ${Object.keys(data.ratings ?? {}).length} 游戏排行`);
     } catch (e) {
@@ -294,7 +319,7 @@ export class Gateway {
           "POST /api/v1/matches/:id/actions",
           "GET  /api/v1/matches/:id/events?since=",
           "GET  /api/v1/matches/:id/replay",
-          "GET  /api/v1/matches/:id/replay/step?to=<seq>&seat=N  回放步骤视图（?seat=N 需该席位 x-seat-token）",
+          "GET  /api/v1/matches/:id/replay/step?to=<seq>&seat=N  回放步骤视图（?seat=N 需该席位 x-seat-token，或 Bearer api_key 归属——r15 恢复壳/历史对局）",
           "GET  /api/v1/matches/:id/stream        SSE 实时事件流",
           "GET  /api/v1/leaderboard/:game",
         ],
@@ -391,6 +416,8 @@ export class Gateway {
           match_id: rm.match.id,
           game: rm.gameId,
           finished: rm.match.isFinished(),
+          // r15：中止壳显式标记（落盘时仍在飞，无终局比分）——大厅可显示「已中止」而非伪「已结束」
+          aborted: rm.aborted === true,
           started_at: rm.startedAt,
           headline: rm.headline,
           seats: [...rm.seatAgents.keys()].sort((a, b) => a - b).map((s) => this.nameOf(rm.seatAgents.get(s)!)),
@@ -1043,11 +1070,10 @@ export class Gateway {
   private sseStream(matchId: string, req: IncomingMessage, res: ServerResponse): void {
     const rm = this.matches.get(matchId);
     if (!rm) {
-      return this.err(res, 404, "MATCH_NOT_FOUND", "对局不存在或已过期", { match_id: matchId, path: `/api/v1/matches/${matchId}/stream`, hint: "match_id 有误或已过期；房间对局的 match_id 从 GET /api/v1/lobby/rooms/:id?token= 换取" });
+      return this.err(res, 404, "MATCH_NOT_FOUND", "对局不存在或已过期", { match_id: matchId, path: `/api/v1/matches/${matchId}/stream`, hint: this.matchNotFoundHint(matchId) });
     }
-    const token = req.headers["x-seat-token"];
-    const seat = typeof token === "string" ? rm.seatTokens.get(token) : undefined;
-    const viewer: SeatId | "spectator" = seat ?? "spectator";
+    // r15：与 matchOp 同源的双链解析（活局 token → Bearer 归属 → 观战）
+    const viewer: SeatId | "spectator" = this.resolveSeatIdentity(rm, req).seat ?? "spectator";
 
     // SSE 头
     res.writeHead(200, {
@@ -1105,7 +1131,7 @@ export class Gateway {
   /** 回放步骤：重放到指定事件序号，返回该时刻指定视角的 AgentView（视角切换回放的服务端基础） */
   private replayStep(matchId: string, url: URL, req: IncomingMessage, res: ServerResponse): void {
     const rm = this.matches.get(matchId);
-    if (!rm) return this.err(res, 404, "MATCH_NOT_FOUND", "对局不存在或已过期", { match_id: matchId, path: `/api/v1/matches/${matchId}/replay/step`, hint: "match_id 有误或已过期；房间对局的 match_id 从 GET /api/v1/lobby/rooms/:id?token= 换取" });
+    if (!rm) return this.err(res, 404, "MATCH_NOT_FOUND", "对局不存在或已过期", { match_id: matchId, path: `/api/v1/matches/${matchId}/replay/step`, hint: this.matchNotFoundHint(matchId) });
     const game = this.games.get(rm.gameId);
     if (!game) return this.err(res, 500, "GAME_NOT_FOUND", "游戏模块未注册（服务端配置错误）");
     const all = rm.match.rawEvents();
@@ -1121,12 +1147,13 @@ export class Gateway {
     const seatParam = Number(url.searchParams.get("seat"));
     let viewer: SeatId | "spectator" = "spectator";
     if (Number.isInteger(seatParam) && seatParam >= 1) {
-      // 视角鉴权（r8 P0）：?seat=N 仅允许该席位本人的 x-seat-token——private 视角（对手骰子/角色/查验）
-      // 不得无凭证读取（实测：无 token 曾直接返回任意席位 private）；观战请省略 seat 参数
-      const token = req.headers["x-seat-token"];
-      const tokenSeat = typeof token === "string" ? rm.seatTokens.get(token) : undefined;
-      if (tokenSeat !== seatParam) {
-        return this.err(res, 403, "SEAT_INVALID", "回放视角鉴权失败：?seat=N 仅限该席位本人的 x-seat-token；观战请省略 seat 参数", { match_id: matchId });
+      // 视角鉴权双链（r8 P0 + r15/r13 P1）：?seat=N 仅允许该席位本人——
+      // ①活局 x-seat-token（实测：无 token 曾直接返回任意席位 private）
+      // ②恢复壳/历史对局：Bearer api_key + seatAgents 归属（旧 seat_token 重启即失效）
+      // 观战请省略 seat 参数
+      const idn = this.resolveSeatIdentity(rm, req, url);
+      if (idn.seat !== seatParam) {
+        return this.err(res, 403, "SEAT_INVALID", "回放视角鉴权失败：?seat=N 仅限该席位本人（x-seat-token 或 Bearer api_key 归属）；观战请省略 seat 参数", { match_id: matchId });
       }
       viewer = seatParam;
     }
@@ -1174,10 +1201,13 @@ export class Gateway {
     res: ServerResponse,
   ): Promise<void> {
     const rm = this.matches.get(matchId);
-    if (!rm) return this.err(res, 404, "MATCH_NOT_FOUND", "对局不存在或已过期", { match_id: matchId, path: `/api/v1/matches/${matchId}/${op}`, hint: "match_id 有误或已过期；房间对局的 match_id 从 GET /api/v1/lobby/rooms/:id?token= 换取" });
+    if (!rm) return this.err(res, 404, "MATCH_NOT_FOUND", "对局不存在或已过期", { match_id: matchId, path: `/api/v1/matches/${matchId}/${op}`, hint: this.matchNotFoundHint(matchId) });
+    // r15：viewer 解析走双链——x-seat-token（活局）→ Bearer api_key 归属（恢复壳）→ 观战。
+    // 恢复壳的私有事件（夜间刀口/查验）经 Bearer 归属对当事人恢复可见（r13 P1）。
     const token = req.headers["x-seat-token"];
-    const seat = typeof token === "string" ? rm.seatTokens.get(token) : undefined;
-    // seat_token 无效时不静默降级为观战——agent 不易察觉配置错误
+    const idn = this.resolveSeatIdentity(rm, req, url);
+    const seat = idn.seat;
+    // seat_token 显式携带但不匹配（且 Bearer 归属也不成立）时不静默降级为观战——agent 不易察觉配置错误
     if (typeof token === "string" && token.length > 0 && seat === undefined && op !== "replay") {
       return this.err(res, 401, "SEAT_TOKEN_INVALID", "seat_token 不匹配该对局的任何席位", { match_id: matchId });
     }
@@ -1269,7 +1299,11 @@ export class Gateway {
       return this.err(res, 422, code, String(r.error), { ok: false, legal_actions: r.legal_actions });
     }
     if (op === "events" && method === "GET") {
-      const sinceParam = Number(url.searchParams.get("since"));
+      // r15 修复（P1）：Number(null) === 0 陷阱——缺省 since 时曾解析为 0，
+      // filter(seq > 0) 静默丢弃 seq=0 的 match_started，观战裸拉永远拿不到
+      // 首事件（drivers/bot_filled 等元数据随之丢失）。显式 null → NaN → -1（全量）。
+      const sinceRaw = url.searchParams.get("since");
+      const sinceParam = sinceRaw === null ? NaN : Number(sinceRaw);
       const since = Number.isFinite(sinceParam) ? sinceParam : -1;
       const all = rm.match.eventsFor(viewer);
       const latestSeq = all.length > 0 ? all[all.length - 1]!.seq : -1;
@@ -1307,6 +1341,8 @@ export class Gateway {
       return this.json(res, 200, {
         match_id: matchId,
         finished: rm.match.isFinished(),
+        // r15：中止壳标记（进程退出时仍在飞——无终局比分，事件回放到落盘时刻为止）
+        aborted: rm.aborted === true,
         // r13：与 view.result 同构（此前 replay 无 result 字段，客户端要写两套解析）
         result: r ? { scores: r.scores, winners: Object.entries(r.scores).filter(([, v]) => v > 0).map(([k]) => Number(k)) } : null,
         scores: r?.scores ?? null,
@@ -1329,6 +1365,48 @@ export class Gateway {
   private json(res: ServerResponse, status: number, body: unknown): void {
     res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
     res.end(JSON.stringify(body));
+  }
+
+  /** r15：MATCH_NOT_FOUND 三态 hint——①曾持久化但被 100 场滚动窗口挤出 ②从未存在。
+   *  此前统一"对局不存在或已过期"，无法区分（r13 P0 实测痛点）。 */
+  private matchNotFoundHint(matchId: string): string {
+    return this.knownMatchIds.has(matchId)
+      ? "该对局曾存在，但已超出滚动保留窗口（最近 100 场）被清理；选手战绩仍可查 /agents/:id/matches"
+      : "match_id 从未存在（或拼写有误）；房间对局的 match_id 从 GET /api/v1/lobby/rooms/:id?token= 换取";
+  }
+
+  /** r15（r13 P1）：席位身份解析双链——
+   *  ① 活局 x-seat-token（内存 seatTokens 映射）
+   *  ② Bearer api_key + seatAgents 归属（seatAgents 随对局落盘，恢复壳 seatTokens 恒空，
+   *    旧 seat_token 一律 403、私有事件对当事人不可见——本链恢复身份级鉴权）。
+   *  显式 ?seat=N 须与归属匹配；未指定时取归属的最小席位。均不成立 → 无席位身份（观战）。 */
+  private resolveSeatIdentity(
+    rm: RunningMatch,
+    req: IncomingMessage,
+    url?: URL,
+  ): { seat?: SeatId; via: "token" | "bearer" | "none" } {
+    const token = req.headers["x-seat-token"];
+    if (typeof token === "string" && token.length > 0) {
+      const seat = rm.seatTokens.get(token);
+      if (seat !== undefined) return { seat, via: "token" };
+    }
+    const auth = req.headers.authorization;
+    if (typeof auth === "string" && auth.startsWith("Bearer ")) {
+      const agent = this.agents.get(auth.slice(7).trim());
+      if (agent) {
+        const seatParam = url ? Number(url.searchParams.get("seat")) : NaN;
+        if (Number.isInteger(seatParam) && seatParam >= 1) {
+          if (rm.seatAgents.get(seatParam) === agent.agent_id) return { seat: seatParam, via: "bearer" };
+        } else {
+          const owned = [...rm.seatAgents.entries()]
+            .filter(([, a]) => a === agent.agent_id)
+            .map(([s]) => s)
+            .sort((a, b) => a - b);
+          if (owned.length > 0) return { seat: owned[0], via: "bearer" };
+        }
+      }
+    }
+    return { via: "none" };
   }
 
   /**
@@ -1379,14 +1457,17 @@ function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
  *  r9 自查修复：此前 isFinished() 继承自 Match 私有字段（仅 run()/fail() 置 true），恢复壳从不 run
  *  → 恒报 false，且 persistState 的 isFinished 过滤把恢复壳排除在下次落盘外——历史每重启丢一代。
  *  现恒报 finished=true 并透传落盘时的全量事件与比分；旧状态文件无 events 时为空回放壳。
- *  安全：seatTokens 恒为空 → replay/step?seat=N 恒 403（r8 P0 的安全默认不受影响）。 */
+ *  r15：aborted=true 为「中止壳」——落盘时对局仍在飞（30s 滚动快照或 SIGTERM 兜底），以中止态恢复，
+ *  无终局比分但事件回放可用；进程存活期间打完的局会在下次落盘覆盖为正常终局记录。
+ *  安全：seatTokens 恒为空 → replay/step?seat=N 的 x-seat-token 链恒 403（r8 P0 的安全默认不受影响），
+ *  r15 起另有 Bearer api_key + seatAgents 归属链（见 resolveSeatIdentity）。 */
 class RestoredMatch extends Match {
   private readonly restoredEvents: readonly MatchEvent[];
   private readonly restoredScores: Record<SeatId, number> | null;
 
   constructor(
     id: string,
-    persisted?: { events?: MatchEvent[]; scores?: Record<string, number> | null },
+    persisted?: { events?: MatchEvent[]; scores?: Record<string, number> | null; aborted?: boolean },
   ) {
     super({
       id,
@@ -1399,7 +1480,15 @@ class RestoredMatch extends Match {
         legalActions: () => [],
         validate: () => ({ ok: false, error: "MATCH_FINISHED" }),
         apply: (s) => ({ state: s, events: [] }),
-        viewOf: () => ({ public: { note: "此对局从持久化恢复，无实时状态；事件请读 /replay" }, private: {} }),
+        viewOf: () => ({
+          public: {
+            note: persisted?.aborted
+              ? "此对局在进程退出时仍在进行，已以中止态恢复（无终局比分）；事件回放请读 /replay"
+              : "此对局从持久化恢复，无实时状态；事件请读 /replay",
+            aborted: persisted?.aborted === true,
+          },
+          private: {},
+        }),
         timeoutAction: () => ({ type: "pass" }),
         isTerminal: () => true,
         scores: () => ({}),
