@@ -13,13 +13,16 @@
 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { Gateway } from "./gateway/http.ts";
 
 const PORT_1 = 18810;
 const PORT_2 = 18811;
 const PORT_3 = 18812;
 const PORT_4 = 18813;
+const PORT_5 = 18814;
+const PORT_6 = 18815;
+const PORT_7 = 18816;
 
 let failed = 0;
 function check(name: string, ok: boolean, detail = ""): void {
@@ -156,6 +159,14 @@ async function main(): Promise<void> {
 
   const evs2 = await api(B2, `/matches/${matchId}/events`);
   check("events 端点 finished=true", evs2.body.finished === true, `finished=${String(evs2.body.finished)}`);
+  // r15 防回归：裸拉（缺省 since）必须返回 seq=0 的 match_started——
+  // Number(null)===0 陷阱曾让 since 解析为 0、filter(seq>0) 静默丢弃首事件（观战流永远缺 drivers 元数据）
+  const evs2Events = evs2.body.events as { seq?: number; type?: string }[];
+  check(
+    "events 裸拉含 seq=0 match_started（r15 null 陷阱修复）",
+    evs2Events.length > 0 && evs2Events[0]!.seq === 0 && evs2Events[0]!.type === "match_started",
+    `首条=${String(evs2Events[0]?.type)}@${String(evs2Events[0]?.seq)}`,
+  );
 
   // reasoning 终局公开：观战视角（无 token）能看到恢复壳 acted.reasoning
   const specReasoning = (restored.body.events as { type: string; data?: { reasoning?: string } }[])
@@ -228,6 +239,134 @@ async function main(): Promise<void> {
       "旧格式 replay/step → 410 REPLAY_UNAVAILABLE（不再 500）",
       oldStep.status === 410 && String(oldStep.body.error).startsWith("REPLAY_UNAVAILABLE"),
       `status=${oldStep.status} · code=${String(oldStep.body.error ?? "").slice(0, 20)}`,
+    );
+  }
+
+  // —— 第 5 幕（r15）：在飞对局 aborted 快照 + 中止态恢复 ——
+  console.log("\n[第 5 幕] r15：在飞对局 aborted 快照（r13 P0）");
+  const dataFile2 = join(tmpdir(), `arena-persist-aborted-${process.pid}.json`);
+  const g5 = new Gateway(dataFile2);
+  g5.registerGame((await import("./games/othello.ts")).createOthello());
+  g5.registerGame((await import("./games/liars-dice.ts")).createLiarsDice());
+  g5.registerGame((await import("./games/holdem-lite.ts")).createHoldemLite());
+  g5.listen(PORT_5);
+  const B5 = `http://127.0.0.1:${PORT_5}/api/v1`;
+  await waitReady(B5);
+  const qs = await api(B5, "/lobby/quickstart", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ game: "liars_dice", seats: 3 }),
+  });
+  const liveId = String(qs.body.match_id);
+  const liveToken = String(qs.body.seat_token);
+  const liveKey = String(qs.body.api_key);
+  check("quickstart 在飞局开局（留 api_key 供第 7 幕鉴权）", !!liveId && !!liveToken && !!liveKey, liveId);
+  // 出一手让事件流非空；随后立即落盘（此刻对局仍在飞）
+  await new Promise((r) => setTimeout(r, 300));
+  const v1 = await api(B5, `/matches/${liveId}/view`, { headers: { "x-seat-token": liveToken } });
+  const you1 = (v1.body as { you?: { active?: boolean } }).you;
+  if (you1?.active === true) {
+    await api(B5, `/matches/${liveId}/actions`, {
+      method: "POST",
+      headers: { "x-seat-token": liveToken, "content-type": "application/json" },
+      body: JSON.stringify({ action: { type: "bid", qty: 1, face: 3 } }),
+    });
+  }
+  await g5.persistState();
+  const saved2 = JSON.parse(await readFile(dataFile2, "utf8")) as {
+    matches: { match_id: string; aborted?: boolean; events?: unknown[]; scores?: unknown }[];
+    known_ids?: string[];
+  };
+  const rec5 = saved2.matches.find((m) => m.match_id === liveId);
+  check(
+    "在飞局落盘为 aborted 记录（事件保留 · 比分 null）",
+    !!rec5 && rec5.aborted === true && (rec5.events ?? []).length > 0 && rec5.scores === null,
+    `${(rec5?.events ?? []).length} 事件`,
+  );
+  check("落盘 known_ids 簿记该对局", (saved2.known_ids ?? []).includes(liveId), "");
+
+  // —— 中止态恢复：同文件新网关（模拟 SIGKILL 后重启） ——
+  console.log("\n[第 6 幕] r15：中止壳恢复 + 404 三态");
+  const g6 = new Gateway(dataFile2);
+  g6.registerGame((await import("./games/othello.ts")).createOthello());
+  g6.registerGame((await import("./games/liars-dice.ts")).createLiarsDice());
+  g6.registerGame((await import("./games/holdem-lite.ts")).createHoldemLite());
+  g6.listen(PORT_6);
+  const B6 = `http://127.0.0.1:${PORT_6}/api/v1`;
+  await waitReady(B6);
+  const ab = await waitRestored(B6, liveId);
+  check("中止壳恢复出现在新网关（不再无声蒸发）", ab !== null, "");
+  if (ab) {
+    check(
+      "中止壳 /replay：aborted=true + finished=true + scores=null",
+      ab.body.aborted === true && ab.body.finished === true && ab.body.scores === null,
+      `aborted=${String(ab.body.aborted)} · scores=${String(ab.body.scores)}`,
+    );
+    check("中止壳事件保留", (ab.body.events as unknown[]).length > 0, `${(ab.body.events as unknown[]).length} 事件`);
+    const abView = await api(B6, `/matches/${liveId}/view`);
+    const note6 = String((abView.body as { public?: { note?: string } }).public?.note ?? "");
+    check("中止壳 view note 提示中止语义", note6.includes("中止"), note6.slice(0, 28));
+    const abList = await api(B6, "/matches");
+    const listItem = (abList.body as { matches: { match_id: string; aborted?: boolean; headline?: string }[] })
+      .matches.find((m) => m.match_id === liveId);
+    check(
+      "/matches 列表带 aborted:true + 中止 headline",
+      !!listItem && listItem.aborted === true && String(listItem.headline ?? "").includes("中止"),
+      String(listItem?.headline ?? "").slice(0, 24),
+    );
+  }
+
+  // 404 三态：①从未存在 ②曾存在但被滚动窗口清理（改写状态文件模拟挤出）
+  const never6 = await api(B6, "/matches/m_never_existed/view");
+  check(
+    "404 三态-从未存在：hint 含「从未存在」",
+    never6.status === 404 && String(never6.body.hint ?? "").includes("从未存在"),
+    String(never6.body.hint ?? "").slice(0, 24),
+  );
+  const raw6 = JSON.parse(await readFile(dataFile2, "utf8")) as { matches: { match_id: string }[] };
+  raw6.matches = raw6.matches.filter((m) => m.match_id !== liveId); // 模拟被 100 场窗口挤出（known_ids 保留）
+  await writeFile(dataFile2, JSON.stringify(raw6), "utf8");
+  const g7 = new Gateway(dataFile2);
+  g7.registerGame((await import("./games/othello.ts")).createOthello());
+  g7.registerGame((await import("./games/liars-dice.ts")).createLiarsDice());
+  g7.registerGame((await import("./games/holdem-lite.ts")).createHoldemLite());
+  g7.listen(PORT_7);
+  const B7 = `http://127.0.0.1:${PORT_7}/api/v1`;
+  await waitReady(B7);
+  const gone7 = await api(B7, `/matches/${liveId}/view`);
+  check(
+    "404 三态-超窗清理：hint 含「曾存在」+「滚动保留窗口」",
+    gone7.status === 404 && String(gone7.body.hint ?? "").includes("曾存在") && String(gone7.body.hint ?? "").includes("滚动保留窗口"),
+    String(gone7.body.hint ?? "").slice(0, 30),
+  );
+  const never7 = await api(B7, "/matches/m_never_existed/view");
+  check("新网关上从未存在 id 三态一致", never7.status === 404 && String(never7.body.hint ?? "").includes("从未存在"), "");
+
+  // —— 第 7 幕（r15）：恢复壳身份级鉴权（Bearer api_key + seatAgents 归属，r13 P1） ——
+  console.log("\n[第 7 幕] r15：恢复壳身份级鉴权（r13 P1）");
+  if (ab) {
+    // 旧 seat_token 在中止壳上恒 403——r8 P0 安全默认保持
+    const stNo = await api(B6, `/matches/${liveId}/replay/step?seat=1`, { headers: { "x-seat-token": liveToken } });
+    check("旧 seat_token 在中止壳上仍 403（安全默认保持）", stNo.status === 403, `status=${stNo.status}`);
+    // Bearer 归属 → 席位私有视角恢复（对手骰子不可见，自己的 my_dice 恢复）
+    const byKey = await api(B6, `/matches/${liveId}/replay/step?seat=1`, { headers: { authorization: `Bearer ${liveKey}` } });
+    const priv7 = (byKey.body as { view?: { private?: Record<string, unknown> } }).view?.private;
+    check(
+      "Bearer 归属 → 席位视角 200 + private 恢复（my_dice）",
+      byKey.status === 200 && !!priv7 && Object.keys(priv7).length > 0,
+      `status=${byKey.status} · private keys=${Object.keys(priv7 ?? {}).join(",")}`,
+    );
+    const badKey = await api(B6, `/matches/${liveId}/replay/step?seat=1`, { headers: { authorization: "Bearer sk_not_a_real_key" } });
+    check("错误 Bearer → 403 SEAT_INVALID", badKey.status === 403 && String(badKey.body.error).startsWith("SEAT_INVALID"), `status=${badKey.status}`);
+    const wrongSeat = await api(B6, `/matches/${liveId}/replay/step?seat=2`, { headers: { authorization: `Bearer ${liveKey}` } });
+    check("Bearer 归属不匹配请求席位 → 403", wrongSeat.status === 403, `status=${wrongSeat.status}`);
+    const evByKey = await api(B6, `/matches/${liveId}/events`, { headers: { authorization: `Bearer ${liveKey}` } });
+    check("events 端点接受 Bearer 归属（不降级 401/403）", evByKey.status === 200, `status=${evByKey.status}`);
+    const evByKeyEvents = (evByKey.body.events ?? []) as { seq?: number; type?: string }[];
+    check(
+      "Bearer 裸拉 events 含 seq=0 match_started（席位视角不丢首事件）",
+      evByKeyEvents.length > 0 && evByKeyEvents[0]!.seq === 0 && evByKeyEvents[0]!.type === "match_started",
+      `首条=${String(evByKeyEvents[0]?.type)}@${String(evByKeyEvents[0]?.seq)}`,
     );
   }
 
