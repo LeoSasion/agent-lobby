@@ -100,6 +100,18 @@ interface RunningMatch {
   aborted?: boolean;
 }
 
+/**
+ * r21 观众竞猜（liars.town 式 crowd suspicion）：匿名观战娱乐层——不属于 Agent 协议，
+ * 投票不进事件流、不进回放、不持久化（重启即弃，对局壳本身也在内存）。
+ * 进行中只暴露各席位票数；目标席位（狼/胜者）只在终局 reveal——信息隔离铁律。
+ */
+interface GuessState {
+  /** 席位 → 当前票数 */
+  votes: Map<SeatId, number>;
+  /** voter_id → 当前投给的席位（改票 = 老票 -1 新票 +1） */
+  voters: Map<string, SeatId>;
+}
+
 /** 多人房间：真人选手按加入顺序定座，满员自动开局（房主可强制开局并 bot 补位） */
 interface RoomPlayer {
   joinToken: string;
@@ -136,6 +148,8 @@ export class Gateway {
   private nonceReplay = new Map<string, true>();
   /** r15：曾持久化过的对局 id 簿记——404 三态依据（从未存在 / 超窗清理）；纯 id 上限 5000 防膨胀 */
   private knownMatchIds = new Set<string>();
+  /** r21 观众竞猜票池（内存态，随对局生命周期；终局后保留供 reveal 查询） */
+  private guesses = new Map<string, GuessState>();
   private indexHtml: string | null = null;
   private dataFile: string;
   private persistTimer: ReturnType<typeof setInterval> | null = null;
@@ -321,6 +335,8 @@ export class Gateway {
           "GET  /api/v1/matches/:id/replay",
           "GET  /api/v1/matches/:id/replay/step?to=<seq>&seat=N  回放步骤视图（?seat=N 需该席位 x-seat-token，或 Bearer api_key 归属——r15 恢复壳/历史对局）",
           "GET  /api/v1/matches/:id/stream        SSE 实时事件流",
+          "POST /api/v1/matches/:id/guess         观众竞猜 {voter_id, seat}（匿名可改票；终局后 409 锁定）——r21 观战娱乐层",
+          "GET  /api/v1/matches/:id/guess?voter_id=  竞猜票数（终局后揭底 targets/mine_hit/crowd_hit）",
           "GET  /api/v1/leaderboard/:game",
         ],
       });
@@ -475,7 +491,7 @@ export class Gateway {
     if (method === "GET" && stream) {
       return this.sseStream(stream[1], req, res);
     }
-    const m = /^\/api\/v1\/matches\/([^/]+)\/(view|actions|events|replay)$/.exec(path);
+    const m = /^\/api\/v1\/matches\/([^/]+)\/(view|actions|events|replay|guess)$/.exec(path);
     if (m) return this.matchOp(m[1], m[2], method, url, req, res);
     const hint = this.notFoundHint(path);
     return this.err(res, 404, "NOT_FOUND", hint, { path, hint });
@@ -490,7 +506,7 @@ export class Gateway {
       return "大厅端点：GET /lobby/rooms（列表）· POST /lobby/rooms（建房）· POST /lobby/rooms/:id/join|start · GET /lobby/rooms/:id?token= · POST /lobby/quickstart";
     }
     if (/^\/api\/v1\/matches\/[^/]+/.test(path)) {
-      return "对局子路径仅支持 view|actions|events|replay（另有 /stream 与 /replay/step）";
+      return "对局子路径仅支持 view|actions|events|replay|guess（另有 /stream 与 /replay/step）";
     }
     if (path.startsWith("/api/v1/agents") || path.startsWith("/api/v1/webhook")) {
       return "注册：POST /api/v1/agents；webhook 自检：POST /api/v1/webhook/test（Bearer）";
@@ -1202,6 +1218,8 @@ export class Gateway {
   ): Promise<void> {
     const rm = this.matches.get(matchId);
     if (!rm) return this.err(res, 404, "MATCH_NOT_FOUND", "对局不存在或已过期", { match_id: matchId, path: `/api/v1/matches/${matchId}/${op}`, hint: this.matchNotFoundHint(matchId) });
+    // r21：观众竞猜是纯观战旁路——不需要席位身份（也不接受 seat_token 语义），先于身份解析处理
+    if (op === "guess") return this.guessOp(matchId, rm, method, url, req, res);
     // r15：viewer 解析走双链——x-seat-token（活局）→ Bearer api_key 归属（恢复壳）→ 观战。
     // 恢复壳的私有事件（夜间刀口/查验）经 Bearer 归属对当事人恢复可见（r13 P1）。
     const token = req.headers["x-seat-token"];
@@ -1360,6 +1378,124 @@ export class Gateway {
       });
     }
     return this.err(res, 405, "METHOD_NOT_ALLOWED", `不支持的方法（${method}）`, { method });
+  }
+
+  /**
+   * r21 观众竞猜端点：POST /matches/:id/guess {seat, voter_id}（匿名投票，重复=改票）
+   *                GET  /matches/:id/guess?voter_id=（进行中 counts / 终局 reveal）
+   * 语义（liars.town 式 crowd suspicion 的移植）：
+   *  - 纯观战娱乐层：不属于 Agent 协议、不进事件流、不进回放、不持久化（重启即弃）
+   *  - werewolf_lite → 猜狼（reveal 从 game_won.data.roles 过滤）；其他游戏 → 猜胜者（result.scores>0）
+   *  - 信息隔离铁律：进行中只回 {locked:false, counts, total, mine, label}——绝不含目标席位；
+   *    票数本身是观众自己投的（无信息特权），不构成泄露
+   *  - 终局锁定：POST → 409 GUESS_LOCKED；GET → reveal（targets + mine_hit + crowd_pick/crowd_hit）
+   */
+  private async guessOp(
+    matchId: string,
+    rm: RunningMatch,
+    method: string,
+    url: URL,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const validSeats = [...rm.seatAgents.keys()].sort((a, b) => a - b);
+    const finished = rm.match.isFinished();
+    if (method === "POST") {
+      if (finished) {
+        return this.err(res, 409, "GUESS_LOCKED", "对局已结束，竞猜已锁定（GET 查看揭底）", { match_id: matchId, locked: true });
+      }
+      const body = await readJson(req);
+      const voter = typeof body.voter_id === "string" ? body.voter_id.trim().slice(0, 64) : "";
+      const seat = Number(body.seat);
+      if (!voter) {
+        return this.err(res, 422, "VOTER_REQUIRED", "缺 voter_id（匿名观战者标识：任意稳定字符串，前端建议 localStorage UUID）", { ok: false });
+      }
+      if (!Number.isInteger(seat) || !validSeats.includes(seat)) {
+        return this.err(res, 422, "SEAT_INVALID", `席位无效（有效席位：${validSeats.join("、")}）`, { ok: false, valid_seats: validSeats });
+      }
+      let g = this.guesses.get(matchId);
+      if (!g) {
+        g = { votes: new Map(), voters: new Map() };
+        this.guesses.set(matchId, g);
+      }
+      const old = g.voters.get(voter);
+      if (old === seat) {
+        return this.json(res, 200, { ok: true, seat, changed: false, ...this.guessCounts(g, voter) });
+      }
+      if (old !== undefined) {
+        const n = (g.votes.get(old) ?? 1) - 1;
+        if (n <= 0) g.votes.delete(old);
+        else g.votes.set(old, n);
+      }
+      g.voters.set(voter, seat);
+      g.votes.set(seat, (g.votes.get(seat) ?? 0) + 1);
+      return this.json(res, 200, { ok: true, seat, changed: old !== undefined, ...this.guessCounts(g, voter) });
+    }
+    if (method === "GET") {
+      const voter = (url.searchParams.get("voter_id") ?? "").trim().slice(0, 64);
+      const g = this.guesses.get(matchId);
+      const base = this.guessCounts(g, voter);
+      if (!finished) {
+        return this.json(res, 200, { locked: false, ...base, label: this.guessTargetLabel(rm.gameId) });
+      }
+      const targets = this.guessTargets(rm);
+      const mine = base.mine;
+      const mineHit = mine !== null && targets.includes(mine);
+      // crowd_pick：票数最高席位（并列全列）；crowd_hit：群众头名票与目标有交集
+      const entries = Object.entries(base.counts).map(([s, n]) => ({ seat: Number(s), n }));
+      const topN = entries.length > 0 ? Math.max(...entries.map((e) => e.n)) : 0;
+      const crowdPick = topN > 0 ? entries.filter((e) => e.n === topN).map((e) => e.seat).sort((a, b) => a - b) : [];
+      const crowdHit = crowdPick.length > 0 && crowdPick.some((s) => targets.includes(s));
+      return this.json(res, 200, {
+        locked: true,
+        ...base,
+        label: this.guessTargetLabel(rm.gameId),
+        targets,
+        mine_hit: mineHit,
+        crowd_pick: crowdPick,
+        crowd_pick_votes: topN,
+        crowd_hit: crowdHit,
+        total_voters: g ? g.voters.size : 0,
+      });
+    }
+    return this.err(res, 405, "METHOD_NOT_ALLOWED", `不支持的方法（${method}）`, { method });
+  }
+
+  /** 票数快照（进行中/终局共用）——counts 键为席位号字符串，mine 为本人当前票 */
+  private guessCounts(g: GuessState | undefined, voter: string): { counts: Record<string, number>; total: number; mine: number | null } {
+    const counts: Record<string, number> = {};
+    let total = 0;
+    if (g) {
+      for (const [s, n] of g.votes) {
+        counts[String(s)] = n;
+        total += n;
+      }
+    }
+    return { counts, total, mine: voter && g ? (g.voters.get(voter) ?? null) : null };
+  }
+
+  /** 竞猜目标席位：werewolf_lite → 真狼（game_won.roles 过滤；恢复壳经 rawEvents 透传同样可取）；其他游戏 → 胜者 */
+  private guessTargets(rm: RunningMatch): SeatId[] {
+    if (rm.gameId === "werewolf_lite") {
+      const ev = [...rm.match.rawEvents()].reverse().find((e) => e.type === "game_won");
+      const roles = (ev?.data?.roles ?? null) as Record<string, string> | null;
+      if (roles && typeof roles === "object") {
+        return Object.entries(roles)
+          .filter(([, r]) => r === "werewolf")
+          .map(([s]) => Number(s))
+          .sort((a, b) => a - b);
+      }
+      return [];
+    }
+    const r = rm.result ?? rm.match.currentResult();
+    return r
+      ? Object.entries(r.scores).filter(([, v]) => v > 0).map(([k]) => Number(k)).sort((a, b) => a - b)
+      : [];
+  }
+
+  /** 目标语义标签（非机密——仅告知观众「这局猜什么」） */
+  private guessTargetLabel(gameId: string): string {
+    return gameId === "werewolf_lite" ? "狼" : "胜者";
   }
 
   private json(res: ServerResponse, status: number, body: unknown): void {

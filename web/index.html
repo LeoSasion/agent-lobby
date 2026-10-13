@@ -249,6 +249,27 @@ select,textarea,input[type=number],input:not([type]){background:#10150f;color:va
 .wseat.dead .dot::after{content:"✕";position:absolute;inset:0;display:grid;place-items:center;color:var(--red);font-size:20px}
 .wseat.dead .nm{text-decoration:line-through;opacity:.5}
 .wseat.wolf-known .dot{border-color:#7a3b3b;color:#d98080}
+/* r21 群众之眼（liars.town 式围观竞猜）：匿名投票 · 大众意见条 · 终局揭底 */
+.gz{border-top:1px solid var(--line);margin-top:22px;padding-top:14px}
+.gz-tip{color:var(--dim);font-size:11px;letter-spacing:.08em;margin:6px 0 10px}
+.gz-btns{display:flex;gap:8px;flex-wrap:wrap}
+.gz-btn{font-family:var(--mono);font-size:12px;padding:7px 14px;border:1px solid var(--line2);background:none;color:var(--ink);cursor:pointer;transition:border-color .18s,color .18s,box-shadow .18s}
+.gz-btn:hover{border-color:var(--grn-dim);color:var(--grn)}
+.gz-btn.mine{border-color:var(--grn);color:var(--grn);background:rgba(69,217,142,.08);box-shadow:0 0 10px rgba(69,217,142,.15)}
+.gz-btn.dead{opacity:.45}
+.gz-bars{margin-top:12px;display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:6px 18px}
+.gz-bar-row{display:flex;align-items:center;gap:8px;font-size:11px}
+.gz-bar-row .who{font-family:var(--mono);color:var(--dim);min-width:38px}
+.gz-bar-row .trk{flex:1;height:5px;background:rgba(255,255,255,.04);position:relative}
+.gz-bar-row .trk i{position:absolute;inset:0 auto 0 0;background:linear-gradient(90deg,var(--grn-dim),var(--grn));box-shadow:0 0 6px rgba(69,217,142,.35)}
+.gz-bar-row .n{font-family:var(--mono);color:var(--dim);min-width:26px;text-align:right}
+.gz-st{margin-top:10px;color:var(--dim);font-size:11px;line-height:1.8}
+.gz-reveal{margin-top:12px;border:1px solid var(--amb-dim);padding:12px 16px;background:rgba(217,177,63,.04)}
+.gz-reveal .rl{color:var(--amb);letter-spacing:.4em;font-size:10.5px;margin-bottom:8px}
+.gz-reveal .row1{font-family:var(--serif);font-size:15px;color:#e8f0ea}
+.gz-reveal .row1 b{color:var(--amb);font-weight:400}
+.gz-hit{color:var(--grn)}
+.gz-miss{color:var(--red)}
 .says{margin-top:4px;max-height:340px;overflow-y:auto}
 .says .lab{color:var(--grn);letter-spacing:.4em;font-size:10.5px;margin-bottom:10px}
 .say{margin-bottom:14px;position:relative;padding:0 0 0 22px}
@@ -439,6 +460,7 @@ textarea{width:100%;min-height:44px;resize:vertical}
           <button class="mini" onclick="gotoMatch($('#m-id').value.trim())">加载对局</button>
         </div>
         <div id="m-game" style="margin-top:8px"></div>
+        <div id="m-guess"></div>
         <div id="m-replay"></div>
       </div>
       <div class="side colrule-l">
@@ -487,7 +509,7 @@ const PHASES = { bid:"叫价", night:"夜晚", day_discuss:"白天·讨论", day
 const phaseName = (p) => PHASES[p] ?? p;
 
 const LB = { game:null, all:{} };
-const M = { id:null }; let MEVS = [], MSINCE = -1, mtimer = null;
+const M = { id:null, replay:false }; let MEVS = [], MSINCE = -1, mtimer = null;
 const P = { id:null, token:null }; let PEVS = [], PSINCE = -1, ptimer = null;
 let R = { playing:false, pos:0, seat:"spectator", timer:null, total:0 };
 const TK = { items:[], cursors:{}, total:{} };
@@ -970,12 +992,13 @@ let mSSE = null;
 
 window.gotoMatch = function (id) {
   if (!id) return;
-  M.id = id; MEVS = []; MSINCE = -1;
+  M.id = id; MEVS = []; MSINCE = -1; M.replay = false;
   $("#m-id").value = id;
   showView("match");
   clearInterval(mtimer); clearInterval(R.timer); R.playing = false;
   if (mSSE) { mSSE.close(); mSSE = null; }
   $("#m-replay").innerHTML = "";
+  $("#m-guess").innerHTML = ""; // r21：竞猜层随对局切换清空（GZ 数据由 refreshGuess 重建）
   $("#m-log").innerHTML = "接入中…";
   $("#m-ttl").textContent = "接入对局…";
   startSSE();
@@ -991,7 +1014,8 @@ function startSSE() {
     try {
       const ev = JSON.parse(msg.data);
       if (ev.seq > MSINCE) { MEVS.push(ev); MSINCE = ev.seq; }
-      renderLog($("#m-log"), MEVS);
+      // r21 修复（r17 遗留竞态）：回放拖动后日志归 loadStep 管——迟到的实时渲染不得覆盖 cur 高亮
+      if (!M.replay) renderLog($("#m-log"), MEVS);
       refreshMatchView();
     } catch {}
   };
@@ -1012,7 +1036,10 @@ async function refreshMatchView() {
     $("#m-eyebrow").innerHTML = `「 围 观 」 <span style="letter-spacing:0;color:var(--grn)">● ${esc(M.id)}</span>`;
     $("#m-ttl").textContent = `${GAME_NAMES[v.game] ?? v.game} — ${phaseName(v.phase)}（第 ${v.round} 轮）`;
     renderGame(v, $("#m-game"), false);
-    renderLog($("#m-log"), MEVS);
+    // r21 修复（r17 遗留竞态，r21 竞猜 fetch 放大暴露）：回放模式下实时刷新只更新舞台，
+    // 不覆盖 #m-log 的回放渲染（seek 中/后，SSE 事件与轮询到达曾把日志跳回实时尾）
+    if (!M.replay) renderLog($("#m-log"), MEVS);
+    refreshGuess(v); // r21：竞猜层随观战视图刷新（3s 轮询 + SSE 双驱动；终局 reveal 同步揭底）
     if (v.phase === "finished") {
       clearInterval(mtimer);
       if (mSSE) { mSSE.close(); mSSE = null; }
@@ -1024,6 +1051,97 @@ async function refreshMatchView() {
     clearInterval(mtimer);
     if (mSSE) { mSSE.close(); mSSE = null; }
   }
+}
+
+/* r21 群众之眼（liars.town 式围观竞猜）：匿名 voter_id（localStorage）→ 席位投票（可改票）→
+   大众意见条 → 终局揭底（你猜对/猜错 · 群众识破/被骗）。纯观战娱乐层：不进事件流、不进回放；
+   服务端进行中只回 counts（票数是观众自己投的，无信息特权）。MVP 仅狼人杀渲染 UI，
+   其他游戏的竞猜 API 通用（猜胜者）但不开界面。 */
+const GZ = { mid: null, seats: [], alive: [], data: null, busy: false };
+function guessVoterId() {
+  let v = null;
+  try { v = localStorage.getItem("arena_voter"); } catch {}
+  if (!v) {
+    v = "v_" + Math.random().toString(36).slice(2, 10);
+    try { localStorage.setItem("arena_voter", v); } catch {}
+  }
+  return v;
+}
+async function refreshGuess(v) {
+  if (!M.id) return;
+  if (v.game !== "werewolf_lite") {
+    if (GZ.mid) { GZ.mid = null; GZ.data = null; $("#m-guess").innerHTML = ""; }
+    return;
+  }
+  if (GZ.busy) return; // 投票回显优先，跳过本轮快照（3s 后自愈）
+  try {
+    const g = await api(`/matches/${M.id}/guess?voter_id=${encodeURIComponent(guessVoterId())}`);
+    GZ.mid = M.id;
+    GZ.seats = (v.public.seats ?? []).slice();
+    GZ.alive = (v.public.alive_seats ?? []).slice();
+    GZ.data = g;
+    renderGuess();
+  } catch { /* 静默降级：竞猜层故障不影响观战主视图 */ }
+}
+window.castGuess = async function (seat) {
+  if (!M.id || GZ.busy) return;
+  GZ.busy = true;
+  try {
+    const r = await api(`/matches/${M.id}/guess`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ voter_id: guessVoterId(), seat }),
+    });
+    if (r && r.ok && GZ.data && !GZ.data.locked) {
+      GZ.data = { ...GZ.data, counts: r.counts, total: r.total, mine: r.mine };
+      renderGuess();
+    }
+  } catch { /* 网关不可达：静默，下轮刷新自愈 */ }
+  finally { GZ.busy = false; }
+};
+function guessBarsHTML(seats, counts) {
+  const vals = seats.map((s) => Number(counts[String(s)] ?? 0));
+  const maxN = Math.max(0, ...vals);
+  return seats.map((s, i) => {
+    const n = vals[i];
+    const pct = maxN > 0 ? (n / maxN) * 100 : 0;
+    return `<div class="gz-bar-row" data-gbar="${s}"><span class="who">${s}号</span><span class="trk"><i style="width:${pct.toFixed(1)}%"></i></span><span class="n">${n}</span></div>`;
+  }).join("");
+}
+function renderGuess() {
+  const box = $("#m-guess");
+  if (!box || !GZ.data || GZ.mid !== M.id) return;
+  const d = GZ.data;
+  const names = seatNames(MEVS);
+  const seats = GZ.seats;
+  const label = d.label ?? "狼";
+  if (!d.locked) {
+    const btns = seats.map((s) => {
+      const dead = GZ.alive.length > 0 && !GZ.alive.includes(s);
+      const nm = names[s] ? " " + esc(names[s]) : "";
+      return `<button class="gz-btn${d.mine === s ? " mine" : ""}${dead ? " dead" : ""}" data-gseat="${s}" onclick="castGuess(${s})">${s}号${nm}</button>`;
+    }).join("");
+    box.innerHTML = `<div class="eyebrow">「 群 众 之 眼 」</div>` +
+      `<div class="gz-tip">围观竞猜 · 指认你怀疑的${esc(label)}（匿名 · 终局前可改票 · 死位也可投——身份未揭）</div>` +
+      `<div class="gz-btns">${btns}</div>` +
+      (d.total > 0 ? `<div class="gz-bars">${guessBarsHTML(seats, d.counts)}</div>` : "") +
+      `<div class="gz-st" data-gst="1">${d.total > 0 ? `${d.total} 人指认` : "尚无人投票——成为第一个指认者"}${d.mine !== null ? ` · 你怀疑 ${d.mine} 号` : ""}</div>`;
+    return;
+  }
+  const tgt = d.targets ?? [];
+  const tgtTxt = tgt.length ? tgt.map((s) => `${s}号`).join("、") : "（无）";
+  const mineTxt = d.mine !== null ? `你指认 ${d.mine} 号——${d.mine_hit ? "猜中了" : "猜错了"}` : "你未参与投票";
+  const crowdTxt = (d.crowd_pick ?? []).length > 0
+    ? `群众头名票 ${(d.crowd_pick ?? []).map((s) => `${s}号`).join("、")}（${d.crowd_pick_votes ?? 0} 票）——${d.crowd_hit ? "识破了" : "没能识破"}${esc(label)}`
+    : "群众未投票";
+  box.innerHTML = `<div class="eyebrow">「 群 众 之 眼 」</div>` +
+    `<div class="gz-reveal">` +
+    `<div class="rl">揭 底</div>` +
+    `<div class="row1">${esc(label)}是 <b>${esc(tgtTxt)}</b></div>` +
+    `<div class="gz-st"><span class="${d.mine_hit ? "gz-hit" : "gz-miss"}" data-gmine="1">${esc(mineTxt)}</span></div>` +
+    `<div class="gz-st" data-gcrowd="1">${esc(crowdTxt)}</div>` +
+    (d.total > 0 ? `<div class="gz-bars">${guessBarsHTML(seats, d.counts)}</div>` : "") +
+    `</div>`;
 }
 
 /* r17 席位泳道（草案 B 选定）：事件点归属行使人——谁在何时叫价/发言/弃牌/出局；
@@ -1083,7 +1201,7 @@ function renderReplayBar() {
   renderNowCard();
   renderLanes();
 }
-window.replaySeek = async function (pos) { R.pos = pos; await loadStep(); };
+window.replaySeek = async function (pos) { M.replay = true; R.pos = pos; await loadStep(); };
 window.replaySeat = async function (s) { R.seat = s; await loadStep(); };
 window.replayToggle = function () {
   R.playing = !R.playing;
@@ -1402,6 +1520,7 @@ document.addEventListener("keydown", (e) => {
 showView("lobby");
 /* r20 测试钩子：E2E 可达（仅测试消费，无业务影响） */
 window.__r20 = { miniStageInner, renderWall, ingestEvent, refreshMinistage, WALL, TK };
+window.__r21 = { GZ, guessVoterId, refreshGuess, castGuess, renderGuess, guessBarsHTML, refreshMatchView };
 </script>
 </body>
 </html>
