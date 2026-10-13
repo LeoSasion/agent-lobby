@@ -35,12 +35,17 @@ body{background:var(--bg);color:var(--ink);font:14px/1.7 var(--mono)}
 .ro.err{color:var(--red)}
 .rule2{margin-top:clamp(12px,1.6cqi,22px);border-top:2px solid var(--grn)}
 .rule1{margin-top:2px;border-top:1px solid var(--line)}
-.tick{display:flex;align-items:center;border-bottom:1px solid var(--line);overflow:hidden}
-.tlab{padding:11px 16px;background:var(--grn);color:var(--bg);font-size:11px;letter-spacing:.35em;white-space:nowrap;flex:none}
-.titems{flex:1;display:flex;gap:clamp(18px,2.4cqi,64px);padding:10px clamp(14px,2cqi,36px);font-size:13px;color:var(--dim);min-width:0;overflow:hidden}
+.tick{display:flex;align-items:stretch;border-bottom:1px solid var(--line);overflow:hidden}
+.tlab{padding:11px 16px;background:var(--grn);color:var(--bg);font-size:11px;letter-spacing:.35em;white-space:nowrap;flex:none;display:flex;align-items:center}
+.pb-wrap{flex:1;min-width:0;display:flex;flex-direction:column}
+.pb-stats{display:flex;gap:18px;padding:4px clamp(14px,2cqi,36px);font-size:11px;color:var(--faint);border-bottom:1px solid var(--line);align-items:center}
+.pb-stats b{color:var(--grn);font-weight:400}
+.pb-stats .beat{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--grn);margin-right:6px;animation:blink 1.2s infinite}
+.titems{flex:1;display:flex;gap:clamp(18px,2.4cqi,64px);padding:7px clamp(14px,2cqi,36px);font-size:13px;color:var(--dim);min-width:0;overflow:hidden;align-items:center}
 .titems span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
 .titems span:hover{color:var(--ink)}
-.thint{padding-right:clamp(14px,2cqi,36px);font-size:11px;color:var(--faint);white-space:nowrap;flex:none}
+.titems span.hot{color:var(--grn)}
+.thint{padding-right:clamp(14px,2cqi,36px);font-size:11px;color:var(--faint);white-space:nowrap;flex:none;display:flex;align-items:center}
 .nav{display:flex;flex-wrap:wrap;gap:2px 26px;margin:clamp(14px,1.8cqi,24px) 0 0}
 .nav span{padding:8px 0 8px 12px;border-left:2px solid transparent;font-size:15px;color:var(--dim);cursor:pointer;white-space:nowrap}
 .nav span.on{border-left-color:var(--grn);color:var(--grn)}
@@ -102,6 +107,64 @@ select,textarea,input[type=number],input:not([type]){background:#10150f;color:va
 .tv.over .nowline .txt{color:var(--dim)}
 .tv.over .tvfoot .go{color:var(--amb)}
 .tv.empty{cursor:default;align-items:center;justify-content:center;text-align:center;color:var(--dim);font-size:14px;padding:clamp(28px,4cqi,56px)}
+/* r20 · 具象 mini 舞台 + 实时事件流 */
+.ministage{height:clamp(104px,12cqi,124px);position:relative;margin:8px 0 4px;min-width:0}
+.ministage.flash,.flashTarget.flash{animation:msPulse 1.1s ease-out}
+@keyframes msPulse{0%{box-shadow:0 0 0 0 rgba(69,217,142,.5)}100%{box-shadow:0 0 0 12px rgba(69,217,142,0)}}
+.mn-orb{position:absolute;left:0;top:2px;width:48px;height:48px}
+.mn-orb svg{width:100%;height:100%}
+.mn-orb .lab{position:absolute;top:50px;left:0;width:48px;text-align:center;color:var(--faint);font-size:10px;letter-spacing:.3em}
+.seatring{position:absolute;left:84px;top:0;width:92px;height:92px}
+.seatring .msd{position:absolute;width:12px;height:12px;border-radius:50%;background:var(--grn);box-shadow:0 0 6px rgba(69,217,142,.45);transition:background .5s,box-shadow .5s}
+.seatring .msd.off{background:#202a25;box-shadow:none}
+.mn-side{position:absolute;right:0;top:6px;text-align:right}
+.mn-side .big{color:var(--grn);font-size:clamp(20px,2.4cqi,26px)}
+.mn-side .big small{color:var(--dim);font-size:13px}
+.mn-side .sub{color:var(--faint);font-size:10px;letter-spacing:.2em;margin-top:2px}
+.dice-rows{position:absolute;left:0;top:2px}
+.dice-row{display:flex;align-items:center;gap:5px;margin-bottom:4px;transition:opacity .5s}
+.dice-row .s{color:var(--faint);font-size:10px;width:12px}
+.mini-die{width:10px;height:10px;border:1px solid #2a6b4a;position:relative;flex:none}
+.mini-die i{position:absolute;width:3px;height:3px;background:var(--grn);top:3px;left:3px}
+.dice-row.dead{opacity:.18}
+.bid-badge{position:absolute;right:0;top:6px;text-align:right}
+.bid-badge .face{color:var(--amb);font-size:clamp(22px,2.6cqi,30px);letter-spacing:.05em}
+.bid-badge .face.idle{color:var(--dim)}
+.bid-badge .sub{color:var(--faint);font-size:10px;letter-spacing:.2em;margin-top:2px}
+.street-badge{position:absolute;left:0;top:4px;color:var(--amb);font-size:11px;letter-spacing:.3em;border:1px solid #3a3320;padding:3px 10px}
+.pot-big{position:absolute;right:0;top:0;text-align:right}
+.pot-big .v{color:var(--grn);font-size:clamp(18px,2.2cqi,24px)}
+.pot-big .l{color:var(--faint);font-size:10px;letter-spacing:.25em;margin-top:2px}
+.comm{position:absolute;left:0;top:38px;display:flex;gap:5px}
+.mini-card{width:24px;height:34px;border:1px solid var(--line);background:#111613;color:var(--ink);font-family:var(--mono);font-size:11px;display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.15;flex:none}
+.mini-card.r{color:#d96b6b}
+.mini-card.empty{border-style:dashed;opacity:.35}
+.chip-bars{position:absolute;left:0;bottom:0;display:flex;gap:8px;width:60%}
+.chip-bar{flex:1;min-width:0}
+.chip-bar .bar{height:5px;background:#1a231e;position:relative}
+.chip-bar .bar i{display:block;height:100%;background:var(--grn);transition:width .6s}
+.chip-bar .t{color:var(--faint);font-size:9px;margin-top:3px;white-space:nowrap;overflow:hidden}
+.chip-bar.fold{opacity:.25}
+.grid8{position:absolute;left:0;top:2px;display:grid;grid-template-columns:repeat(8,12px);grid-template-rows:repeat(8,12px);gap:1px;background:var(--line);border:1px solid var(--line)}
+.grid8 .cell{background:#0c110e;position:relative}
+.grid8 .cell.b::after,.grid8 .cell.w::after{content:"";position:absolute;inset:2px;border-radius:50%}
+.grid8 .cell.b::after{background:#dfe8e2}
+.grid8 .cell.w::after{background:#8f9c95}
+.oth-side{position:absolute;right:0;top:8px;text-align:right}
+.oth-side .pair{font-size:clamp(15px,1.8cqi,19px)}
+.oth-side .pair b.b{color:#dfe8e2;font-weight:400}
+.oth-side .pair b.w{color:#8f9c95;font-weight:400}
+.oth-side .sub{color:var(--faint);font-size:10px;letter-spacing:.2em;margin-top:2px}
+.tv .evflow{border-top:1px solid var(--line);padding-top:7px;display:flex;flex-direction:column;gap:4px;height:58px;overflow:hidden;margin-top:6px}
+.tv .ev-row{display:flex;gap:8px;align-items:baseline;font-size:11px;color:var(--dim)}
+.tv .ev-row .seq{font-family:var(--mono);font-size:10px;color:#3a4a41;width:30px;flex:none}
+.tv .ev-row.hot .seq{color:var(--grn)}
+.tv .ev-row.hot .tx{color:var(--grn)}
+.tv .ev-row .tx{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tv .ev-row.fresh{color:var(--ink);animation:freshin .45s ease-out}
+@keyframes freshin{from{opacity:0;transform:translateY(-6px)}}
+.tvfoot b.changed{animation:numPulse .9s ease-out}
+@keyframes numPulse{0%{color:#fff;text-shadow:0 0 10px rgba(69,217,142,.9)}}
 /* 今日赛程 */
 .sched{margin-top:6px}
 .srow{display:grid;grid-template-columns:56px minmax(0,1.3fr) minmax(0,1.5fr) minmax(0,2.2fr) 88px;gap:12px;align-items:baseline;padding:11px 0;border-bottom:1px solid var(--line);font-size:14px}
@@ -329,8 +392,11 @@ textarea{width:100%;min-height:44px;resize:vertical}
   </header>
 
   <div class="tick">
-    <span class="tlab">直播信号</span>
-    <div class="titems" id="ticker"><span>正在接入赛场…</span></div>
+    <span class="tlab">赛场脉搏</span>
+    <div class="pb-wrap">
+      <div class="pb-stats num"><span><i class="beat"></i><b id="pb-live">0</b> 桌直播</span><span>事件 <b id="pb-n">0</b></span><span><b id="pb-r">0.0</b>/分</span></div>
+      <div class="titems" id="ticker"><span>正在接入赛场…</span></div>
+    </div>
     <span class="thint">点击跳转</span>
   </div>
 
@@ -425,7 +491,7 @@ const M = { id:null }; let MEVS = [], MSINCE = -1, mtimer = null;
 const P = { id:null, token:null }; let PEVS = [], PSINCE = -1, ptimer = null;
 let R = { playing:false, pos:0, seat:"spectator", timer:null, total:0 };
 const TK = { items:[], cursors:{}, total:{} };
-const WALL = { live:[], views:{}, now:{} };
+const WALL = { live:[], views:{}, now:{}, sse:{}, evs:{}, ts:[], viewTimer:{} };
 const ZONE = { sel:null };
 let lobbyTimer = null, boardsTimer = null;
 const CACHE = { games:[], matches:[] };
@@ -575,6 +641,7 @@ async function loadLobby() {
     $("#mast-meta").innerHTML = `${cnDate()} · <span style="color:var(--grn)">● ${mr.matches.filter((m) => !m.finished).length} 场直播</span> · arena/r14`;
     $("#sbar-live").textContent = `${mr.matches.filter((m) => !m.finished).length} live`;
     loadWallViews();
+    startWallSSE(); // r20：直播墙实时链路（SSE 直连，4s 轮询降级兜底）
   } catch { /* 网关暂不可达 */ }
 }
 
@@ -606,25 +673,184 @@ function viewStats(m, v) {
     stats: [["黑", c.black], ["白", c.white], ["事件", "…"]] };
 }
 
+/* ===== r20 · 具象 mini 舞台（四游戏微缩场景） ===== */
+function orbSVG(phase) {
+  const night = phase === "night";
+  return `<svg viewBox="0 0 48 48"><circle cx="24" cy="24" r="21" fill="none" stroke="${night ? "#3b4a63" : "#d9b13f"}" stroke-width="1.5" opacity=".85"/>${
+    night
+      ? `<path d="M30 7 a17 17 0 1 0 0 34 a13 13 0 1 1 0 -34z" fill="#3b4a63"/>`
+      : `<circle cx="24" cy="24" r="8" fill="#d9b13f"/><g stroke="#d9b13f" stroke-width="1.5">${[0,45,90,135,180,225,270,315].map(a=>{const r=a*Math.PI/180;return `<line x1="${24+11*Math.cos(r)}" y1="${24+11*Math.sin(r)}" x2="${24+16*Math.cos(r)}" y2="${24+16*Math.sin(r)}"/>`}).join("")}</g>`
+  }</svg>`;
+}
+function miniStageInner(m, v) {
+  const pub = v.public ?? {};
+  if (m.game === "werewolf_lite") {
+    const seats = pub.seats ?? [], alive = pub.alive_seats ?? [];
+    const ring = seats.map((s) => {
+      const ang = (-90 + (360 / Math.max(seats.length, 1)) * (s - 1)) * Math.PI / 180;
+      const R = 36, cx = 46 + R * Math.cos(ang), cy = 46 + R * Math.sin(ang);
+      return `<span class="msd ${alive.includes(s) ? "" : "off"}" style="left:${cx - 6}px;top:${cy - 6}px"></span>`;
+    }).join("");
+    return `<div class="mn-orb">${orbSVG(v.phase)}<div class="lab">${v.phase === "night" ? "夜" : "昼"}</div></div>
+      <div class="seatring">${ring}</div>
+      <div class="mn-side"><div class="big">${alive.length}<small>/${seats.length}</small></div><div class="sub">存活 · 第 ${v.round ?? "?"} 天</div></div>`;
+  }
+  if (m.game === "liars_dice") {
+    const players = pub.players ?? [];
+    const rows = players.map((p) => `
+      <div class="dice-row ${p.dice_count ? "" : "dead"}"><span class="s">${p.seat}</span>${
+        Array.from({ length: 5 }, (_, i) => `<span class="mini-die">${i < (p.dice_count ?? 0) ? "<i></i>" : ""}</span>`).join("")
+      }</div>`).join("");
+    const bid = pub.current_bid;
+    return `<div class="dice-rows">${rows}</div>
+      <div class="bid-badge"><div class="face ${bid ? "" : "idle"}">${bid ? `叫 ${bid.qty}×${bid.face}` : "开叫权"}</div><div class="sub">${pub.turn ? "轮到 " + pub.turn + " 号" : ""}${pub.wildcard_ones ? " · 1 为瘸" : ""}</div></div>`;
+  }
+  if (m.game === "holdem_lite") {
+    const SC = { s: "♠", h: "♥", d: "♦", c: "♣" };
+    const comm = [0, 1, 2, 3, 4].map((i) => {
+      const c = (pub.community ?? [])[i];
+      if (!c) return `<div class="mini-card empty">?</div>`;
+      const rank = String(c).slice(0, -1), suit = String(c).slice(-1);
+      return `<div class="mini-card ${(suit === "h" || suit === "d") ? "r" : ""}">${rank}<br>${SC[suit] ?? "?"}</div>`;
+    }).join("");
+    const st = pub.starting_chips ?? 1000;
+    const bars = (pub.players ?? []).map((p) => `
+      <div class="chip-bar ${(p.folded || p.eliminated || p.chips === 0) ? "fold" : ""}"><div class="bar"><i style="width:${Math.min(100, (p.chips ?? 0) / st * 100)}%"></i></div><div class="t">${p.seat}·${p.chips ?? 0}</div></div>`).join("");
+    return `<span class="street-badge">${pub.street ?? "preflop"}</span>
+      <div class="pot-big"><div class="v">${pub.total_pot ?? pub.pot ?? 0}</div><div class="l">底池 · 第 ${pub.hand_no ?? "?"} 手</div></div>
+      <div class="comm">${comm}</div>
+      <div class="chip-bars">${bars}</div>`;
+  }
+  /* othello */
+  const board = pub.board ?? [];
+  const cells = Array.from({ length: 64 }, (_, i) => `<span class="cell ${board[i] === 1 ? "b" : board[i] === 2 ? "w" : ""}"></span>`).join("");
+  const c = pub.counts ?? { black: 2, white: 2 };
+  return `<div class="grid8">${cells}</div>
+    <div class="oth-side"><div class="pair"><b class="b">${c.black}</b> : <b class="w">${c.white}</b></div><div class="sub">黑 : 白 · 轮${pub.turn === 1 ? "黑" : "白"}${pub.last_move?.cell != null ? " · " + cellName(pub.last_move.cell) : ""}</div></div>`;
+}
+
+/* ===== r20 · 实时链路：SSE / 事件摄取 / 脉搏带 ===== */
+const HOT_EV = /player_died|player_eliminated|vote_result|game_won|challenge_resolved|last_words|street_dealt|board_full|vote_pk/;
+
+function ingestEvent(mid, e) {
+  if (e.seq != null && e.seq <= (TK.cursors[mid] ?? -1)) return; // 幂等（SSE 与轮询兜底双路）
+  TK.cursors[mid] = e.seq ?? (TK.cursors[mid] ?? -1) + 1;
+  TK.total[mid] = (TK.total[mid] ?? 0) + 1;
+  const txt = evText(e).replace(/^#\d+\s*/, "");
+  const hot = HOT_EV.test(e.type);
+  WALL.now[mid] = txt;
+  (WALL.evs[mid] ??= []).push({ seq: e.seq ?? (TK.cursors[mid]), txt, hot });
+  if (WALL.evs[mid].length > 6) WALL.evs[mid].shift();
+  WALL.ts.push(Date.now());
+  if (WALL.ts.length > 240) WALL.ts.splice(0, 120);
+  pushBand(mid, txt, hot);
+  renderEvflow(mid);
+  scheduleViewRefresh(mid);
+}
+
+function pushBand(mid, txt, hot) {
+  TK.items.unshift({ mid, text: txt, hot });
+  TK.items = TK.items.slice(0, 6);
+  $("#ticker").innerHTML = TK.items.slice(0, 3).map((t, i) =>
+    `<span class="${t.hot ? "hot" : ""}" ${i === 0 ? 'style="animation:freshin .45s ease-out"' : ""} onclick="gotoMatch('${esc(t.mid)}')">${esc(t.text)}</span>`).join("");
+}
+
+function renderEvflow(mid) {
+  const card = document.getElementById("tv-" + mid);
+  if (!card) return;
+  const f = card.querySelector(".evflow");
+  if (f) {
+    const evs = (WALL.evs[mid] ?? []).slice(-3);
+    f.innerHTML = evs.map((x, i) => `<div class="ev-row ${x.hot ? "hot" : ""} ${i === evs.length - 1 ? "fresh" : ""}"><span class="seq">#${x.seq}</span><span class="tx">${esc(x.txt)}</span></div>`).join("")
+      || '<div class="ev-row"><span class="seq">--</span><span class="tx">接入事件流…</span></div>';
+  }
+  const en = card.querySelector('[data-evn="' + mid + '"]');
+  if (en) en.textContent = TK.total[mid] ?? 0;
+}
+
+function scheduleViewRefresh(mid) {
+  clearTimeout(WALL.viewTimer[mid]);
+  WALL.viewTimer[mid] = setTimeout(async () => {
+    try {
+      const v = await api(`/matches/${mid}/view`);
+      const prev = WALL.views[mid];
+      WALL.views[mid] = v;
+      refreshMinistage(mid, prev);
+    } catch { delete WALL.views[mid]; }
+  }, 800);
+}
+
+function refreshMinistage(mid, prev) {
+  const card = document.getElementById("tv-" + mid);
+  const m = WALL.live.find((x) => x.match_id === mid);
+  if (!card || !m) return;
+  const v = WALL.views[mid];
+  if (!v) return;
+  const stage = card.querySelector(".ministage");
+  if (stage) {
+    stage.innerHTML = miniStageInner(m, v);
+    stage.classList.remove("flash"); void stage.offsetWidth; stage.classList.add("flash");
+  }
+  const s = viewStats(m, v);
+  const metaEl = card.querySelector(".tvmeta");
+  if (metaEl) metaEl.innerHTML = s.meta;
+  const foot = card.querySelector(".tvfoot");
+  if (foot) {
+    const keepGo = foot.querySelector(".go");
+    const changed = prev && viewStats(m, prev).stats.some(([lb], i) => String(s.stats[i]?.[1]) !== String(viewStats(m, prev).stats[i]?.[1]));
+    foot.innerHTML = s.stats.map(([lb, val]) => `<span>${lb} <b class="num ${changed ? "changed" : ""}" ${lb === "事件" ? `data-evn="${esc(mid)}"` : ""}>${val}</b></span>`).join("") + (keepGo ? keepGo.outerHTML : '<span class="go">进入围观 →</span>');
+  }
+}
+
+function startWallSSE() {
+  for (const m of WALL.live) {
+    if (WALL.sse[m.match_id]) continue;
+    try {
+      const es = new EventSource(`/api/v1/matches/${m.match_id}/stream`);
+      es.onmessage = (msg) => { try { ingestEvent(m.match_id, JSON.parse(msg.data)); } catch { /* 瞬态 */ } };
+      es.onerror = () => { try { es.close(); } catch {} delete WALL.sse[m.match_id]; }; // 4s 轮询兜底
+      WALL.sse[m.match_id] = es;
+    } catch { /* SSE 不可用时走轮询 */ }
+  }
+  for (const mid of Object.keys(WALL.sse)) {
+    if (!WALL.live.find((x) => x.match_id === mid)) { try { WALL.sse[mid].close(); } catch {} delete WALL.sse[mid]; }
+  }
+  const el = document.getElementById("pb-live");
+  if (el) el.textContent = String(WALL.live.length);
+}
+
+function updatePbStats() {
+  const n = document.getElementById("pb-n");
+  if (n) n.textContent = String(Object.values(TK.total).reduce((a, b) => a + b, 0));
+  const r = document.getElementById("pb-r");
+  if (r) {
+    const cutoff = Date.now() - 60000;
+    while (WALL.ts.length && WALL.ts[0] < cutoff) WALL.ts.shift();
+    const span = WALL.ts.length ? (Date.now() - WALL.ts[0]) : 60000;
+    r.textContent = ((WALL.ts.length / Math.max(span, 5000)) * 60000).toFixed(1);
+  }
+}
+
 function renderWall() {
   const cells = WALL.live.map((m, i) => {
     const v = WALL.views[m.match_id];
-    const now = WALL.now[m.match_id] || "接入中…";
-    let meta = `${(m.seats ?? []).length} 席 · 连接中…`, seatsline = "", stats = "";
+    let meta = `${(m.seats ?? []).length} 席 · 连接中…`, seatsline = "", stats = "", stage = `<div class="ministage"><span style="color:var(--faint);font-size:11px;letter-spacing:.2em">接入中…</span></div>`;
     if (v) {
       const s = viewStats(m, v);
       meta = s.meta;
       seatsline = s.dots.length
         ? `<div class="seatsline"><span class="dlab">${s.dotLab}</span>${s.dots.map((d) => `<span class="sd ${d ? "on" : "off"}"></span>`).join("")}</div>`
         : `<div class="seatsline"><span class="dlab">${s.dotLab}</span></div>`;
-      stats = s.stats.map(([lb, val]) => `<span>${lb} <b class="num" ${lb === "事件" ? `id="tv-evN-${esc(m.match_id)}"` : ""}>${val}</b></span>`).join("");
+      stats = s.stats.map(([lb, val]) => `<span>${lb} <b class="num" ${lb === "事件" ? `data-evn="${esc(m.match_id)}"` : ""}>${val}</b></span>`).join("");
+      stage = `<div class="ministage">${miniStageInner(m, v)}</div>`;
     }
     return `<div class="tv" id="tv-${esc(m.match_id)}" onclick="gotoMatch('${esc(m.match_id)}')">
       <div class="tvhead"><span class="tvno num">CH-${String(i + 1).padStart(2, "0")} · ${esc(m.match_id)}</span>
       <span class="tvname">${esc(GAME_NAMES[m.game] ?? m.game)}</span><span class="livedot">直播中</span></div>
+      ${stage}
       <div class="tvmeta">${meta}</div>
       ${seatsline}
-      <div class="nowline"><span class="tag">now</span><span class="txt">${esc(now)}</span></div>
+      <div class="evflow"></div>
       <div class="tvfoot">${stats}<span class="go">进入围观 →</span></div>
     </div>`;
   });
@@ -642,6 +868,7 @@ function renderWall() {
       <div style="margin-top:12px"><button class="btn" onclick="showView('play')">开一桌</button></div></div>`);
   }
   $("#wall").innerHTML = cells.join("");
+  WALL.live.forEach((m) => renderEvflow(m.match_id));
 }
 
 async function loadWallViews() {
@@ -717,31 +944,17 @@ async function updateTicker(matches) {
     const cur = TK.cursors[m.match_id] ?? -1;
     try {
       const r = await api(`/matches/${m.match_id}/events?since=${cur}`);
-      if (r.events && r.events.length) {
-        TK.cursors[m.match_id] = r.events[r.events.length - 1].seq;
-        TK.total[m.match_id] = (TK.total[m.match_id] ?? 0) + r.events.length;
-        for (const e of r.events) {
-          const txt = evText(e).replace(/^#\d+\s*/, "");
-          WALL.now[m.match_id] = txt;
-          if (["said", "bid_placed", "challenge_resolved", "vote_result", "player_died", "placed", "game_won"].includes(e.type)) {
-            TK.items.unshift({ mid: m.match_id, text: txt });
-          }
-        }
-        const card = document.getElementById("tv-" + m.match_id);
-        if (card) { const t = card.querySelector(".nowline .txt"); if (t) t.textContent = WALL.now[m.match_id]; }
-      }
+      if (r.events && r.events.length) for (const e of r.events) ingestEvent(m.match_id, e); // SSE 断线兜底（ingest 幂等去重）
     } catch { /* 忽略瞬态 */ }
   }
-  live.forEach((m) => {
-    const el = document.getElementById("tv-evN-" + m.match_id);
-    if (el && TK.total[m.match_id]) el.textContent = TK.total[m.match_id];
-  });
   if (TK.items.length === 0) {
     const fin = matches.filter((m) => m.finished && m.headline).slice(0, 3);
-    if (fin.length) TK.items = fin.map((m) => ({ mid: m.match_id, text: `${GAME_NAMES[m.game] ?? m.game}桌 ${m.match_id.slice(2, 7)} 散场 · ${esc(m.headline)}` }));
+    if (fin.length) {
+      TK.items = fin.map((m) => ({ mid: m.match_id, text: `${GAME_NAMES[m.game] ?? m.game}桌 ${m.match_id.slice(2, 7)} 散场 · ${esc(m.headline)}` }));
+      $("#ticker").innerHTML = TK.items.slice(0, 3).map((t) => `<span onclick="gotoMatch('${esc(t.mid)}')">${esc(t.text)}</span>`).join("");
+    }
   }
-  TK.items = TK.items.slice(0, 12);
-  $("#ticker").innerHTML = TK.items.slice(0, 3).map((t) => `<span onclick="gotoMatch('${esc(t.mid)}')">${esc(t.text)}</span>`).join("") || `<span>馆内安静</span>`;
+  updatePbStats();
 }
 
 function renderReport() {
@@ -1187,6 +1400,8 @@ document.addEventListener("keydown", (e) => {
 });
 
 showView("lobby");
+/* r20 测试钩子：E2E 可达（仅测试消费，无业务影响） */
+window.__r20 = { miniStageInner, renderWall, ingestEvent, refreshMinistage, WALL, TK };
 </script>
 </body>
 </html>
