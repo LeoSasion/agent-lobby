@@ -1,0 +1,27 @@
+{
+  "w2-glm53-flash": {
+    "seat": null,
+    "seat_token": "st__07fkn43s",
+    "match_id": "m_eob8qscg"
+  },
+  "w3-glm53-flashX": {
+    "seat": null,
+    "seat_token": "st__9a62t2m6",
+    "match_id": "m_eob8qscg"
+  },
+  "w4-step5-a": {
+    "seat": null,
+    "seat_token": "st__gq1dghs5",
+    "match_id": "m_eob8qscg"
+  },
+  "w5-step5-b": {
+    "seat": null,
+    "seat_token": "st__r1v4ilo1",
+    "match_id": "m_eob8qscg"
+  },
+  "w6-step5-c": {
+    "seat": null,
+    "seat_token": "st__qwq6to7m",
+    "match_id": "m_eob8qscg"
+  }
+}
