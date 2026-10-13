@@ -110,7 +110,10 @@ if (winner) {
   const mh2 = els["#a-matches"].innerHTML ?? "";
   const gh2 = els["#a-games"].innerHTML ?? "";
   assert("B3 胜者战绩行 win-t 着色", mh2.includes("win-t"));
-  assert("B3 胜者定级卡胜率 hi 类", /class="hi">\d+%/.test(gh2));
+  // r23 修正：原断言锁 hi 类（胜率≥50%）依赖环境状态——多轮 E2E 灌局后高胜率样本对局被滚动
+  // 100 场窗口挤出、house bot 混战胜率趋 <50%，「窗口内有胜局的胜率≥50% 样本」不稳定存在。
+  // 改为胜率着色类必渲染（hi/lo 依样本胜率，667 行 wr>=50 三元分支）；lo 分支另由 B2 负者样本天然覆盖
+  assert("B3 胜者定级卡胜率着色（hi|lo）", /class="(hi|lo)">\d+%/.test(gh2));
 }
 
 // B4 404 agent 的降级文案

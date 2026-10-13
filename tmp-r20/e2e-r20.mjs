@@ -76,11 +76,17 @@ assert("骰子桌已开局", !!diceMid);
 /* ════ Phase 1 · 大厅加载：直播墙 + mini 舞台 + 脉搏带骨架 ════ */
 console.log("════ Phase 1 · 大厅加载与直播墙 ════");
 new Function(js)();
-await sleep(3000);
+/* r23 修复：固定 sleep(3000) → 条件轮询等狼人卡昼夜 lab 渲染。60s 上限覆盖两类假失败：
+   ①并发局堆积时初始 view 拉取 >3s ②网关冷启动（恢复数百选手/百局壳）首轮初始化 >20s（实测） */
+await waitCond(() => {
+  syncWallCards();
+  const c = els["#tv-" + wolfMid];
+  return !!c && c.innerHTML.includes("mn-orb") && /[夜昼]/.test(c.innerHTML);
+}, 60000);
 
 /* mock DOM 无解析树：从 #wall innerHTML 提取卡块注册到 els（r16/r17 纪律：从父容器字符串提取） */
 function syncWallCards() {
-  const w = els["#wall"].innerHTML;
+  const w = els["#wall"]?.innerHTML ?? "";
   const re = /<div class="tv[^"]*" id="(tv-[^"]+)"/g;
   const marks = []; let m;
   while ((m = re.exec(w))) marks.push({ id: m[1], start: m.index });
@@ -106,7 +112,9 @@ const wolfCard = els["#tv-" + wolfMid];
 assert("狼人卡已渲染", !!wolfCard && wolfCard.innerHTML.includes("tvhead"));
 assert("狼人 mini 含昼夜 orb", wolfCard.innerHTML.includes("mn-orb"));
 assert("狼人 mini 含席位环", wolfCard.innerHTML.includes("seatring"));
-assert("狼人 mini 夜相显示", (wolfCard.innerHTML.match(/夜/) || []).length >= 1);
+/* r23 修正断言语义：原「夜相」依赖竞态——quickstart 后 E2E 初始化链路快于 bot 夜间推进才见 night
+   （N1 同时相位 bot 交齐即结算入昼，负载/冷启动下必假失败）。orb lab 昼夜二选一即证明相位渲染正确 */
+assert("狼人 mini 昼夜相位渲染", /[夜昼]/.test(wolfCard.innerHTML));
 
 /* 骰子桌 mini 断言 */
 const diceCard = els["#tv-" + diceMid];
@@ -155,7 +163,7 @@ assert("同 seq 重复注入被去重", cnt() === countBefore);
 /* ════ Phase 4 · view 去抖刷新 + flash 脉冲 ════ */
 console.log("════ Phase 4 · view 去抖刷新 ════");
 inject(9003, "said", { seat: 1, text: "r20 e2e 推进验证发言" });
-await waitCond(() => wolfCard._subs[".ministage"]._cls.has("flash"), 6000);
+await waitCond(() => wolfCard._subs[".ministage"]?._cls.has("flash") ?? false, 6000);
 assert("去抖链路跑通（refreshMinistage 执行）", wolfCard._subs[".ministage"]._cls.has("flash"));
 assert("ministage 有真实渲染内容（view 重拉）", wolfCard._subs[".ministage"].innerHTML.includes("mn-orb") || wolfCard._subs[".ministage"].innerHTML.includes("seatring"));
 assert("脉搏带统计总数累加", +els["#pb-n"].textContent >= 3);

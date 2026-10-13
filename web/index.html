@@ -80,6 +80,15 @@ select,textarea,input[type=number],input:not([type]){background:#10150f;color:va
 .ag-game .wl .lo{color:var(--red)}
 .win-t{color:var(--grn)}
 .lose-t{color:var(--red)}
+/* r23 赛事解说席：衬线引语风 + 三档热度（常规※ / 热◈琥珀 / 爆★磷光） */
+.cm{max-height:250px;overflow-y:auto;font-family:var(--serif);font-size:13.5px;line-height:1.8}
+.cm .line{margin-bottom:13px;padding-left:18px;position:relative;color:var(--ink)}
+.cm .line::before{content:"※";position:absolute;left:0;top:1px;font-size:10px;color:var(--grn-dim)}
+.cm .line.hot1{color:var(--amb)}
+.cm .line.hot1::before{content:"◈";color:var(--amb)}
+.cm .line.hot2{color:var(--grn);text-shadow:0 0 12px rgba(69,217,142,.3)}
+.cm .line.hot2::before{content:"★";color:var(--grn)}
+.cm .line .t{font-family:var(--mono);font-size:9px;color:var(--faint);margin-right:7px;letter-spacing:.05em}
 .housetag{font-size:10px;border:1px solid #6b5327;color:var(--amb);padding:0 5px;margin-left:6px}
 .gtabs{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--faint);margin-top:12px}
 .gtabs span{cursor:pointer;white-space:nowrap}
@@ -494,7 +503,9 @@ textarea{width:100%;min-height:44px;resize:vertical}
         <div id="m-replay"></div>
       </div>
       <div class="side colrule-l">
-        <div class="eyebrow">「 事 件 流 」</div>
+        <div class="eyebrow">「 赛 事 解 说 」</div>
+        <div class="cm" id="m-cm">解说席就位——等待开局。</div>
+        <div class="sect eyebrow" style="margin-top:16px">「 事 件 流 」</div>
         <div class="log" id="m-log">尚无事件</div>
       </div>
     </div>
@@ -1069,6 +1080,7 @@ let mSSE = null;
 window.gotoMatch = function (id) {
   if (!id) return;
   M.id = id; MEVS = []; MSINCE = -1; M.replay = false;
+  CM.evs = []; CM.mid = id; renderCommentary(); // r23：解说席随对局重置
   $("#m-id").value = id;
   showView("match");
   clearInterval(mtimer); clearInterval(R.timer); R.playing = false;
@@ -1089,7 +1101,7 @@ function startSSE() {
   mSSE.onmessage = (msg) => {
     try {
       const ev = JSON.parse(msg.data);
-      if (ev.seq > MSINCE) { MEVS.push(ev); MSINCE = ev.seq; }
+      if (ev.seq > MSINCE) { MEVS.push(ev); MSINCE = ev.seq; pushCommentary(ev); renderCommentary(); }
       // r21 修复（r17 遗留竞态）：回放拖动后日志归 loadStep 管——迟到的实时渲染不得覆盖 cur 高亮
       if (!M.replay) renderLog($("#m-log"), MEVS);
       refreshMatchView();
@@ -1109,6 +1121,20 @@ async function refreshMatchView() {
   if (!M.id) return;
   try {
     const v = await api(`/matches/${M.id}/view`);
+    // r23 修复（多轮 E2E 偶发 flake 的共同根源）：恢复壳（重启前在飞的落盘局）view 的 game="restored" 且无
+    // 游戏态——renderGame 读 public.players 崩进 catch，曾被误报为「对局不存在」。专门降级：解说与回放照常。
+    if (v.game === "restored") {
+      $("#m-eyebrow").innerHTML = `「 围 观 」 <span style="letter-spacing:0;color:var(--amb)">● ${esc(M.id)}</span>`;
+      $("#m-ttl").textContent = "恢复壳对局（进程重启前在飞）——事件回放与解说可用，实时视图降级";
+      $("#m-game").innerHTML = "";
+      if (v.phase === "finished") {
+        clearInterval(mtimer);
+        if (mSSE) { mSSE.close(); mSSE = null; }
+        R = { playing: false, pos: MSINCE, seat: "spectator", timer: null, total: MSINCE };
+        renderReplayBar();
+      }
+      return;
+    }
     $("#m-eyebrow").innerHTML = `「 围 观 」 <span style="letter-spacing:0;color:var(--grn)">● ${esc(M.id)}</span>`;
     $("#m-ttl").textContent = `${GAME_NAMES[v.game] ?? v.game} — ${phaseName(v.phase)}（第 ${v.round} 轮）`;
     renderGame(v, $("#m-game"), false);
@@ -1220,6 +1246,97 @@ function renderGuess() {
     `</div>`;
 }
 
+/* r23 赛事解说席：规则化解说引擎——公开事件 → 体育解说腔（观战娱乐化主线，AI 解说的零依赖先行版）。
+   设计原则：
+   ① 信息隔离零成本：只消费观战事件流（eventsFor(spectator) 已过滤私有事件）；
+     引擎对私有事件类型显式返回 null（防御纵深——引擎被误喂私有流也不产生解说）
+   ② 克制不刷屏：常规叫价/普通发言/预翻牌不解说；只解关键节点（高叫价/开盒/遗言/平票 PK/
+     全下/大翻转/超时代行/终局）——原文自展的（says/acted）交给既有面板
+   ③ 三档热度：hot0 常规（※）/ hot1 热（◈ 琥珀）/ hot2 爆点（★ 磷光） */
+const CM = { evs: [], mid: null };
+const CM_PRIVATE = new Set(["night_kill_decided", "checked", "acted", "said", "match_started_private"]);
+function commentate(e) {
+  if (CM_PRIVATE.has(e.type)) return null;
+  const d = e.data ?? {};
+  switch (e.type) {
+    case "match_started":
+      return { hot: 0, t: `解说席就位——${(d.drivers ?? []).length} 位牌手入席，好戏开场` };
+    /* ── 吹牛骰 ── */
+    case "bid_placed":
+      if ((d.qty ?? 0) >= 8) return { hot: 1, t: `${d.seat} 号叫出 ${d.qty} 个 ${d.face} 点——全场倒吸一口凉气，这不是常规叫价` };
+      if ((d.qty ?? 0) >= 5) return { hot: 0, t: `${d.seat} 号把价抬到 ${d.qty} 个 ${d.face} 点，压力给到下家` };
+      return null;
+    case "challenge_resolved":
+      if (d.bid_was_true) return { hot: 1, t: `开盒！桌上真有 ${d.actual_count} 个——${d.challenger} 号质疑失手，输一骰` };
+      return { hot: 2, t: `开盒对质！实际只有 ${d.actual_count} 个——${d.challenged_bid?.seat} 号的 ${d.challenged_bid?.qty} 个 ${d.challenged_bid?.face} 点纯属虚张声势，${d.challenger} 号一击致命` };
+    /* ── 狼人杀 ── */
+    case "phase_started":
+      if (d.phase === "night") return { hot: 0, t: `天黑请闭眼——第 ${d.round} 夜，狼群出动` };
+      if (d.phase === "day_discuss") return { hot: 0, t: `天亮了——第 ${d.round} 天，该对质了` };
+      return null;
+    case "last_words":
+      return { hot: 1, t: `【遗言】${d.seat} 号留下最后的证词——死者的信息量往往最致命` };
+    case "vote_pk":
+      return { hot: 1, t: `平票！${(d.candidates ?? []).join("、")} 号进入 PK 重投——票型收敛的时刻到了` };
+    case "vote_result":
+      if (d.exiled != null) return { hot: 2, t: `计票落定——${d.exiled} 号被放逐出局，身份揭晓` };
+      return { hot: 0, t: `计票平局，无人出局——拖延对谁有利？` };
+    case "player_died":
+      return { hot: 1, t: d.cause === "night" ? `${d.seat} 号昨夜倒下——狼刀又快又准` : `${d.seat} 号出局` };
+    /* ── 德州扑克 ── */
+    case "hand_started":
+      return (d.hand_no ?? 0) === 1 ? { hot: 0, t: `第一手开打——${d.small_blind}/${d.big_blind} 盲注，筹码博弈开始` } : null;
+    case "street_dealt":
+      if (d.street === "flop") return { hot: 0, t: `翻牌圈亮出 ${(d.cards ?? []).join(" ")}——局面初现` };
+      if (d.street === "river") return { hot: 1, t: `河牌 ${((d.cards ?? ["?"])[0])}——最后一张，命运揭晓` };
+      return null;
+    case "action":
+      if (d.action === "allin") return { hot: 2, t: `${d.seat} 号全下！筹码推到桌子中央——要么赢下底池，要么收拾离场` };
+      if (d.action === "raise") return { hot: 0, t: `${d.seat} 号加注——底池升温` };
+      return null;
+    case "showdown":
+      return { hot: 1, t: `摊牌！底牌翻开，牌面见真章` };
+    case "pot_split":
+      return { hot: 1, t: `平分底池——旗鼓相当的收官` };
+    /* ── 黑白棋 ── */
+    case "placed": {
+      const CORNERS = new Set([0, 7, 56, 63]);
+      if ((d.flipped ?? []).length >= 6) return { hot: 1, t: `${d.seat} 号一手翻转 ${(d.flipped ?? []).length} 子——棋盘变了颜色` };
+      if (CORNERS.has(d.cell)) return { hot: 1, t: `${d.seat} 号抢占角位——黑白棋的兵家必争之地` };
+      return null;
+    }
+    case "board_full":
+      return { hot: 2, t: `棋盘落满——终局清点：黑 ${d.black} 对 白 ${d.white}` };
+    /* ── 通用 ── */
+    case "player_eliminated":
+      return { hot: 1, t: `${d.seat} 号淘汰离场——牌桌无情` };
+    case "timed_out":
+      return { hot: 1, t: `${d.seat} 号超时，裁判代行默认动作——时间压力从不留情` };
+    case "round_stalled":
+      return { hot: 1, t: `连续 ${d.consecutive} 轮无淘汰——有人在水，有人在等` };
+    case "game_won":
+      return { hot: 2, t: d.winner === "good" ? `终局哨响——好人阵营赢下这一局！` : d.winner === "wolves" ? `终局哨响——狼人阵营笑到了最后` : `终局哨响——胜负揭晓` };
+    case "match_ended":
+      return { hot: 2, t: `对局定格，比分入册——感谢收看本场对决` };
+    default:
+      return null;
+  }
+}
+function pushCommentary(e) {
+  const c = commentate(e);
+  if (c) CM.evs.push({ seq: e.seq, hot: c.hot, t: c.t, ts: e.ts ?? Date.now() });
+}
+/** 渲染解说历史；uptoSeq 给定 = 回放模式（只渲染 seq<=pos，与 renderLog cur 同步） */
+function renderCommentary(uptoSeq) {
+  const el = $("#m-cm");
+  if (!el) return;
+  const list = uptoSeq === undefined ? CM.evs : CM.evs.filter((x) => x.seq <= uptoSeq);
+  el.innerHTML = list.length
+    ? list.map((x) => `<div class="line${x.hot ? " hot" + x.hot : ""}" data-cseq="${x.seq}"><span class="t">${new Date(x.ts).toTimeString().slice(0, 5)}</span>${esc(x.t)}</div>`).join("")
+    : "解说席就位——等待开局。";
+  el.scrollTop = el.scrollHeight;
+}
+
 /* r17 席位泳道（草案 B 选定）：事件点归属行使人——谁在何时叫价/发言/弃牌/出局；
    公共事件（相位/发牌/计票）走公共轨；红游标线跨泳道指向当前步 */
 function evLane(e) { const d = e.data ?? {}; return Number.isInteger(d.seat) && d.seat >= 1 ? d.seat : 0; }
@@ -1305,7 +1422,14 @@ async function loadStep() {
     const j = await api(`/matches/${M.id}/replay/step?to=${R.pos}&seat=${R.seat}`, headers ? { headers } : undefined);
     if (j.view) renderGame(j.view, $("#m-game"), false);
     $("#m-eyebrow").innerHTML = `「 回 放 」 <span style="letter-spacing:0;color:var(--grn)">● 事件 ${R.pos}/${R.total} · ${R.seat === "spectator" ? "上帝视角" : R.seat + "号视角"}</span>`;
-    if (j.events) { MEVS = j.events; renderLog($("#m-log"), MEVS, R.pos); }
+    if (j.events) {
+      MEVS = j.events;
+      renderLog($("#m-log"), MEVS, R.pos);
+      // r23：回放换源（全量事件替换）——解说历史一次性重建，按当前步截断渲染（与 cur 同步）
+      CM.evs = [];
+      for (const ev of j.events) pushCommentary(ev);
+      renderCommentary(R.pos);
+    }
     const p = $("#rp-pos");
     if (p) p.textContent = `${R.pos}/${R.total}`;
     // r17：泳道 done 进度 + 红游标 + 摘要卡叙事指针随步进联动
@@ -1597,6 +1721,7 @@ showView("lobby");
 /* r20 测试钩子：E2E 可达（仅测试消费，无业务影响） */
 window.__r20 = { miniStageInner, renderWall, ingestEvent, refreshMinistage, WALL, TK };
 window.__r21 = { GZ, guessVoterId, refreshGuess, castGuess, renderGuess, guessBarsHTML, refreshMatchView };
+window.__r23 = { CM, commentate, pushCommentary, renderCommentary, CM_PRIVATE };
 </script>
 </body>
 </html>
