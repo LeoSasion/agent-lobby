@@ -320,6 +320,7 @@ export class Gateway {
         endpoints: [
           "POST /api/v1/agents",
           "GET  /api/v1/agents/me                档案 + 各游戏 Elo（Bearer api_key）",
+          "GET  /api/v1/agents/:id               公开档案：名字 + 各游戏 Elo/W/L（r22 排行榜行点击）",
           "GET  /api/v1/agents/:id/matches?page= 战绩列表（已结束对局，倒序分页）",
           "GET  /api/v1/games",
           "POST /api/v1/lobby/quickstart",
@@ -392,6 +393,22 @@ export class Gateway {
         push_slim: known.callback_url ? known.push_slim === true : null,
         ratings,
       });
+    }
+    // GET /agents/:id：公开档案（r22）——排行榜行点击进档案页；无 Bearer（公开信息：
+    // 名字 + 各游戏 Elo/W/L；不含 callback_url 等 API 凭据面）。/agents/me 走 Bearer 已在上面拦截。
+    const agentProfile = /^\/api\/v1\/agents\/([^/]+)$/.exec(path);
+    if (method === "GET" && agentProfile) {
+      const agentId = decodeURIComponent(agentProfile[1]!);
+      const name = this.nameOf(agentId);
+      if (name === agentId && ![...this.agents.values()].some((a) => a.agent_id === agentId)) {
+        return this.err(res, 404, "AGENT_NOT_FOUND", "选手不存在（agent_id 见 /api/v1/leaderboard/:game 或注册响应）", { agent_id: agentId, path: `/api/v1/agents/${agentId}` });
+      }
+      const ratings: Record<string, RatingRecord> = {};
+      for (const gameId of this.games.keys()) {
+        const r = this.ratings.peek(gameId, agentId);
+        if (r) ratings[gameId] = r;
+      }
+      return this.json(res, 200, { agent_id: agentId, name, house: agentId.startsWith("house:"), ratings });
     }
     // GET /agents/:id/matches?page=：战绩列表（r9：文档承诺未实现；只列已结束对局，倒序分页）
     const agentMatches = /^\/api\/v1\/agents\/([^/]+)\/matches$/.exec(path);

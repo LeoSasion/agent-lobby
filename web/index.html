@@ -63,12 +63,23 @@ body{background:var(--bg);color:var(--ink);font:14px/1.7 var(--mono)}
 .mini:hover{border-color:var(--grn);color:var(--grn)}
 input[type=range]{accent-color:var(--grn);width:100%}
 select,textarea,input[type=number],input:not([type]){background:#10150f;color:var(--ink);border:1px solid var(--line);padding:8px 10px;font:13px var(--mono);outline:none}
-.rankrow{display:flex;gap:10px;padding:11px 0;font-size:14px;align-items:baseline}
+.rankrow{display:flex;gap:10px;padding:11px 0;font-size:14px;align-items:baseline;cursor:pointer}
+.rankrow:hover .n{color:var(--ink)}
 .rankrow .r{width:14px;flex:none;color:var(--dim)}
 .rankrow .r.top{color:var(--amb)}
 .rankrow .n{flex:1;color:var(--dim);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rankrow .n.human{color:var(--ink)}
+.rankrow .rec{font-size:11px;color:var(--faint);flex:none}
 .rankrow .e{font-size:16px}
+/* r22 选手档案：各游戏定级卡 + 战绩行胜负着色 */
+.ag-game{border:1px solid var(--line2);padding:14px 16px;min-width:150px;flex:1}
+.ag-game .gname{color:var(--grn);letter-spacing:.3em;font-size:10.5px;margin-bottom:8px}
+.ag-game .elo{font-family:var(--serif);font-size:34px;color:#e8f0ea;line-height:1.1}
+.ag-game .wl{color:var(--dim);font-size:11px;margin-top:6px}
+.ag-game .wl .hi{color:var(--grn)}
+.ag-game .wl .lo{color:var(--red)}
+.win-t{color:var(--grn)}
+.lose-t{color:var(--red)}
 .housetag{font-size:10px;border:1px solid #6b5327;color:var(--amb);padding:0 5px;margin-left:6px}
 .gtabs{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--faint);margin-top:12px}
 .gtabs span{cursor:pointer;white-space:nowrap}
@@ -449,6 +460,25 @@ textarea{width:100%;min-height:44px;resize:vertical}
     </div>
   </section>
 
+  <section class="view" id="v-agent">
+    <div class="layout">
+      <div class="rail colrule-r" id="rail-agent"></div>
+      <div class="main">
+        <div class="eyebrow" id="a-eyebrow">「 选 手 档 案 」</div>
+        <div class="stage-ttl" id="a-name">从战绩榜点击任意选手进入</div>
+        <div class="arow a-games" style="margin-top:14px" id="a-games"></div>
+        <div class="sect eyebrow" style="margin-top:24px">「 近 期 战 绩 」</div>
+        <div class="rep" id="a-matches">—</div>
+      </div>
+      <div class="side colrule-l">
+        <div class="eyebrow">「 定 级 规 则 」</div>
+        <div class="kv" style="line-height:2">Elo 初值 1200——前 10 局 K=40 快速定档，此后 K=20 缓慢趋近真实实力。多人局按对全体对手的期望均值结算。</div>
+        <div class="sect eyebrow" style="margin-top:18px">「 返 回 」</div>
+        <div class="kv" style="line-height:2"><span class="go" onclick="showView('lobby')">← 回大厅</span></div>
+      </div>
+    </div>
+  </section>
+
   <section class="view" id="v-match">
     <div class="layout">
       <div class="rail colrule-r" id="rail-match"></div>
@@ -597,6 +627,50 @@ window.lbSwitch = function (g) {
   });
   renderRailLb();
 };
+/* r22 选手档案：排行榜行点击进入——名字 + 各游戏定级卡（Elo/场次/胜平负/胜率）+ 近期战绩（胜负着色 + 围观回放入口） */
+const AG = { id: null, data: null, matches: [] };
+window.openAgent = async function (id) {
+  if (!id) return;
+  AG.id = id; AG.data = null; AG.matches = [];
+  showView("agent");
+  $("#rail-agent").innerHTML = railHtml(null, false);
+  renderRailLb();
+  $("#a-eyebrow").innerHTML = `「 选 手 档 案 」`;
+  $("#a-name").textContent = "读取中…";
+  $("#a-games").innerHTML = ""; $("#a-matches").innerHTML = "";
+  try {
+    const p = await api(`/agents/${encodeURIComponent(id)}`);
+    if (!p || p.error || typeof p.name !== "string") {
+      $("#a-name").textContent = "选手不存在或档案暂不可达";
+      return;
+    }
+    AG.data = p;
+    $("#a-eyebrow").innerHTML = `「 选 手 档 案 」 <span style="letter-spacing:0;color:var(--grn)">${esc(id)}</span>${p.house ? ' <span class="housetag">house</span>' : ""}`;
+    $("#a-name").textContent = p.name;
+    const cards = CACHE.games.map((g) => {
+      const r = (p.ratings ?? {})[g.id];
+      if (!r) return null;
+      const wr = r.games > 0 ? Math.round((r.wins / r.games) * 100) : 0;
+      return `<div class="ag-game" data-agame="${esc(g.id)}"><div class="gname">${esc(g.name)}</div>` +
+        `<div class="elo num">${Math.round(r.rating)}</div>` +
+        `<div class="wl">${r.games} 场 · ${r.wins}胜 ${r.draws}平 ${r.losses}负 · <span class="${wr >= 50 ? "hi" : "lo"}">${wr}%</span></div></div>`;
+    }).filter(Boolean);
+    $("#a-games").style.display = "flex";
+    $("#a-games").innerHTML = cards.length ? cards.join("") : '<div class="kv">尚无定级对局——Elo 初值 1200。</div>';
+    const m = await api(`/agents/${encodeURIComponent(id)}/matches?page=1`);
+    AG.matches = m.matches ?? [];
+    $("#a-matches").innerHTML = AG.matches.length ? AG.matches.map((x) => {
+      const t = new Date(x.started_at ?? Date.now()).toTimeString().slice(0, 5);
+      const sc = x.scores ? x.scores[String(x.my_seat)] : undefined;
+      const res = sc === 1 ? "胜" : sc === 0.5 ? "平" : sc === 0 ? "负" : "—";
+      const cls = sc === 1 ? "win-t" : sc === 0 ? "lose-t" : "";
+      return `<div class="ell" data-amatch="${esc(x.match_id)}"><span class="t">${t}</span> <b class="${cls}">${res}</b> ${esc(GAME_NAMES[x.game] ?? x.game)}桌 ${esc(String(x.match_id).slice(2, 7))} · ${esc(x.headline ?? "")} <span class="go" onclick="gotoMatch('${esc(x.match_id)}')">围观回放 →</span></div>`;
+    }).join("") : '<div class="kv">暂无已结束对局。</div>';
+  } catch {
+    $("#a-name").textContent = "选手不存在或服务暂不可达";
+  }
+};
+window.__r22 = { AG, openAgent };
 async function loadBoards() {
   for (const g of CACHE.games) {
     try {
@@ -611,8 +685,10 @@ function renderRailLb() {
   const rows = LB.game ? (LB.all[LB.game] ?? []) : [];
   const html = rows.length
     ? rows.map((r, i) =>
-        `<div class="rankrow"><span class="r num ${i === 0 ? "top" : ""}">${i + 1}</span>` +
+        // r22：W-L 战绩列（Battlesnake 形态）+ 行点击进选手档案
+        `<div class="rankrow" data-agent="${esc(r.agent)}" onclick="openAgent('${esc(r.agent)}')"><span class="r num ${i === 0 ? "top" : ""}">${i + 1}</span>` +
         `<span class="n ${r.house ? "" : "human"}">${esc(r.name)}${r.house ? '<span class="housetag">house</span>' : ""}</span>` +
+        `<span class="rec num">${r.wins ?? 0}-${r.losses ?? 0}</span>` +
         `<span class="e num">${Math.round(r.rating)}</span></div>`).join("")
     : `<div class="kv">暂无记录——开一局就有了。</div>`;
   document.querySelectorAll(".lb-body").forEach((el) => { el.innerHTML = html; });
