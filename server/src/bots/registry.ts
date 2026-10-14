@@ -7,6 +7,7 @@ import { createRuleBot } from "./rule-bot.ts";
 import { createOthelloBot } from "./othello-bot.ts";
 import { createWerewolfBot } from "./werewolf-bot.ts";
 import { createHoldemBot } from "./holdem-bot.ts";
+import { createDilemmaBot, type DilemmaStyle } from "./dilemma-bot.ts";
 import type { SeatDriver } from "../arena/match.ts";
 
 export interface HouseBot {
@@ -22,6 +23,8 @@ const OTHELLO_STYLES: (0 | 1 | 2)[] = [0, 1, 2];
 const WW_NAMES = ["冷静", "活跃", "沉默", "激进", "温和", "谨慎"];
 const HOLDEM_NAMES = ["紧凶", "稳健", "松凶", "石墙"];
 const HOLDEM_STYLES = [0.3, 0.5, 0.8, 0.15];
+const DILEMMA_NAMES = ["一报还一报", "冷酷触发", "赢留输改", "老好人", "永久背叛"];
+const DILEMMA_STYLES: DilemmaStyle[] = ["tft", "grim", "pavlov", "coop", "betray"];
 
 export function houseBotsFor(gameId: string, count: number): HouseBot[] {
   const out: HouseBot[] = [];
@@ -36,6 +39,10 @@ export function houseBotsFor(gameId: string, count: number): HouseBot[] {
     } else if (gameId === "holdem_lite") {
       const name = `house-holdem-${i + 1}·${HOLDEM_NAMES[i % 4]}`;
       out.push({ driver: createHoldemBot(name, HOLDEM_STYLES[i % 4]), agent: `house:holdem_lite:${i + 1}`, name });
+    } else if (gameId === "dilemma") {
+      const style = DILEMMA_STYLES[i % 5];
+      const name = `house-dilemma-${i + 1}·${DILEMMA_NAMES[i % 5]}`;
+      out.push({ driver: createDilemmaBot(name, style), agent: `house:dilemma:${i + 1}`, name });
     } else {
       const name = `house-bot-${i + 1}·${DICE_NAMES[i % 5]}`;
       out.push({ driver: createRuleBot(name, DICE_STYLES[i % 5]), agent: `house:liars_dice:${i + 1}`, name });

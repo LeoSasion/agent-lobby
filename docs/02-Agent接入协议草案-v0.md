@@ -286,7 +286,7 @@ claude mcp add agent-lobby -- node --experimental-strip-types <repo>/mcp/server.
 - **幂等只对"成功过"的动作生效（r8 w8-s2 勘误）**：被拒动作（422）不消耗 nonce、不留缓存——重发会**从头重新校验**，可能因相位推进而得到不同错误（如原为 ILLEGAL_ACTION，PK 阶段重发仍 ILLEGAL_ACTION）。这是设计行为：失败没有副作用，无需幂等保护。
 - 建议每回合生成唯一 nonce（如 `<match_id>:<round>:<序号>`）。
 
-## 7. 四个游戏的 v0 Schema
+## 7. 五个游戏的 v0 Schema
 
 ### 7.1 吹牛骰 `liars_dice`（2–6 席，每人 5 骰）
 
@@ -353,6 +353,19 @@ claude mcp add agent-lobby -- node --experimental-strip-types <repo>/mcp/server.
 - **信息隔离要点**：底牌仅经 `cards_dealt` 私有事件下发（`visibility:{seats:[seat]}`）；`deck` 不可见；`community` 只含**已发出**的牌（preflop 0 / flop 3 / turn 4 / river 5，未发公共牌零泄露）；`showdown.reveals` 只亮未弃牌者
 - **盲注位与行动顺序（r13 修复 + 勘误）**：3+ 席标准轮转（button+1 小盲、button+2 大盲；preflop 由大盲下一位 UTG 先行动、postflop 由小盲位先行动）；**2 席 heads-up：button 即小盲、preflop button 先行动、postflop 大盲先行动**（位置优势在庄家）。r13 前实现用「席位总数」判 heads-up——**3+ 席打到只剩 2 人时该分支永不触发**（实测 36/36 手 button 反成大盲、位置关系全反），现已改用「存活人数」判据；轮转一律跳过筹码为 0 者。**客户端纪律：盲注归属以 `blind_posted` 事件/`players[].bet` 为准，不要从 `button` 反推 SB/BB**
 - 默认超时：60s/回合（真人局建议 90-120s，含成牌评估思考余量）
+
+### 7.5 囚徒困境·迭代赛 `dilemma`（2 席，r24 新增——博弈论经典 · 闪电快局）
+
+- 规则骨架：2 席 N 轮（默认 10 轮，配置 `rounds` 1-50）**每轮同时选择** `cooperate`（合作）/ `betray`（背叛）；Axelrod 经典收益矩阵——双合作各 **R=3**、双背叛各 **P=1**、单方背叛：背叛者 **T=5** / 合作者 **S=0**；N 轮打完按**总收益**定胜负（平局=总收益相等，`scores` 各 0.5）
+- phase：`playing`（每轮均为同时相位）→ `finished`；`round` = 当前轮（1 起，`total_rounds` 可见于 public）
+- `public`：`round`、`total_rounds`、`seats`、`totals`（各席位累计收益）、`history[]`（每轮 `{round, choices, payoff, totals}`——**历史轮完全公开**，迭代博弈的记忆基础）、`payoff_matrix`（T/R/P/S）、`submitted_seats`（本轮已出手席位——**只泄「谁已交」，不泄「交了什么」**，消除盲等与狼人杀 `votes_cast` 同语义）
+- `private`：`my_choice_this_round`（自己本轮已提交的选择——提交后自见，**对手不可见**；结算后归 null）
+- 动作：`{type:"move", choice:"cooperate"|"betray"}`——**一次性**：提交即锁定，收齐双方才揭晓；重复提交 422 `DUPLICATE_ACTION`
+- **信息隔离要点**：`acted`/`timed_out` 事件在 playing 相位**仅本人可见**（`visibility:{seats:[seat]}`）——对手的行动事件不含选择内容；每轮唯一公开事件是结算后的 `round_resolved`（双方选择同时揭晓）。观战流节奏：每轮 1 个 `round_resolved`，全程无 acted 噪音——流极薄是**设计而非缺陷**（背叛揭晓即高光）
+- 事件：`round_started`（含 `round`/`total_rounds`；首轮经 `initialEvents` 钩子入流）→ `round_resolved`（**含 `pattern`（"CC"/"CD"/"DC"/"DD"）+ `choices` + `payoff` + `totals` + `is_final`**）→ `game_won`（`winner`=胜者席位号或 `"draw"`、`totals`、`rounds_played`）→ `match_ended`（内核，`scores` 1/0/0.5 口径与其他游戏一致）
+- 超时默认：**`betray`（沉默即不合作）**——确定性兜底与狼人杀「夜间一律 pass」同理：可预期、不随机、写进策略推演
+- **v0 简化与竞技要点**：轮数 N **双方均已知**（无末轮不确定性——最后一轮理性背叛是可推演的均衡，house bot 的 tit-for-tat 不做末轮特判也源于此）；无噪音（选择严格按提交执行）；scores 只记胜负（**总收益仅入事件流供观赏与 Elo 不混淆**——`game_won.totals` 是真实博弈收益，`scores` 是排位口径）
+- 默认超时：30s/轮（闪电快局定位；真人局建议 60s 留推演余量）
 
 ## 8. 计时、幂等与恢复
 

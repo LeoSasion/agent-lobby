@@ -346,6 +346,35 @@ select,textarea,input[type=number],input:not([type]){background:#10150f;color:va
 .goban .disc.w{background:radial-gradient(circle at 38% 32%,#f2f5f0,#b9c4bd 70%);border:1px solid #8f9c95}
 .goban .cellc.last::after{content:"";position:absolute;inset:0;border:1.5px solid var(--amb);pointer-events:none}
 .oth-stage{display:flex;gap:26px;align-items:flex-start;justify-content:center;flex-wrap:wrap}
+/* r24 囚徒困境·对决长桌：双席对峙 + 收益矩阵 + 轮次轨迹带 */
+.dm-stage{padding:6px 0}
+.dm-duel{display:flex;align-items:stretch;justify-content:center;gap:22px}
+.dm-seat{flex:1;max-width:300px;border:1px solid var(--line);padding:16px 20px;text-align:center}
+.dm-seat .nm{color:var(--dim);font-size:11px;letter-spacing:.2em;margin-bottom:6px}
+.dm-seat .score{font-family:var(--serif);font-size:46px;color:#e8f0ea;line-height:1.05}
+.dm-seat .st{margin-top:8px;font-size:11px;color:var(--dim)}
+.dm-vs{align-self:center;font-family:var(--serif);color:var(--amb);font-size:13px;letter-spacing:.4em;text-align:center;line-height:1.9}
+.dm-matrix{display:grid;grid-template-columns:88px 1fr 1fr;max-width:420px;margin:14px auto;border:1px solid var(--line)}
+.dm-matrix .mx-h{font-size:10.5px;color:var(--dim);padding:8px 10px;border-bottom:1px solid var(--line);letter-spacing:.15em;display:flex;align-items:center;justify-content:center}
+.dm-matrix .mx{display:flex;justify-content:center;gap:14px;padding:12px 10px;border-bottom:1px solid var(--line);border-left:1px solid var(--line)}
+.dm-matrix .mx b{font-family:var(--serif);font-size:20px;color:var(--dim)}
+.dm-matrix .mx.hot{background:rgba(217,177,63,.07)}
+.dm-matrix .mx.hot b{color:var(--amb)}
+.dm-track-wrap{max-width:640px;margin:16px auto 0}
+.dm-track{display:flex;gap:10px;overflow-x:auto;padding:10px 2px 12px;border-top:1px solid var(--line);margin-top:8px}
+.dm-track.empty{color:var(--dim);font-size:11.5px;border-top:none;justify-content:center;padding:16px 0}
+.dm-r{min-width:56px;text-align:center}
+.dm-r .rk{font-size:10px;color:var(--dim)}
+.dm-r .rb{display:flex;gap:4px;justify-content:center;margin:4px 0}
+.dm-r .rp{font-size:10.5px;color:var(--dim)}
+.dm-b{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;border:1px solid var(--line2);font-size:10px;color:var(--dim)}
+.dm-b.cp{border-color:var(--grn);color:var(--grn);box-shadow:0 0 6px rgba(69,217,142,.25)}
+.dm-b.bt{border-color:var(--amb);color:var(--amb);background:rgba(217,177,63,.12)}
+.dm-mini{display:inline-flex;width:13px;height:13px;margin:1px;border-radius:2px;border:1px solid var(--line2);font-size:8px;line-height:12px;text-align:center;color:var(--dim)}
+.dm-mini.cp{border-color:var(--grn);color:var(--grn)}
+.dm-mini.bt{border-color:var(--amb);color:var(--amb);background:rgba(217,177,63,.2)}
+.dm-arena{display:flex;gap:4px;padding:4px 2px;margin:8px 0}
+.dm-col{display:flex;flex-wrap:wrap;max-width:106px}
 .oth-side{min-width:190px}
 .oth-side .h{font-family:var(--serif);font-size:15px;letter-spacing:.3em;margin-bottom:12px;color:#dfe8e2}
 .cnt{display:flex;align-items:center;gap:12px;margin:10px 0}
@@ -544,9 +573,9 @@ window.$ = $;
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 const api = async (p, o) => (await fetch("/api/v1" + p, o)).json();
 const GAME_NAMES = {};
-const GAME_DESC = { liars_dice:"欺骗博弈 · 隐藏信息", othello:"完全信息 · 经典棋类", werewolf_lite:"社交推理 · 旗舰", holdem_lite:"筹码博弈 · 经典牌类" };
-const SEATS_DEFAULT = { werewolf_lite:6, othello:2, liars_dice:3, holdem_lite:3 };
-const PHASES = { bid:"叫价", night:"夜晚", day_discuss:"白天·讨论", day_vote:"白天·投票", move:"对弈", preflop:"翻牌前", flop:"翻牌圈", turn:"转牌圈", river:"河牌圈", finished:"已结束" };
+const GAME_DESC = { liars_dice:"欺骗博弈 · 隐藏信息", othello:"完全信息 · 经典棋类", werewolf_lite:"社交推理 · 旗舰", holdem_lite:"筹码博弈 · 经典牌类", dilemma:"博弈论经典 · 闪电快局" };
+const SEATS_DEFAULT = { werewolf_lite:6, othello:2, liars_dice:3, holdem_lite:3, dilemma:2 };
+const PHASES = { bid:"叫价", night:"夜晚", day_discuss:"白天·讨论", day_vote:"白天·投票", move:"对弈", preflop:"翻牌前", flop:"翻牌圈", turn:"转牌圈", river:"河牌圈", playing:"回合对决", finished:"已结束" };
 const phaseName = (p) => PHASES[p] ?? p;
 
 const LB = { game:null, all:{} };
@@ -591,7 +620,18 @@ function evText(e) {
     case "night_kill_decided": return `【狼队】刀口 → ${d.target != null ? d.target + "号" : "空刀"}（私有事件，仅狼可见）`;
     case "checked": return `【预言家】查验 ${d.target}号：${d.is_wolf ? "狼人" : "好人"}（私有事件，仅预言家可见）`;
     case "timed_out": return `${d.seat}号超时 → 执行默认动作`;
-    case "game_won": return `游戏结束：${d.winner === "good" ? "好人阵营" : "狼人阵营"}胜`;
+    case "round_resolved": {
+      const ch = d.choices ?? {};
+      const lab = (s) => ch[s] === "cooperate" ? "合作" : "背叛";
+      const seats = Object.keys(ch);
+      return `第 ${d.round} 轮揭晓：${seats.map((s) => `${s}号${lab(s)}`).join(" · ")}（${seats.map((s) => (d.payoff ?? {})[s] ?? 0).join(" : ")} 分）`;
+    }
+    case "game_won": {
+      if (d.winner === "good" || d.winner === "wolves") return `游戏结束：${d.winner === "good" ? "好人阵营" : "狼人阵营"}胜`;
+      if (d.winner === "draw") return `终局平局：总收益 ${esc(JSON.stringify(d.totals ?? {}))}`;
+      if (typeof d.winner === "number") return `游戏结束：${d.winner} 号胜（总收益 ${esc(JSON.stringify(d.totals ?? {}))}）`;
+      return `游戏结束：${esc(String(d.winner))}`;
+    }
     case "match_ended": return `终局分数 ${esc(JSON.stringify(d.scores))}`;
     default: return `${e.type} ${esc(JSON.stringify(d)).slice(0, 70)}`;
   }
@@ -777,6 +817,13 @@ function viewStats(m, v) {
       dotLab: "筹码", dots: players.map((p) => p.chips > 0),
       stats: [["手", v.round], ["底池", pub.pot ?? "?"], ["事件", "…"]] };
   }
+  if (m.game === "dilemma") {
+    const totals = pub.totals ?? {};
+    const seats = pub.seats ?? [];
+    return { meta: `<b>2 席</b> · 第 ${v.round}/${pub.total_rounds ?? "?"} 轮`,
+      dotLab: "出手", dots: seats.map((s) => (pub.submitted_seats ?? []).includes(s) || pub.history?.length >= v.round),
+      stats: [[`总收益`, seats.map((s) => totals[s] ?? 0).join(" : ")], ["事件", "…"]] };
+  }
   const c = pub.counts ?? { black: "?", white: "?" };
   return { meta: `<b>2 席</b> · 第 ${Math.ceil(v.round)} 手`, dotLab: `黑 ${c.black} : ${c.white} 白`, dots: [],
     stats: [["黑", c.black], ["白", c.white], ["事件", "…"]] };
@@ -830,6 +877,21 @@ function miniStageInner(m, v) {
       <div class="comm">${comm}</div>
       <div class="chip-bars">${bars}</div>`;
   }
+  if (m.game === "dilemma") {
+    /* 微缩对决台：双列轮次带（C 合=磷光 / D 背叛=琥珀红）+ 总收益对比 */
+    const seats = pub.seats ?? [];
+    const hist = pub.history ?? [];
+    const mark = (s, i) => {
+      const c = hist[i]?.choices?.[String(s)];
+      return `<span class="dm-mini ${c === "betray" ? "bt" : c === "cooperate" ? "cp" : ""}">${c === "betray" ? "D" : c === "cooperate" ? "C" : "·"}</span>`;
+    };
+    const cols = seats.map((s) => `<div class="dm-col">${hist.map((_, i) => mark(s, i)).join("")}</div>`).join("");
+    const totals = pub.totals ?? {};
+    const t = seats.map((s) => totals[s] ?? 0);
+    return `<span class="street-badge">${pub.phase === "finished" ? "终局" : `第 ${pub.round}/${pub.total_rounds ?? "?"} 轮`}</span>
+      <div class="dm-arena">${cols}</div>
+      <div class="oth-side"><div class="pair"><b class="cp">${t[0] ?? 0}</b> : <b class="bt">${t[1] ?? 0}</b></div><div class="sub">总收益 · C 合 / D 叛</div></div>`;
+  }
   /* othello */
   const board = pub.board ?? [];
   const cells = Array.from({ length: 64 }, (_, i) => `<span class="cell ${board[i] === 1 ? "b" : board[i] === 2 ? "w" : ""}"></span>`).join("");
@@ -839,7 +901,7 @@ function miniStageInner(m, v) {
 }
 
 /* ===== r20 · 实时链路：SSE / 事件摄取 / 脉搏带 ===== */
-const HOT_EV = /player_died|player_eliminated|vote_result|game_won|challenge_resolved|last_words|street_dealt|board_full|vote_pk/;
+const HOT_EV = /player_died|player_eliminated|vote_result|game_won|challenge_resolved|last_words|street_dealt|board_full|vote_pk|round_resolved/;
 
 function ingestEvent(mid, e) {
   if (e.seq != null && e.seq <= (TK.cursors[mid] ?? -1)) return; // 幂等（SSE 与轮询兜底双路）
@@ -1307,6 +1369,30 @@ function commentate(e) {
     }
     case "board_full":
       return { hot: 2, t: `棋盘落满——终局清点：黑 ${d.black} 对 白 ${d.white}` };
+    /* ── 囚徒困境（r24）── */
+    case "round_resolved": {
+      const ch = d.choices ?? {};
+      const seats = Object.keys(ch).map(Number);
+      const betrayers = seats.filter((s) => ch[String(s)] === "betray");
+      const pat = d.pattern ?? "";
+      const base = pat === "CC" ? `第 ${d.round} 轮：双方继续合作，各得 3 分——信任在生长`
+        : pat === "DD" ? `第 ${d.round} 轮：相互背叛，各得 1 分——双输的默契`
+        : `第 ${d.round} 轮：${betrayers[0]} 号突然背叛！独吞 5 分，${seats.find((s) => s !== betrayers[0])} 号被摆了一道`;
+      if (d.is_final) return { hot: 2, t: `末轮揭晓——${pat === "CD" || pat === "DC" ? "最后一刀落下，" : ""}总账即将清算` };
+      if (pat === "CD" || pat === "DC") return { hot: 2, t: base };
+      if (pat === "DD") return { hot: 1, t: base };
+      return { hot: 0, t: base };
+    }
+    case "game_won": {
+      /* r24 合并版：dilemma（winner=席位号/draw）与狼人杀（good/wolves）共用一 case，前者在前 */
+      if (typeof d.winner === "number") {
+        const t = d.totals ?? {};
+        const vals = Object.values(t);
+        return { hot: 2, t: `终局哨响——${d.winner} 号以 ${vals[0]}:${vals[1]} 的总收益带走胜利` };
+      }
+      if (d.winner === "draw") return { hot: 1, t: `终局平局——总收益咬死，谁也没能多拿一分` };
+      return { hot: 2, t: d.winner === "good" ? `终局哨响——好人阵营赢下这一局！` : d.winner === "wolves" ? `终局哨响——狼人阵营笑到了最后` : `终局哨响——胜负揭晓` };
+    }
     /* ── 通用 ── */
     case "player_eliminated":
       return { hot: 1, t: `${d.seat} 号淘汰离场——牌桌无情` };
@@ -1314,8 +1400,6 @@ function commentate(e) {
       return { hot: 1, t: `${d.seat} 号超时，裁判代行默认动作——时间压力从不留情` };
     case "round_stalled":
       return { hot: 1, t: `连续 ${d.consecutive} 轮无淘汰——有人在水，有人在等` };
-    case "game_won":
-      return { hot: 2, t: d.winner === "good" ? `终局哨响——好人阵营赢下这一局！` : d.winner === "wolves" ? `终局哨响——狼人阵营笑到了最后` : `终局哨响——胜负揭晓` };
     case "match_ended":
       return { hot: 2, t: `对局定格，比分入册——感谢收看本场对决` };
     default:
@@ -1502,6 +1586,7 @@ function renderGame(v, box, interactive) {
   if (v.game === "othello") renderOthello(v, box, interactive);
   else if (v.game === "werewolf_lite") renderWolf(v, box, interactive);
   else if (v.game === "holdem_lite") renderHoldem(v, box, interactive);
+  else if (v.game === "dilemma") renderDilemma(v, box, interactive);
   else renderDice(v, box, interactive);
 }
 
@@ -1519,6 +1604,66 @@ function cardHTML(c) {
   if (!c) return `<span class="pcard empty"><span class="pip">?</span></span>`;
   const rank = c.slice(0, c.length - 1), suit = c.slice(-1), red = suit === "h" || suit === "d";
   return `<span class="pcard ${red ? "red" : ""}" data-c="${rank}${SUITS[suit]}"><span class="pip">${SUITS[suit]}</span></span>`;
+}
+
+function renderDilemma(v, box, interactive) {
+  /* r24 对决长桌：双席对峙 + 收益矩阵（上轮琥珀高亮）+ 轮次轨迹带（合作磷光/背叛琥珀红） */
+  const p = v.public;
+  const names = seatNames(interactive ? PEVS : MEVS);
+  const seats = p.seats ?? [];
+  const hist = p.history ?? [];
+  const totals = p.totals ?? {};
+  const pm = p.payoff_matrix ?? { T: 5, R: 3, P: 1, S: 0 };
+  const last = hist[hist.length - 1] ?? null;
+  const sub = (p.submitted_seats ?? []);
+  const myChoice = v.private && v.private.my_choice_this_round ? v.private.my_choice_this_round : null;
+
+  const duel = seats.map((s) => {
+    const done = sub.includes(s) || (hist.length >= v.round && v.phase === "finished");
+    return `<div class="dm-seat">
+      <div class="nm"><b>${s}号</b> ${esc(names[s] ?? "")}</div>
+      <div class="score num">${totals[s] ?? 0}</div>
+      <div class="st">${v.phase === "finished" ? "终局" : done ? '<span style="color:var(--grn)">● 已出手</span>' : '<span style="color:var(--dim)">○ 思考中</span>'}</div>
+    </div>`;
+  }).join(`<div class="dm-vs">对<br>决</div>`);
+
+  /* 收益矩阵：行=1号选择，列=2号选择；上轮格子高亮 */
+  const cell = (r1, r2, val) => {
+    const hot = last && (last.choices[String(seats[0])] ?? "") === r1 && (last.choices[String(seats[1])] ?? "") === r2;
+    return `<div class="mx ${hot ? "hot" : ""}"><b>${val[0]}</b><i>${val[1]}</i></div>`;
+  };
+  const matrix = `<div class="dm-matrix">
+    <div class="mx-h"></div><div class="mx-h">2号 合作</div><div class="mx-h">2号 背叛</div>
+    <div class="mx-h">1号 合作</div>${cell("cooperate", "cooperate", [pm.R, pm.R])}${cell("cooperate", "betray", [pm.S, pm.T])}
+    <div class="mx-h">1号 背叛</div>${cell("betray", "cooperate", [pm.T, pm.S])}${cell("betray", "betray", [pm.P, pm.P])}
+  </div>`;
+
+  /* 轮次轨迹带：每轮徽章对（C 磷光 / D 琥珀红）+ 当轮得分 */
+  const track = hist.length
+    ? `<div class="dm-track">${hist.map((h) => {
+        const c1 = h.choices[String(seats[0])] ?? "", c2 = h.choices[String(seats[1])] ?? "";
+        const pa = (h.payoff ?? {})[String(seats[0])] ?? 0, pb = (h.payoff ?? {})[String(seats[1])] ?? 0;
+        return `<div class="dm-r ${h.round === hist.length && last === h ? "cur-r" : ""}">
+          <div class="rk num">${h.round}</div>
+          <div class="rb"><span class="dm-b ${c1 === "betray" ? "bt" : "cp"}">${c1 === "betray" ? "叛" : "合"}</span><span class="dm-b ${c2 === "betray" ? "bt" : "cp"}">${c2 === "betray" ? "叛" : "合"}</span></div>
+          <div class="rp num">${pa}:${pb}</div>
+        </div>`;
+      }).join("")}</div>`
+    : `<div class="dm-track empty">第一轮尚未揭晓——双方同时在暗处做出选择</div>`;
+
+  let html = `<div class="dm-stage">
+    <div class="dm-duel">${duel}</div>
+    <div class="kv" style="text-align:center;color:var(--dim);font-size:11px;margin:10px 0">第 ${v.round}/${p.total_rounds ?? "?"} 轮 · ${phaseName(v.phase)} · T${pm.T}/R${pm.R}/P${pm.P}/S${pm.S}</div>
+    ${matrix}
+    <div class="dm-track-wrap"><div class="eyebrow" style="letter-spacing:.3em;font-size:9px;color:var(--dim)">轮 次 轨 迹</div>${track}</div>
+  </div>`;
+  if (myChoice) html += `<div class="priv-row"><span class="lab">本轮已提交</span><span class="dm-b ${myChoice === "betray" ? "bt" : "cp"}" style="font-size:12px">${myChoice === "betray" ? "叛 叛" : "合 作"}</span><span class="kv" style="color:var(--dim)">等待对手与结算揭晓</span></div>`;
+  if (interactive) {
+    box.innerHTML = html + `<div class="act-area"></div>`;
+    renderActions(v, box.querySelector(".act-area"));
+  } else {
+    box.innerHTML = html;
+  }
 }
 
 function renderHoldem(v, box, interactive) {
@@ -1693,6 +1838,13 @@ function renderActions(v, box) {
     const rm = raise ? String(raise.schema.to).match(/(\d+)-(\d+)/) : null;
     if (rm) html += `<div class="arow"><span class="dlab">加注至</span><input id="raise-to" type="number" min="${rm[1]}" max="${rm[2]}" value="${rm[2]}" style="width:92px">` +
       ` <button class="btn" onclick="act({type:'raise',to:+$('#raise-to').value})">加注</button><span class="dlab">（本街总投入 ${rm[1]}-${rm[2]}）</span></div>`;
+  } else if (v.game === "dilemma") {
+    const move = v.legal_actions.find((a) => a.type === "move");
+    if (move) html += `<div class="arow"><span class="dlab">本轮抉择</span>` +
+      `<button class="btn" style="border-color:var(--grn)" onclick="act({type:'move',choice:'cooperate'})">合 作</button>` +
+      `<button class="btn ghost" style="border-color:var(--amb);color:var(--amb)" onclick="act({type:'move',choice:'betray'})">背 叛</button>` +
+      `<span class="dlab">合作 3 分起 · 背叛最多 5 分——但对方也在想同一件事</span></div>`;
+    if (v.private && v.private.my_choice_this_round) html += `<div class="kv" style="color:var(--dim)">已提交（${v.private.my_choice_this_round === "betray" ? "背叛" : "合作"}），等待对手与结算</div>`;
   }
   box.innerHTML = html || `<div class="kv">…</div>`;
 }
@@ -1722,6 +1874,8 @@ showView("lobby");
 window.__r20 = { miniStageInner, renderWall, ingestEvent, refreshMinistage, WALL, TK };
 window.__r21 = { GZ, guessVoterId, refreshGuess, castGuess, renderGuess, guessBarsHTML, refreshMatchView };
 window.__r23 = { CM, commentate, pushCommentary, renderCommentary, CM_PRIVATE };
+/* r24 测试钩子：囚徒困境渲染器/迷你舞台/统计/事件文本/常量 */
+window.__r24 = { renderDilemma, miniStageInner, viewStats, evText, GAME_DESC, SEATS_DEFAULT, PHASES };
 </script>
 </body>
 </html>

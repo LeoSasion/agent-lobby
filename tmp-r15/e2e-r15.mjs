@@ -61,7 +61,9 @@ new Function(js)();
 await sleep(2500);
 assert("直播墙渲染", (els["#wall"]?.innerHTML ?? "").includes('class="tv'));
 assert("赛程表渲染", (els["#sched"]?.innerHTML ?? "").includes("srow"));
-assert("分赛区 4 游戏卡", ((els["#zones"]?.innerHTML ?? "").match(/class="gbox"/g) || []).length === 4);
+// r24：游戏卡数随注册游戏数动态断言（原硬编码 4——dilemma 入注册后假失败）
+const CACHE_GAMES_N = await fetch(`${BASE}/api/v1/games`).then((r) => r.json()).then((g) => g.games.length).catch(() => 5);
+assert(`分赛区游戏卡（注册游戏数 ${CACHE_GAMES_N}）`, ((els["#zones"]?.innerHTML ?? "").match(/class="gbox"/g) || []).length === CACHE_GAMES_N);
 
 console.log("════ Phase 1 · 自己的局：全程对局 + 终局复盘入口 ════");
 els["#p-game"].value = "liars_dice";
