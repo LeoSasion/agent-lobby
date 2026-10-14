@@ -89,6 +89,8 @@ select,textarea,input[type=number],input:not([type]){background:#10150f;color:va
 .cm .line.hot2{color:var(--grn);text-shadow:0 0 12px rgba(69,217,142,.3)}
 .cm .line.hot2::before{content:"★";color:var(--grn)}
 .cm .line .t{font-family:var(--mono);font-size:9px;color:var(--faint);margin-right:7px;letter-spacing:.05em}
+/* r26-d LLM 金句行：等宽小标「AI」缀于句首右侧——金句本体沿用热度着色 */
+.cm .line.llm::after{content:"AI";font-family:var(--mono);font-size:8px;color:var(--amb);margin-left:7px;letter-spacing:.15em;vertical-align:super}
 .housetag{font-size:10px;border:1px solid #6b5327;color:var(--amb);padding:0 5px;margin-left:6px}
 .gtabs{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--faint);margin-top:12px}
 .gtabs span{cursor:pointer;white-space:nowrap}
@@ -183,6 +185,12 @@ select,textarea,input[type=number],input:not([type]){background:#10150f;color:va
 .tv .ev-row.hot .tx{color:var(--grn)}
 .tv .ev-row .tx{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tv .ev-row.fresh{color:var(--ink);animation:freshin .45s ease-out}
+/* r26-c TV 卡解说位：最近一条高光解说词——磷光绿正文 + 热度星标（hot2 琥珀） */
+.tv .tvcm{border-top:1px solid var(--line);margin-top:6px;padding-top:7px;display:flex;gap:7px;align-items:baseline;font-size:11px;color:var(--grn);min-height:18px}
+.tv .tvcm .star{font-size:10px;flex:none;color:var(--grn)}
+.tv .tvcm .star.h2{color:var(--amb)}
+.tv .tvcm .tx{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tv .tvcm .tx.dim{color:var(--faint);letter-spacing:.15em}
 @keyframes freshin{from{opacity:0;transform:translateY(-6px)}}
 .tvfoot b.changed{animation:numPulse .9s ease-out}
 @keyframes numPulse{0%{color:#fff;text-shadow:0 0 10px rgba(69,217,142,.9)}}
@@ -584,7 +592,7 @@ const M = { id:null, replay:false }; let MEVS = [], MSINCE = -1, mtimer = null;
 const P = { id:null, token:null }; let PEVS = [], PSINCE = -1, ptimer = null;
 let R = { playing:false, pos:0, seat:"spectator", timer:null, total:0 };
 const TK = { items:[], cursors:{}, total:{} };
-const WALL = { live:[], views:{}, now:{}, sse:{}, evs:{}, ts:[], viewTimer:{} };
+const WALL = { live:[], views:{}, now:{}, sse:{}, evs:{}, ts:[], viewTimer:{}, cm:{} };
 const ZONE = { sel:null };
 let lobbyTimer = null, boardsTimer = null;
 const CACHE = { games:[], matches:[] };
@@ -622,6 +630,7 @@ function evText(e) {
     case "vote_result": return `计票 ${esc(JSON.stringify(d.tally))} → ${d.exiled != null ? d.exiled + "号被放逐" : "无人出局"}`;
     case "player_died": return `${d.seat}号出局（${d.cause === "night" ? "夜间遇害" : "投票放逐"}）`;
     case "night_kill_decided": return `【狼队】刀口 → ${d.target != null ? d.target + "号" : "空刀"}（私有事件，仅狼可见）`;
+    case "wolf_said": return `【狼队密语】${d.seat}号：${esc(d.text)}（私有事件，仅狼可见）`;
     case "checked": return `【预言家】查验 ${d.target}号：${d.is_wolf ? "狼人" : "好人"}（私有事件，仅预言家可见）`;
     case "timed_out": return `${d.seat}号超时 → 执行默认动作`;
     case "round_resolved": {
@@ -931,6 +940,9 @@ function ingestEvent(mid, e) {
   WALL.now[mid] = txt;
   (WALL.evs[mid] ??= []).push({ seq: e.seq ?? (TK.cursors[mid]), txt, hot });
   if (WALL.evs[mid].length > 6) WALL.evs[mid].shift();
+  // r26-c TV 卡解说位：高光事件（hot≥1）经规则解说引擎采词——直播卡常驻最近一条解说金句
+  const cm = commentate(e);
+  if (cm && cm.hot >= 1) WALL.cm[mid] = { txt: cm.t, hot: cm.hot };
   WALL.ts.push(Date.now());
   if (WALL.ts.length > 240) WALL.ts.splice(0, 120);
   pushBand(mid, txt, hot);
@@ -953,6 +965,14 @@ function renderEvflow(mid) {
     const evs = (WALL.evs[mid] ?? []).slice(-3);
     f.innerHTML = evs.map((x, i) => `<div class="ev-row ${x.hot ? "hot" : ""} ${i === evs.length - 1 ? "fresh" : ""}"><span class="seq">#${x.seq}</span><span class="tx">${esc(x.txt)}</span></div>`).join("")
       || '<div class="ev-row"><span class="seq">--</span><span class="tx">接入事件流…</span></div>';
+  }
+  // r26-c TV 卡解说位：最近一条高光解说词（hot≥1 时随事件刷新）
+  const cEl = card.querySelector(".tvcm");
+  if (cEl) {
+    const c = WALL.cm[mid];
+    cEl.innerHTML = c
+      ? `<span class="star h${c.hot}">${c.hot >= 2 ? "★" : "◈"}</span><span class="tx">${esc(c.txt)}</span>`
+      : '<span class="tx dim">解说席就位…</span>';
   }
   const en = card.querySelector('[data-evn="' + mid + '"]');
   if (en) en.textContent = TK.total[mid] ?? 0;
@@ -1041,6 +1061,7 @@ function renderWall() {
       <div class="tvmeta">${meta}</div>
       ${seatsline}
       <div class="evflow"></div>
+      <div class="tvcm"><span class="tx dim">解说席就位…</span></div>
       <div class="tvfoot">${stats}<span class="go">进入围观 →</span></div>
     </div>`;
   });
@@ -1182,7 +1203,7 @@ function startSSE() {
   mSSE.onmessage = (msg) => {
     try {
       const ev = JSON.parse(msg.data);
-      if (ev.seq > MSINCE) { MEVS.push(ev); MSINCE = ev.seq; pushCommentary(ev); renderCommentary(); }
+      if (ev.seq > MSINCE) { MEVS.push(ev); MSINCE = ev.seq; pushCommentary(ev, true); renderCommentary(); }
       // r21 修复（r17 遗留竞态）：回放拖动后日志归 loadStep 管——迟到的实时渲染不得覆盖 cur 高亮
       if (!M.replay) renderLog($("#m-log"), MEVS);
       refreshMatchView();
@@ -1336,7 +1357,32 @@ function renderGuess() {
      全下/大翻转/超时代行/终局）——原文自展的（says/acted）交给既有面板
    ③ 三档热度：hot0 常规（※）/ hot1 热（◈ 琥珀）/ hot2 爆点（★ 磷光） */
 const CM = { evs: [], mid: null };
-const CM_PRIVATE = new Set(["night_kill_decided", "checked", "acted", "said", "match_started_private", "word_assigned"]);
+const CM_PRIVATE = new Set(["night_kill_decided", "checked", "acted", "said", "match_started_private", "word_assigned", "wolf_said"]);
+/* r26-d LLM 解说替换位：默认关（零依赖铁律）；开启后对 hot≥2 高光事件异步请求 LLM 金句替换规则词。
+   未配置 LLM 的网关返回 503 → 静默保持规则词（现状零变化）。 */
+const LLM_CM = { on: false, hits: 0 };
+try { LLM_CM.on = localStorage.getItem("arena_llm_cm") === "1"; } catch {}
+window.toggleLLMCM = function () {
+  LLM_CM.on = !LLM_CM.on;
+  try { localStorage.setItem("arena_llm_cm", LLM_CM.on ? "1" : "0"); } catch {}
+  renderCommentary();
+};
+async function fireLLMCommentary(e, hot) {
+  if (!LLM_CM.on || hot < 2) return;
+  const mid = CM.mid;
+  const rule = commentate(e);
+  try {
+    const r = await api("/commentary/llm", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mid, seq: e.seq, type: e.type, data: e.data ?? {}, rule_text: rule ? rule.t : "" }),
+    });
+    if (r && r.ok === true && typeof r.text === "string" && CM.mid === mid) {
+      const hit = CM.evs.find((x) => x.seq === e.seq);
+      if (hit) { hit.t = r.text; hit.llm = true; LLM_CM.hits++; renderCommentary(); }
+    }
+  } catch { /* 静默：规则词已展示，LLM 失败不影响观战 */ }
+}
 function commentate(e) {
   if (CM_PRIVATE.has(e.type)) return null;
   const d = e.data ?? {};
@@ -1435,18 +1481,24 @@ function commentate(e) {
       return null;
   }
 }
-function pushCommentary(e) {
+function pushCommentary(e, live) {
   const c = commentate(e);
-  if (c) CM.evs.push({ seq: e.seq, hot: c.hot, t: c.t, ts: e.ts ?? Date.now() });
+  if (c) {
+    CM.evs.push({ seq: e.seq, hot: c.hot, t: c.t, ts: e.ts ?? Date.now() });
+    // r26-d：实时高光事件（hot≥2）触发 LLM 金句增强——回放重建不触发（省调用）
+    if (live) fireLLMCommentary(e, c.hot);
+  }
 }
 /** 渲染解说历史；uptoSeq 给定 = 回放模式（只渲染 seq<=pos，与 renderLog cur 同步） */
 function renderCommentary(uptoSeq) {
   const el = $("#m-cm");
   if (!el) return;
   const list = uptoSeq === undefined ? CM.evs : CM.evs.filter((x) => x.seq <= uptoSeq);
-  el.innerHTML = list.length
-    ? list.map((x) => `<div class="line${x.hot ? " hot" + x.hot : ""}" data-cseq="${x.seq}"><span class="t">${new Date(x.ts).toTimeString().slice(0, 5)}</span>${esc(x.t)}</div>`).join("")
-    : "解说席就位——等待开局。";
+  /* r26-d AI 解说开关：默认关（零依赖）；开启后高光事件走 LLM 金句（失败静默回退规则词） */
+  const sw = `<div style="margin-bottom:6px"><span class="mini${LLM_CM.on ? "" : " ghost"}" style="cursor:pointer;letter-spacing:.1em" onclick="toggleLLMCM()">AI 解说${LLM_CM.on ? " · 开" : " · 关"}${LLM_CM.hits ? ` <span class="num">${LLM_CM.hits}</span>` : ""}</span></div>`;
+  el.innerHTML = sw + (list.length
+    ? list.map((x) => `<div class="line${x.hot ? " hot" + x.hot : ""}${x.llm ? " llm" : ""}" data-cseq="${x.seq}"><span class="t">${new Date(x.ts).toTimeString().slice(0, 5)}</span>${esc(x.t)}</div>`).join("")
+    : "解说席就位——等待开局。");
   el.scrollTop = el.scrollHeight;
 }
 
@@ -1868,10 +1920,16 @@ function renderWolf(v, box, interactive) {
     ${sayHtml}</div>`;
   if (v.private && v.private.role) {
     const pr = v.private;
-    html += `<div class="priv-row"><span class="lab">我的身份</span><span class="kv">${({ werewolf: "狼人", seer: "预言家", villager: "平民" })[pr.role] ?? "?"}`;
-    if (pr.role === "werewolf" && pr.teammates) html += ` · 队友 ${pr.teammates.join("、")}号`;
-    if (pr.role === "seer" && pr.checks) html += ` · 查验：${pr.checks.map((c) => `${c.target}号${c.is_wolf ? "(狼)" : "(好)"}`).join("、") || "无"}`;
-    html += `</span></div>`;
+    let privHtml = `<div class="priv-row"><span class="lab">我的身份</span><span class="kv">${({ werewolf: "狼人", seer: "预言家", villager: "平民" })[pr.role] ?? "?"}`;
+    if (pr.role === "werewolf" && pr.teammates) privHtml += ` · 队友 ${pr.teammates.join("、")}号`;
+    if (pr.role === "seer" && pr.checks) privHtml += ` · 查验：${pr.checks.map((c) => `${c.target}号${c.is_wolf ? "(狼)" : "(好)"}`).join("、") || "无"}`;
+    privHtml += `</span></div>`;
+    html += privHtml;
+    // r26-b 狼队夜间密语面板（仅狼视角私有数据）
+    if (pr.role === "werewolf" && Array.isArray(pr.wolf_chat) && pr.wolf_chat.length) {
+      html += `<div class="says"><div class="lab">狼队密语 · 本夜</div>${pr.wolf_chat.map((c) =>
+        `<div class="say"><div class="who">${c.seat}号 <span style="color:var(--red)">狼</span></div><div class="tx">${esc(c.text)}</div></div>`).join("")}</div>`;
+    }
   }
   if (interactive) {
     box.innerHTML = html + `<div class="act-area"></div>`;
@@ -1899,6 +1957,7 @@ function renderActions(v, box) {
     const check = v.legal_actions.find((a) => a.type === "check");
     const vote = v.legal_actions.find((a) => a.type === "vote");
     if (kill) html += `<div class="arow"><span class="dlab">狼刀</span>${kill.schema.values.map((t) => `<button class="mini" onclick="act({type:'kill',target:${t}})">${t}号</button>`).join("")}<button class="mini" onclick="act({type:'pass'})">空刀</button></div>`;
+    if (types.includes("wolf_say")) html += `<div class="arow"><textarea id="wsay-text" rows="2" style="flex:1" placeholder="狼队密语（仅狼可见——协调刀口，不占行动名额）"></textarea><button class="btn ghost" onclick="act({type:'wolf_say',text:$('#wsay-text').value})">密语</button></div>`;
     if (check) html += `<div class="arow"><span class="dlab">查验</span>${check.schema.values.map((t) => `<button class="mini" onclick="act({type:'check',target:${t}})">${t}号</button>`).join("")}<button class="mini" onclick="act({type:'pass'})">不验</button></div>`;
     if (types.includes("say")) html += `<div class="arow"><textarea id="say-text" rows="2" style="flex:1"></textarea><button class="btn" onclick="act({type:'say',text:$('#say-text').value})">发言</button></div>`;
     if (types.includes("last_words")) html += `<div class="arow"><textarea id="lw-text" rows="2" style="flex:1" placeholder="你的遗言将公开，把握好最后的信息权…"></textarea><button class="btn" onclick="act({type:'last_words',text:$('#lw-text').value})">留遗言</button></div>`;
@@ -1956,6 +2015,8 @@ window.__r21 = { GZ, guessVoterId, refreshGuess, castGuess, renderGuess, guessBa
 window.__r23 = { CM, commentate, pushCommentary, renderCommentary, CM_PRIVATE };
 /* r24 测试钩子：囚徒困境渲染器/迷你舞台/统计/事件文本/常量（r25 增 undercover） */
 window.__r24 = { renderDilemma, renderUndercover, miniStageInner, viewStats, evText, GAME_DESC, SEATS_DEFAULT, PHASES };
+/* r26 测试钩子：狼队密语渲染 + TV 卡解说位 + LLM 解说层 */
+window.__r26 = { pushCommentary, fireLLMCommentary, renderCommentary, LLM_CM, toggleLLMCM, commentate, WALL, ingestEvent, renderWall, renderWolf, renderActions };
 </script>
 </body>
 </html>

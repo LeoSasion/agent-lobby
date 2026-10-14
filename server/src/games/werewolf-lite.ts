@@ -42,6 +42,8 @@ interface State {
   /** 今日开场遗言队列（座位序）与游标 */
   lwQueue: SeatId[];
   lwIndex: number;
+  /** r26-b 狼队夜间密语（本夜累积；新夜清空）——协调刀口的沟通通道 */
+  wolfChat: { seat: SeatId; text: string }[];
 }
 
 function aliveSeats(s: State): SeatId[] {
@@ -194,6 +196,7 @@ function tryResolveVote(s: State, events: GameEvent[]): void {
   s.round += 1;
   s.phase = "night";
   s.nightActions = new Map();
+  s.wolfChat = []; // r26-b 新夜清空狼队密语
 }
 
 export function createWerewolfLite(): GameModule<State> {
@@ -231,6 +234,7 @@ export function createWerewolfLite(): GameModule<State> {
         pendingLW: [],
         lwQueue: [],
         lwIndex: 0,
+        wolfChat: [],
       };
     },
 
@@ -266,6 +270,8 @@ export function createWerewolfLite(): GameModule<State> {
           return [
             { type: "kill", schema: { target: "enum", values: targets } },
             { type: "pass", hint: "空刀" },
+            // r26-b 狼队密语：不占夜间收齐名额（随时可说，不影响 kill/check 的收齐判定）
+            { type: "wolf_say", schema: { text: "string 1-500" }, hint: "狼队密语（仅狼可见，协调刀口）" },
           ];
         }
         return [
@@ -303,6 +309,14 @@ export function createWerewolfLite(): GameModule<State> {
           return { ok: false, error: "NOT_YOUR_TURN：夜间休眠" };
         }
         if (action.type === "pass") return { ok: true };
+        // r26-b 狼队密语：仅夜间存活狼可发；不写 nightActions（不占收齐名额）
+        if (role === "werewolf" && action.type === "wolf_say") {
+          const text = action.text;
+          if (typeof text !== "string" || text.length < 1 || text.length > 500) {
+            return { ok: false, error: `ILLEGAL_ACTION：text 须为 1-500 字符（按 UTF-16 码元计，当前 ${typeof text === "string" ? text.length : typeof text}）` };
+          }
+          return { ok: true };
+        }
         if (role === "werewolf" && action.type === "kill") {
           const t = action.target as SeatId;
           if (!alive(t) || s.roles.get(t) === "werewolf") {
@@ -359,6 +373,13 @@ export function createWerewolfLite(): GameModule<State> {
     apply(s, seat, action, rng) {
       const events: GameEvent[] = [];
       if (s.phase === "night") {
+        // r26-b 狼队密语：即时入流（不占收齐名额、不触发结算）——狼可以边聊边刀
+        if (action.type === "wolf_say" && s.roles.get(seat) === "werewolf") {
+          const text = String(action.text ?? "");
+          s.wolfChat.push({ seat, text });
+          events.push({ type: "wolf_said", data: { seat, text }, visibility: { seats: wolfSeats(s) } });
+          return { state: s, events };
+        }
         s.nightActions.set(seat, {
           type: action.type === "kill" || action.type === "check" ? (action.type as "kill" | "check") : "pass",
           target: action.target as SeatId | undefined,
@@ -425,6 +446,7 @@ export function createWerewolfLite(): GameModule<State> {
       const priv: Record<string, unknown> = { role, alive: s.alive.get(viewer) === true };
       if (role === "werewolf") {
         priv.teammates = wolfSeats(s).filter((t) => t !== viewer);
+        priv.wolf_chat = [...s.wolfChat]; // r26-b 本夜狼队密语（新夜清空）
       }
       if (role === "seer") {
         priv.checks = [...s.seerChecks];

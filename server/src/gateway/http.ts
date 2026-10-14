@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { createHmac } from "node:crypto";
 import type { Action, AgentView, MatchEvent, SeatId, SubmitResult } from "../protocol.ts";
 import type { GameModule } from "../games/types.ts";
+import { callLLMCommentary } from "../commentary/llm.ts";
 import { Match, composeAgentView, winnersOf } from "../arena/match.ts";
 import type { MatchResult, SeatDriver } from "../arena/match.ts";
 import { createMatch } from "../arena/lobby.ts";
@@ -339,8 +340,25 @@ export class Gateway {
           "POST /api/v1/matches/:id/guess         观众竞猜 {voter_id, seat}（匿名可改票；终局后 409 锁定）——r21 观战娱乐层",
           "GET  /api/v1/matches/:id/guess?voter_id=  竞猜票数（终局后揭底 targets/mine_hit/crowd_hit）",
           "GET  /api/v1/leaderboard/:game",
+          "POST /api/v1/commentary/llm            LLM 解说金句（OpenAI 兼容 env 配置；未配置 503 回退规则词典）——r26-d 观战增强层",
         ],
       });
+    }
+    // r26-d LLM 解说替换位：规则词典的异步增强层（未配置 → 503，前端静默回退规则词）
+    if (method === "POST" && path === "/api/v1/commentary/llm") {
+      const body = await readJson(req);
+      const r = await callLLMCommentary({
+        mid: String(body.mid ?? ""),
+        seq: Number(body.seq),
+        type: String(body.type ?? ""),
+        data: body.data,
+        ruleText: typeof body.rule_text === "string" ? body.rule_text : "",
+      });
+      if (!r.ok) {
+        const status = r.code === "LLM_NOT_CONFIGURED" ? 503 : r.code === "LLM_BAD_INPUT" ? 422 : 502;
+        return this.err(res, status, r.code, r.message, { path: "/api/v1/commentary/llm" });
+      }
+      return this.json(res, 200, { ok: true, text: r.text, cached: r.cached });
     }
     if (method === "POST" && path === "/api/v1/agents") {
       const body = await readJson(req);

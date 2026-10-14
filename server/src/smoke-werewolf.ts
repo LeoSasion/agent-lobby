@@ -147,5 +147,25 @@ const elapsed = Date.now() - t0;
 const timeouts = r3.events.filter((e) => e.type === "timed_out").length;
 check("挂起 bot 不阻塞比赛", Object.values(r3.scores).some((v) => v === 1), `耗时 ${elapsed}ms · timed_out × ${timeouts}`);
 
+// —— 场景 5：狼队密语（r26-b）——即时入流不占收齐 / 私有可见性 / 视角隔离 / 校验 ——
+console.log("\n[场景 5] 狼队密语（r26-b）");
+{
+  const rng5 = () => 0.7;
+  const s5 = game.init([1, 2, 3, 4, 5, 6], rng5);
+  const wolfList = [...s5.roles.entries()].filter(([, r]) => r === "werewolf").map(([seat]) => seat);
+  const vil = [...s5.roles.entries()].find(([, r]) => r === "villager")![0];
+  const rSay = game.apply(s5, wolfList[0]!, { type: "wolf_say", text: "刀口示意：走 3 号" }, rng5);
+  check("密语即时入流（wolf_said 事件）", rSay.events.some((e) => e.type === "wolf_said" && (e.data as { text?: string }).text === "刀口示意：走 3 号"));
+  check("密语不占收齐名额（夜不结算）", s5.phase === "night" && s5.nightActions.size === 0);
+  check("密语事件仅狼可见", rSay.events.every((e) => e.visibility !== "all"));
+  const vWolf = game.viewOf(s5, wolfList[1]!);
+  check("狼视角 priv.wolf_chat 含密语", Array.isArray(vWolf.private.wolf_chat) && (vWolf.private.wolf_chat as unknown[]).length === 1);
+  const vVil = game.viewOf(s5, vil);
+  check("村民视角零 wolf_chat 字段", !("wolf_chat" in vVil.private));
+  check("密语超 500 字被拒", game.validate(s5, wolfList[0]!, { type: "wolf_say", text: "长".repeat(501) }).ok === false);
+  check("非狼发密语被拒", game.validate(s5, vil, { type: "wolf_say", text: "hi" }).ok === false);
+  check("bot 局狼队密语出现且私有", r1.events.some((e) => e.type === "wolf_said" && e.visibility !== "all"));
+}
+
 console.log(`\n=== 结果：${failed === 0 ? "全部通过" : failed + " 项失败"} ===`);
 if (failed > 0) process.exitCode = 1;

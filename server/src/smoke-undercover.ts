@@ -5,7 +5,7 @@
  * 运行：node --experimental-strip-types src/smoke-undercover.ts
  */
 
-import { createUndercover } from "./games/undercover.ts";
+import { createUndercover, wordPairs } from "./games/undercover.ts";
 import { createUndercoverBot } from "./bots/undercover-bot.ts";
 import { createMatch } from "./arena/lobby.ts";
 import { replayEvents } from "./arena/replay.ts";
@@ -28,10 +28,16 @@ console.log("[场景 A] 开局不变量");
 const rng = () => 0.42;
 const s0 = game.init([1, 2, 3, 4, 5, 6], rng);
 check("6 席恰 1 卧底", [...s0.roles.values()].filter((r) => r === "undercover").length === 1);
-check(
-  "词对一致：平民同词、卧底异词",
+check("词对一致：平民同词、卧底异词",
   [...s0.words.values()].filter((w) => w === s0.wordPair.civilian).length === 5
     && [...s0.words.values()].filter((w) => w === s0.wordPair.undercover).length === 1,
+);
+check(
+  "词对库 r26-a 不变量：40 对且同类别互不相邻",
+  // 相邻 idx 类别不同——连续 rng 抽到相邻位不至连局同类别（联想泄露防线）
+  wordPairs().length === 40
+    && new Set(wordPairs().map((p) => p.cat)).size >= 22
+    && Array.from({ length: 39 }, (_, i) => wordPairs()[i].cat !== wordPairs()[i + 1].cat).every(Boolean),
 );
 const vSpec = game.viewOf(s0, "spectator");
 check("观战零词零身份", !JSON.stringify(vSpec).includes(s0.wordPair.civilian) && !JSON.stringify(vSpec).includes(s0.wordPair.undercover) && !JSON.stringify(vSpec.public).includes("is_undercover"));

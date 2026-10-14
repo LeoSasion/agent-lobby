@@ -18,6 +18,8 @@ interface WWPrivate {
   alive?: boolean;
   teammates?: number[];
   checks?: { target: number; is_wolf: boolean }[];
+  /** r26-b 本夜狼队密语（狼视角私有）——bot 据此协调刀口 */
+  wolf_chat?: { seat: number; text: string }[];
 }
 
 interface WWPublic {
@@ -159,12 +161,34 @@ export function createWerewolfBot(name: string, bias = 0): SeatDriver {
       const k = (ctx: string): string => `${mid}:${me}:${round}:${ctx}`;
 
       // 夜间：狼出刀（优先刀已跳预言家的——含昨日发言与今日遗言）
+      // r26-b 狼队密语协调：队友已声明刀口 → 跟随；无人声明 → 先密语声明（下次 act 再刀）
       if (la.some((a) => a.type === "kill")) {
         const targets = values("kill");
         if (targets.length === 0) return done(submit, { type: "pass" });
         const allSays = [...(pub.last_day_says ?? []), ...(pub.today_says ?? [])];
         const claims = parseSeerClaims(allSays);
         const seerClaimants = claims.map((c) => c.claimant).filter((s) => targets.includes(s));
+        const pickTarget = (): number =>
+          seerClaimants.length > 0 ? seerClaimants[0]! : targets[bias % targets.length]!;
+        // r26-b：狼队密语可用时——读队友声明跟随；自己未声明则先声明再刀（两步 act）
+        if (la.some((a) => a.type === "wolf_say")) {
+          const chat = priv.wolf_chat ?? [];
+          const mySaid = chat.some((c) => c.seat === me);
+          if (!mySaid) {
+            const t = pickTarget();
+            return done(submit, {
+              type: "wolf_say",
+              text: `（刀口示意）这刀走 ${t} 号——${seerClaimants.length > 0 ? "他跳了预言家，必须刀" : "看起来最像神"}。同意就一起。`,
+            });
+          }
+          const mateDeclared = chat
+            .filter((c) => c.seat !== me)
+            .map((c) => /(\d+)\s*号/.exec(c.text)?.[1])
+            .filter((x): x is string => x !== undefined)
+            .map(Number)
+            .find((t) => targets.includes(t));
+          if (mateDeclared !== undefined) return done(submit, { type: "kill", target: mateDeclared });
+        }
         if (seerClaimants.length > 0) {
           return done(submit, { type: "kill", target: seerClaimants[0] });
         }
