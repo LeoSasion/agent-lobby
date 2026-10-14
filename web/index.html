@@ -137,6 +137,7 @@ select,textarea,input[type=number],input:not([type]){background:#10150f;color:va
 .seatring{position:absolute;left:84px;top:0;width:92px;height:92px}
 .seatring .msd{position:absolute;width:12px;height:12px;border-radius:50%;background:var(--grn);box-shadow:0 0 6px rgba(69,217,142,.45);transition:background .5s,box-shadow .5s}
 .seatring .msd.off{background:#202a25;box-shadow:none}
+.seatring .msd.ucx{background:var(--red);box-shadow:0 0 6px rgba(220,90,90,.4)}
 .mn-side{position:absolute;right:0;top:6px;text-align:right}
 .mn-side .big{color:var(--grn);font-size:clamp(20px,2.4cqi,26px)}
 .mn-side .big small{color:var(--dim);font-size:13px}
@@ -573,9 +574,9 @@ window.$ = $;
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 const api = async (p, o) => (await fetch("/api/v1" + p, o)).json();
 const GAME_NAMES = {};
-const GAME_DESC = { liars_dice:"欺骗博弈 · 隐藏信息", othello:"完全信息 · 经典棋类", werewolf_lite:"社交推理 · 旗舰", holdem_lite:"筹码博弈 · 经典牌类", dilemma:"博弈论经典 · 闪电快局" };
-const SEATS_DEFAULT = { werewolf_lite:6, othello:2, liars_dice:3, holdem_lite:3, dilemma:2 };
-const PHASES = { bid:"叫价", night:"夜晚", day_discuss:"白天·讨论", day_vote:"白天·投票", move:"对弈", preflop:"翻牌前", flop:"翻牌圈", turn:"转牌圈", river:"河牌圈", playing:"回合对决", finished:"已结束" };
+const GAME_DESC = { liars_dice:"欺骗博弈 · 隐藏信息", othello:"完全信息 · 经典棋类", werewolf_lite:"社交推理 · 旗舰", holdem_lite:"筹码博弈 · 经典牌类", dilemma:"博弈论经典 · 闪电快局", undercover:"词语推理 · 国民游戏" };
+const SEATS_DEFAULT = { werewolf_lite:6, othello:2, liars_dice:3, holdem_lite:3, dilemma:2, undercover:6 };
+const PHASES = { bid:"叫价", night:"夜晚", day_discuss:"白天·讨论", day_vote:"白天·投票", move:"对弈", preflop:"翻牌前", flop:"翻牌圈", turn:"转牌圈", river:"河牌圈", playing:"回合对决", describe:"描述轮", vote:"放逐投票", finished:"已结束" };
 const phaseName = (p) => PHASES[p] ?? p;
 
 const LB = { game:null, all:{} };
@@ -614,6 +615,9 @@ function evText(e) {
     case "board_full": return `棋盘下满 ${d.black} : ${d.white}`;
     case "said": return `${d.seat}号：${esc(d.text)}`;
     case "last_words": return `【遗言】${d.seat}号：${esc(d.text)}`;
+    case "described": return `${d.seat}号描述：${esc(d.text)}`;
+    case "word_assigned": return `【发词】${d.seat}号已拿到词（私有）`;
+    case "player_exiled": return `${d.seat}号被放逐——身份是「${d.was_undercover ? "卧底" : "平民"}」`;
     case "vote_pk": return `平票 PK！候选：${(d.candidates ?? []).join("、")} 号 —— 全员仅可在候选中重投`;
     case "vote_result": return `计票 ${esc(JSON.stringify(d.tally))} → ${d.exiled != null ? d.exiled + "号被放逐" : "无人出局"}`;
     case "player_died": return `${d.seat}号出局（${d.cause === "night" ? "夜间遇害" : "投票放逐"}）`;
@@ -798,9 +802,9 @@ window.pickGame = function (g) { $("#p-game").value = g; showView("play"); };
 
 function viewStats(m, v) {
   const pub = v.public ?? {};
-  if (m.game === "werewolf_lite") {
+  if (m.game === "werewolf_lite" || m.game === "undercover") {
     const seats = pub.seats ?? [], alive = pub.alive_seats ?? [];
-    return { meta: `<b>${seats.length} 席</b> · ${phaseName(v.phase)}进行中 · 第 ${v.round} 天`,
+    return { meta: `<b>${seats.length} 席</b> · ${phaseName(v.phase)}进行中 · 第 ${v.round} 轮`,
       dotLab: "席位", dots: seats.map((s) => alive.includes(s)),
       stats: [["存活", `${alive.length}/${seats.length}`], ["事件", "…"]] };
   }
@@ -850,6 +854,21 @@ function miniStageInner(m, v) {
     return `<div class="mn-orb">${orbSVG(v.phase)}<div class="lab">${v.phase === "night" ? "夜" : "昼"}</div></div>
       <div class="seatring">${ring}</div>
       <div class="mn-side"><div class="big">${alive.length}<small>/${seats.length}</small></div><div class="sub">存活 · 第 ${v.round ?? "?"} 天</div></div>`;
+  }
+  if (m.game === "undercover") {
+    /* r25 词语圆桌：席位环（放逐者红点）+ 描述轮计数 hub */
+    const seats = pub.seats ?? [], alive = pub.alive_seats ?? [];
+    const exiled = (pub.exiled_log ?? []).map((x) => x.seat);
+    const ring = seats.map((s) => {
+      const ang = (-90 + (360 / Math.max(seats.length, 1)) * (s - 1)) * Math.PI / 180;
+      const R = 36, cx = 46 + R * Math.cos(ang), cy = 46 + R * Math.sin(ang);
+      const cls = exiled.includes(s) ? "ucx" : !alive.includes(s) ? "off" : "";
+      return `<span class="msd ${cls}" style="left:${cx - 6}px;top:${cy - 6}px"></span>`;
+    }).join("");
+    const nDesc = (pub.today_describes ?? []).length;
+    return `<div class="mn-orb"><svg viewBox="0 0 48 48"><circle cx="24" cy="24" r="21" fill="none" stroke="#45d98e" stroke-width="1.5" opacity=".85"/><text x="24" y="30" text-anchor="middle" font-size="15" fill="#45d98e" font-family="serif">词</text></svg><div class="lab">${phaseName(v.phase)}</div></div>
+      <div class="seatring">${ring}</div>
+      <div class="mn-side"><div class="big">${alive.length}<small>/${seats.length}</small></div><div class="sub">存活 · 第 ${v.round ?? "?"}/${pub.max_rounds ?? 3} 轮${pub.phase === "describe" ? ` · 已描述 ${nDesc}` : ""}</div></div>`;
   }
   if (m.game === "liars_dice") {
     const players = pub.players ?? [];
@@ -901,7 +920,7 @@ function miniStageInner(m, v) {
 }
 
 /* ===== r20 · 实时链路：SSE / 事件摄取 / 脉搏带 ===== */
-const HOT_EV = /player_died|player_eliminated|vote_result|game_won|challenge_resolved|last_words|street_dealt|board_full|vote_pk|round_resolved/;
+const HOT_EV = /player_died|player_eliminated|player_exiled|vote_result|game_won|challenge_resolved|last_words|street_dealt|board_full|vote_pk|round_resolved/;
 
 function ingestEvent(mid, e) {
   if (e.seq != null && e.seq <= (TK.cursors[mid] ?? -1)) return; // 幂等（SSE 与轮询兜底双路）
@@ -1233,7 +1252,8 @@ function guessVoterId() {
 }
 async function refreshGuess(v) {
   if (!M.id) return;
-  if (v.game !== "werewolf_lite") {
+  // r25：身份指认类竞猜（狼人杀猜狼 / 谁是卧底猜卧底）——r21 通用胜者语义兜底其他游戏
+  if (v.game !== "werewolf_lite" && v.game !== "undercover") {
     if (GZ.mid) { GZ.mid = null; GZ.data = null; $("#m-guess").innerHTML = ""; }
     return;
   }
@@ -1316,7 +1336,7 @@ function renderGuess() {
      全下/大翻转/超时代行/终局）——原文自展的（says/acted）交给既有面板
    ③ 三档热度：hot0 常规（※）/ hot1 热（◈ 琥珀）/ hot2 爆点（★ 磷光） */
 const CM = { evs: [], mid: null };
-const CM_PRIVATE = new Set(["night_kill_decided", "checked", "acted", "said", "match_started_private"]);
+const CM_PRIVATE = new Set(["night_kill_decided", "checked", "acted", "said", "match_started_private", "word_assigned"]);
 function commentate(e) {
   if (CM_PRIVATE.has(e.type)) return null;
   const d = e.data ?? {};
@@ -1383,6 +1403,13 @@ function commentate(e) {
       if (pat === "DD") return { hot: 1, t: base };
       return { hot: 0, t: base };
     }
+    /* ── 谁是卧底（r25）── */
+    case "described":
+      return null; // 克制：描述原文自展（today_describes 面板）——解说不复读
+    case "player_exiled": {
+      if (d.was_undercover) return { hot: 2, t: `放逐生效——${d.seat} 号就是卧底！伪装被识破` };
+      return { hot: 1, t: `放逐生效——${d.seat} 号是平民……票投歪了，卧底还在场上` };
+    }
     case "game_won": {
       /* r24 合并版：dilemma（winner=席位号/draw）与狼人杀（good/wolves）共用一 case，前者在前 */
       if (typeof d.winner === "number") {
@@ -1391,6 +1418,8 @@ function commentate(e) {
         return { hot: 2, t: `终局哨响——${d.winner} 号以 ${vals[0]}:${vals[1]} 的总收益带走胜利` };
       }
       if (d.winner === "draw") return { hot: 1, t: `终局平局——总收益咬死，谁也没能多拿一分` };
+      if (d.winner === "civilians") return { hot: 2, t: `真相大白——卧底被揪出，平民阵营赢下这一局！词对：${(d.word_pair ?? {}).civilian ?? "?"} / ${(d.word_pair ?? {}).undercover ?? "?"}` };
+      if (d.winner === "undercover") return { hot: 2, t: `卧底笑到了最后——伪装成功！词对：${(d.word_pair ?? {}).civilian ?? "?"} / ${(d.word_pair ?? {}).undercover ?? "?"}` };
       return { hot: 2, t: d.winner === "good" ? `终局哨响——好人阵营赢下这一局！` : d.winner === "wolves" ? `终局哨响——狼人阵营笑到了最后` : `终局哨响——胜负揭晓` };
     }
     /* ── 通用 ── */
@@ -1585,6 +1614,7 @@ window.act = async function (action) {
 function renderGame(v, box, interactive) {
   if (v.game === "othello") renderOthello(v, box, interactive);
   else if (v.game === "werewolf_lite") renderWolf(v, box, interactive);
+  else if (v.game === "undercover") renderUndercover(v, box, interactive);
   else if (v.game === "holdem_lite") renderHoldem(v, box, interactive);
   else if (v.game === "dilemma") renderDilemma(v, box, interactive);
   else renderDice(v, box, interactive);
@@ -1758,6 +1788,52 @@ function renderOthello(v, box, interactive) {
   }
 }
 
+function renderUndercover(v, box, interactive) {
+  /* r25 词语圆桌：席位环（放逐者红名）+ 描述流 + 我的词卡（私有）+ 投票进度 */
+  const p = v.public;
+  const names = seatNames(interactive ? PEVS : MEVS);
+  const roles = revealedRoles(interactive ? PEVS : MEVS);
+  const N = p.seats.length, cx = 50, cy = 50, rx = 40, ry = 42;
+  let seats = "";
+  p.seats.forEach((s) => {
+    const ang = (-90 + (360 / N) * (s - 1)) * Math.PI / 180;
+    const px = cx + rx * Math.cos(ang), py = cy + ry * Math.sin(ang);
+    const alive = p.alive_seats.includes(s);
+    const exiled = (p.exiled_log ?? []).find((x) => x.seat === s);
+    const role = roles ? roles[String(s)] : (exiled ? exiled.role : null);
+    const lb = role ? ({ undercover: " · 卧底", civilian: " · 平民" })[role] : "";
+    seats += `<div class="wseat ${alive ? "" : "dead"} ${role === "undercover" ? "wolf-known" : ""}" style="left:${px}%;top:${py}%">` +
+      `<div class="dot">${s}</div><div class="nm">${s}号 ${esc(names[s] ?? "")}${lb}</div></div>`;
+  });
+  const describes = (p.today_describes ?? []).slice(-6);
+  let sayHtml = `<div class="says"><div class="lab">本轮描述</div>`;
+  if (!describes.length) sayHtml += `<div class="kv" style="color:var(--dim)">（等待第一个人开口）</div>`;
+  describes.forEach((s) => {
+    sayHtml += `<div class="say"><div class="who">${s.seat}号</div><div class="tx">${esc(s.text)}</div></div>`;
+  });
+  if (p.votes_cast !== undefined) {
+    const total = p.alive_seats.length, got = p.votes_cast;
+    sayHtml += `<div class="voteline">放逐投票${p.pending_voters ? ` · 待投 ${p.pending_voters.length} 人` : ""}<span class="ticks">${Array.from({ length: total }, (_, i) => `<i class="${i < got ? "on" : ""}"></i>`).join("")}</span></div>`;
+  }
+  if (p.pk_candidates) sayHtml += `<div class="voteline">平票 PK · 候选 ${(p.pk_candidates ?? []).join("、")} 号</div>`;
+  sayHtml += `</div>`;
+  let html = `<div class="wolf-stage">
+    <div class="round-table"><div class="table-disc"></div>${seats}
+      <div class="phase-core"><div class="glyph day"><div class="sun"></div></div>
+      <div class="ph">${phaseName(v.phase)}</div><div class="dy">第 ${v.round}/${p.max_rounds ?? 3} 轮 · 存活 ${p.alive_seats.length} / ${N}</div></div></div>
+    ${sayHtml}</div>`;
+  if (v.private && v.private.word) {
+    html += `<div class="priv-row"><span class="lab">我的词</span><span class="kv" style="font-size:15px;letter-spacing:.2em;color:var(--amb)">${esc(v.private.word)}</span>` +
+      (v.private.is_undercover ? `<span class="kv" style="color:var(--red)">· 你是卧底（词与他人不同——描述要泛化，别被票出）</span>` : `<span class="kv" style="color:var(--dim)">· 词与多数人相同</span>`) + `</span></div>`;
+  }
+  if (interactive) {
+    box.innerHTML = html + `<div class="act-area"></div>`;
+    renderActions(v, box.querySelector(".act-area"));
+  } else {
+    box.innerHTML = html;
+  }
+}
+
 function renderWolf(v, box, interactive) {
   const p = v.public;
   const names = seatNames(interactive ? PEVS : MEVS);
@@ -1827,6 +1903,10 @@ function renderActions(v, box) {
     if (types.includes("say")) html += `<div class="arow"><textarea id="say-text" rows="2" style="flex:1"></textarea><button class="btn" onclick="act({type:'say',text:$('#say-text').value})">发言</button></div>`;
     if (types.includes("last_words")) html += `<div class="arow"><textarea id="lw-text" rows="2" style="flex:1" placeholder="你的遗言将公开，把握好最后的信息权…"></textarea><button class="btn" onclick="act({type:'last_words',text:$('#lw-text').value})">留遗言</button></div>`;
     if (vote) html += `<div class="arow"><span class="dlab">投票</span>${vote.schema.values.map((t) => `<button class="mini" onclick="act({type:'vote',target:${t}})">${t}号</button>`).join("")}<button class="mini" onclick="act({type:'pass'})">弃票</button></div>`;
+  } else if (v.game === "undercover") {
+    if (types.includes("describe")) html += `<div class="arow"><textarea id="desc-text" rows="2" style="flex:1" placeholder="一句话描述你的词——不得包含词本身，说得像又说得模糊是艺术…"></textarea><button class="btn" onclick="act({type:'describe',text:$('#desc-text').value})">描述</button></div>`;
+    const vote = v.legal_actions.find((a) => a.type === "vote");
+    if (vote) html += `<div class="arow"><span class="dlab">放逐</span>${vote.schema.values.map((t) => `<button class="mini" onclick="act({type:'vote',target:${t}})">${t}号</button>`).join("")}<button class="mini" onclick="act({type:'pass'})">弃票</button></div>`;
   } else if (v.game === "holdem_lite") {
     html += `<div class="arow">`;
     if (types.includes("fold")) html += `<button class="btn ghost" onclick="act({type:'fold'})">弃牌</button> `;
@@ -1874,8 +1954,8 @@ showView("lobby");
 window.__r20 = { miniStageInner, renderWall, ingestEvent, refreshMinistage, WALL, TK };
 window.__r21 = { GZ, guessVoterId, refreshGuess, castGuess, renderGuess, guessBarsHTML, refreshMatchView };
 window.__r23 = { CM, commentate, pushCommentary, renderCommentary, CM_PRIVATE };
-/* r24 测试钩子：囚徒困境渲染器/迷你舞台/统计/事件文本/常量 */
-window.__r24 = { renderDilemma, miniStageInner, viewStats, evText, GAME_DESC, SEATS_DEFAULT, PHASES };
+/* r24 测试钩子：囚徒困境渲染器/迷你舞台/统计/事件文本/常量（r25 增 undercover） */
+window.__r24 = { renderDilemma, renderUndercover, miniStageInner, viewStats, evText, GAME_DESC, SEATS_DEFAULT, PHASES };
 </script>
 </body>
 </html>

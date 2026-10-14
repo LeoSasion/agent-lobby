@@ -103,7 +103,9 @@ const lanes1 = els["#m-lanes"]?.innerHTML ?? "";
 assert(`seek(${half}) 后泳道重渲染（done ≈ ${half + 1}）`, Math.abs((lanes1.match(/done/g) || []).length - (half + 1)) <= 2);
 assert("摘要卡更新到中段 seq", (els["#m-now"]?.innerHTML ?? "").includes(`#${String(half).padStart(2, "0")}`));
 const logHtml = els["#m-log"]?.innerHTML ?? "";
-assert("日志同步截断（cur 行存在）", logHtml.includes("ev cur"));
+/* r25 修：cur 行 class 前缀随事件类型（ev/ev say/ev sys/ev win）——seq=half 落在 phase_started 等行时
+   旧断言 includes("ev cur") 恒假失败（环境漂移致事件分布偏移即触发）。改类型无关正则。 */
+assert("日志同步截断（cur 行存在）", /class="ev[ a-z]*cur"/.test(logHtml));
 assert("日志当前步高亮（#NN 行）", logHtml.includes(`id="ev-${half}"`) || logHtml.includes(`#${String(half).padStart(2, "0")}`));
 const rangeEl = els["#m-replay"];
 assert("range 滑条值同步", (document.querySelector("#m-replay input[type=range]")?.value ?? String(half)) === String(half));

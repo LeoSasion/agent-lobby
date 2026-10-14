@@ -1491,14 +1491,15 @@ export class Gateway {
     return { counts, total, mine: voter && g ? (g.voters.get(voter) ?? null) : null };
   }
 
-  /** 竞猜目标席位：werewolf_lite → 真狼（game_won.roles 过滤；恢复壳经 rawEvents 透传同样可取）；其他游戏 → 胜者 */
+  /** 竞猜目标席位：werewolf_lite → 真狼 / undercover → 卧底（game_won.roles 过滤；恢复壳经 rawEvents 透传同样可取）；其他游戏 → 胜者 */
   private guessTargets(rm: RunningMatch): SeatId[] {
-    if (rm.gameId === "werewolf_lite") {
+    if (rm.gameId === "werewolf_lite" || rm.gameId === "undercover") {
+      const want = rm.gameId === "werewolf_lite" ? "werewolf" : "undercover";
       const ev = [...rm.match.rawEvents()].reverse().find((e) => e.type === "game_won");
       const roles = (ev?.data?.roles ?? null) as Record<string, string> | null;
       if (roles && typeof roles === "object") {
         return Object.entries(roles)
-          .filter(([, r]) => r === "werewolf")
+          .filter(([, r]) => r === want)
           .map(([s]) => Number(s))
           .sort((a, b) => a - b);
       }
@@ -1512,7 +1513,7 @@ export class Gateway {
 
   /** 目标语义标签（非机密——仅告知观众「这局猜什么」） */
   private guessTargetLabel(gameId: string): string {
-    return gameId === "werewolf_lite" ? "狼" : "胜者";
+    return gameId === "werewolf_lite" ? "狼" : gameId === "undercover" ? "卧底" : "胜者";
   }
 
   private json(res: ServerResponse, status: number, body: unknown): void {

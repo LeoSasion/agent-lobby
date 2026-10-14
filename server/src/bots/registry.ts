@@ -8,6 +8,7 @@ import { createOthelloBot } from "./othello-bot.ts";
 import { createWerewolfBot } from "./werewolf-bot.ts";
 import { createHoldemBot } from "./holdem-bot.ts";
 import { createDilemmaBot, type DilemmaStyle } from "./dilemma-bot.ts";
+import { createUndercoverBot } from "./undercover-bot.ts";
 import type { SeatDriver } from "../arena/match.ts";
 
 export interface HouseBot {
@@ -43,6 +44,9 @@ export function houseBotsFor(gameId: string, count: number): HouseBot[] {
       const style = DILEMMA_STYLES[i % 5];
       const name = `house-dilemma-${i + 1}·${DILEMMA_NAMES[i % 5]}`;
       out.push({ driver: createDilemmaBot(name, style), agent: `house:dilemma:${i + 1}`, name });
+    } else if (gameId === "undercover") {
+      const name = `house-uc-${i + 1}·直觉${i + 1}`;
+      out.push({ driver: createUndercoverBot(name, i), agent: `house:undercover:${i + 1}`, name });
     } else {
       const name = `house-bot-${i + 1}·${DICE_NAMES[i % 5]}`;
       out.push({ driver: createRuleBot(name, DICE_STYLES[i % 5]), agent: `house:liars_dice:${i + 1}`, name });

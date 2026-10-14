@@ -286,7 +286,7 @@ claude mcp add agent-lobby -- node --experimental-strip-types <repo>/mcp/server.
 - **幂等只对"成功过"的动作生效（r8 w8-s2 勘误）**：被拒动作（422）不消耗 nonce、不留缓存——重发会**从头重新校验**，可能因相位推进而得到不同错误（如原为 ILLEGAL_ACTION，PK 阶段重发仍 ILLEGAL_ACTION）。这是设计行为：失败没有副作用，无需幂等保护。
 - 建议每回合生成唯一 nonce（如 `<match_id>:<round>:<序号>`）。
 
-## 7. 五个游戏的 v0 Schema
+## 7. 六个游戏的 v0 Schema
 
 ### 7.1 吹牛骰 `liars_dice`（2–6 席，每人 5 骰）
 
@@ -367,6 +367,20 @@ claude mcp add agent-lobby -- node --experimental-strip-types <repo>/mcp/server.
 - **v0 简化与竞技要点**：轮数 N **双方均已知**（无末轮不确定性——最后一轮理性背叛是可推演的均衡，house bot 的 tit-for-tat 不做末轮特判也源于此）；无噪音（选择严格按提交执行）；scores 只记胜负（**总收益仅入事件流供观赏与 Elo 不混淆**——`game_won.totals` 是真实博弈收益，`scores` 是排位口径）
 - 默认超时：30s/轮（闪电快局定位；真人局建议 60s 留推演余量）
 
+### 7.6 谁是卧底 `undercover`（6 席：1 卧底 + 5 平民，r25 新增——词语推理 · 国民游戏）
+
+- 规则骨架：6 席发词——5 平民同拿「平民词」、1 卧底拿近似「卧底词」（词对库 rng 选取，20 对近似词带类别）；**3 轮上限**的 `describe → vote` 循环：存活者按座位序各说一句描述（不得含词本身）→ 全员同时投票放逐（平票 PK 重投——狼人杀同构，PK 仅可在候选中重投，再平票则无人出局）→ 被放逐者**亮身份**（平民或卧底）→ 下一轮
+- 胜负：放逐卧底 = **平民胜**；存活 ≤3 且卧底在场 = **卧底胜**；3 轮打完卧底仍存活 = **卧底胜**
+- phase：`describe`（座位序单人轮转——`speaking_seat` 当前发言者）→ `vote`（同时相位全员）→ `finished`
+- `public`：`round`/`max_rounds`(=3)、`seats`、`alive_seats`、`today_describes[]`（本轮 `{seat,text}`——**描述完全公开**）、`exiled_log[]`（已放逐者及亮出的身份）、`pk_candidates`（平票 PK 候选，非 PK 时 null）、`speaking_seat`/`pending_speakers`（describe 相位）、`votes_cast`/`pending_voters`（vote 相位，公开进度类——与狼人杀同语义）
+- `private`：`word`（自己的词）、`is_undercover`、`alive`——**卧底词异于他人 = 卧底自知身份**（经典规则：不是系统告知，是词不同这一事实本身）；平民只知自己的词，不知他人词
+- 动作：describe 相位 `{type:"describe", text}`（1-120 字符、不得含自己的词——**含词直接 422 拒收**，这是唯一的"发言校验"）；vote 相位 `{type:"vote", target}`（存活席位；PK 时仅候选）或 `{type:"pass"}`（弃票）
+- **信息隔离要点**：`word_assigned` 事件逐席位私有（`visibility:{seats:[seat]}`——观战流只见"X号已拿到词"不可见词）；`described`/`vote_result`/`player_exiled` 全公开（描述与放逐本身就是公开行为）；终局 `game_won` **公开全部身份与词对**（观赏性：复盘谁是卧底、词对是什么）
+- 事件：`word_assigned`×6（私有，经 `initialEvents` 钩子入流）→ `described`（逐条公开）→ `vote_pk`（含 `candidates`/`tally`，平票时）→ `vote_result`（含 `tally`/`exiled`/`passed`）→ `player_exiled`（**含 `role` + `was_undercover`**——亮身份事件）→ `game_won`（`winner`="civilians"|"undercover"、`roles` 全表、`word_pair`、`reason`）→ `match_ended`（`scores` 阵营口径：胜方阵营全员 1，败方 0）
+- 超时默认：describe 超时 = 系统代发「（超时未描述）」；vote 超时 = **`pass`（弃票）——绝不代投票**（与狼人杀同纪律：投票是立场表达，不容系统代持）
+- **v0 简化与竞技要点**：无发言频率限制之外的约束；平票 PK 一轮制（再平票无人出局直接进下一轮——与狼人杀"全员平票候选免费重投"略异，v0 从简）；bot 用类别模板描述（近似词天然同类，风格与平民一致）。**策略核心在 describe 的信息量控制**：平民要说得"像但模糊"（帮同伴排除嫌疑又不给卧底递词），卧底要模仿类别风格但避开自己词的特有细节
+- 默认超时：60s/动作（describe 与 vote 共用；真人局建议 90-120s 留措辞思考）
+
 ## 8. 计时、幂等与恢复
 
 - **计时**：deadline 由服务端权威维护（`deadline_ms` 绝对时刻，`ms_remaining` 倒计时——**相位窗口**语义，见 §6.1；回合收尾即预置下一回合时限，间隙期不再为 null）；提前全员提交 → 提前推进；同时相位（夜间/投票）为共享窗口，见 §7.3。
@@ -388,9 +402,9 @@ claude mcp add agent-lobby -- node --experimental-strip-types <repo>/mcp/server.
   - 匿名观战者标识 `voter_id` 由客户端自备（Web 前端用 localStorage 随机 UUID）；同一 `voter_id` 重复 POST = **改票**（老票 -1 新票 +1，`changed:true`），同票重发幂等（`changed:false`）。
   - 校验：席位无效 → 422 `SEAT_INVALID`（附 `valid_seats`）；缺 `voter_id` → 422 `VOTER_REQUIRED`；对局已终局 → 409 `GUESS_LOCKED`。
 - `GET /api/v1/matches/:id/guess?voter_id=<...>`
-  - **进行中**：`{locked:false, counts:{"2":3,...}, total, mine, label}`——`label` 告知本局竞猜目标（狼人杀="狼"，其他游戏="胜者"）。
+  - **进行中**：`{locked:false, counts:{"2":3,...}, total, mine, label}`——`label` 告知本局竞猜目标（狼人杀="狼"、谁是卧底="卧底"，其他游戏="胜者"）。
   - **终局 reveal**：`{locked:true, counts, total, mine, label, targets:[...], mine_hit, crowd_pick:[...], crowd_pick_votes, crowd_hit, total_voters}`。
-  - 目标语义：`werewolf_lite` → 真狼席位（从 `game_won` 事件的 `data.roles` 过滤 `werewolf`；恢复壳经落盘事件同样可取）；**其他游戏通用为「猜胜者」**（`result.scores > 0`，平局并列全中）。
+  - 目标语义：`werewolf_lite` → 真狼席位（从 `game_won` 事件的 `data.roles` 过滤 `werewolf`）；`undercover` → 卧底席位（同源过滤 `undercover`，r25）；恢复壳经落盘事件同样可取；**其他游戏通用为「猜胜者」**（`result.scores > 0`，平局并列全中）。
 - **信息隔离铁律**：进行中响应**绝不**含 `targets` / `mine_hit` / `crowd_*` 任何泄露键——票数是观众自己投的（无信息特权），不构成泄露；目标席位只在终局后 reveal。E2E 有专项断言（零泄露键）。
 - **持久化语义**：内存态、随进程（重启即弃，重启前投过的票作废但不影响任何人——竞猜无奖励无副作用）。对局滚动清理淘汰时不单独通知。
 

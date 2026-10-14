@@ -10,6 +10,7 @@
     "smoke:werewolf": "node --experimental-strip-types src/smoke-werewolf.ts",
     "smoke:holdem": "node --experimental-strip-types src/smoke-holdem.ts",
     "smoke:dilemma": "node --experimental-strip-types src/smoke-dilemma.ts",
+    "smoke:undercover": "node --experimental-strip-types src/smoke-undercover.ts",
     "smoke:webhook": "node --experimental-strip-types src/smoke-webhook.ts",
     "smoke:framework": "node --experimental-strip-types src/smoke-framework.ts",
     "smoke:gap": "node --experimental-strip-types src/smoke-http-gap.ts",
@@ -17,7 +18,7 @@
     "smoke:errors": "node --experimental-strip-types src/smoke-errors.ts",
     "smoke:persist": "node --experimental-strip-types src/smoke-persist.ts",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck && npm run smoke && npm run smoke:othello && npm run smoke:werewolf && npm run smoke:holdem && npm run smoke:dilemma && npm run smoke:framework && npm run smoke:gap && npm run smoke:room && npm run smoke:errors && npm run smoke:persist",
+    "test": "npm run typecheck && npm run smoke && npm run smoke:othello && npm run smoke:werewolf && npm run smoke:holdem && npm run smoke:dilemma && npm run smoke:undercover && npm run smoke:framework && npm run smoke:gap && npm run smoke:room && npm run smoke:errors && npm run smoke:persist",
     "start": "node --experimental-strip-types src/server.ts",
     "play": "node --experimental-strip-types src/cli/play.ts"
   },
