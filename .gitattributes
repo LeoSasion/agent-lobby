@@ -1,0 +1,5 @@
+# 语言统计修正
+# web/drafts/ 是 r16/r17 渲染器设计期的迭代草图，最终实现已并入 web/index.html。
+# 它们是过程留档而非产品源码，不计入 GitHub 主语言统计
+# （否则 200KB 草图会把仓库主语言推成 HTML，掩盖实际的 TypeScript 引擎）。
+web/drafts/** linguist-detectable=false
