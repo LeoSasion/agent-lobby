@@ -5,4 +5,8 @@ data/
 mcp/.mcp-state.json
 mcp/.smoke-state.json
 .DS_Store
-tmp-*/
+# 逐轮开发工作产物（含编排脚本/凭据/日志，不入公开仓）
+tmp-*
+
+# 含竞品调研内参，暂不公开
+docs/03-开发备忘录.md
