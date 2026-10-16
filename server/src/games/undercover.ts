@@ -2,7 +2,8 @@
  * 谁是卧底（undercover）—— 社交推理经典 · 中文国民游戏（r25：双游戏轮主菜，Masquerade/SteamedClaw 品类）
  * 6 席：1 卧底 + 5 平民；平民同拿「平民词」，卧底拿近似「卧底词」（词对库 rng 选取）
  * 流程（3 轮上限）：发词（私有）→ describe（存活者按座位序一句话描述自己的词，不得含词本身）
- *   → vote（同时投票放逐，平票 PK 重投——狼人杀同构）→ 被放逐者亮身份 → 下一轮
+ *   → vote（同时投票放逐，平票 PK 重投——两轮制：r27-d 首轮平票进 PK1，PK1 再平票进 PK2（候选收敛为本次平票者），
+ *   PK2 再平票无人出局进下一轮）→ 被放逐者亮身份 → 下一轮
  * 胜负：放逐卧底 = 平民胜；存活 ≤3 且卧底在场 = 卧底胜；3 轮打完卧底仍存活 = 卧底胜
  * 信息隔离：private.word + private.is_undercover（卧底词异于他人 = 卧底自知身份——经典规则）；
  *   描述与投票公开；被放逐者身份公开（亮身份）；终局 game_won 公开全部身份与词对（观赏性）
@@ -58,6 +59,8 @@ interface State {
   todayDescribes: { seat: SeatId; text: string }[];
   votes: Map<SeatId, SeatId | null>;
   pkCandidates: SeatId[] | null;
+  /** r27-d：PK 轮次（0=非 PK；1=PK 第 1 轮；2=PK 第 2 轮——再平票无人出局） */
+  pkRound: number;
   winner: "civilians" | "undercover" | null;
   exiledLog: { seat: SeatId; role: Role }[];
   initEvents: GameEvent[];
@@ -78,8 +81,9 @@ function checkWin(s: State, events: GameEvent[]): boolean {
   if (!ucAlive) {
     s.phase = "finished";
     s.winner = "civilians";
-  } else if (aliveCount <= 3 || s.round > 3) {
-    // 卧底撑到最后三人 / 三轮描述-投票打完仍存活
+  } else if (aliveCount <= 3 || s.round >= 3) {
+    // 卧底撑到最后三人 / 三轮描述-投票打完仍存活（r27-d 勘误：checkWin 在 round 自增前调用，
+    // 旧 `> 3` 判据要打到第 4 轮才终局——与「3 轮上限」文档相悖，改为 `>= 3` 恰在第 3 轮投票结算时收口）
     s.phase = "finished";
     s.winner = "undercover";
   }
@@ -111,19 +115,26 @@ function tryResolveVote(s: State, events: GameEvent[]): void {
   for (const [t, n] of tally) {
     if (n > max) { max = n; tied = [t]; } else if (n === max) { tied.push(t); }
   }
-  if (max > 0 && tied.length > 1 && s.pkCandidates === null) {
+  // r27-d 平票 PK 两轮制：首轮平票 → PK1；PK1 再平票 → PK2（候选收敛为本次平票者）；
+  // PK2 再平票 → 无人出局，直接进下一轮 describe
+  if (max > 0 && tied.length > 1 && s.pkRound < 2) {
     s.pkCandidates = tied;
     s.votes = new Map();
-    events.push({ type: "vote_pk", data: { candidates: tied, tally: Object.fromEntries([...tally.entries()]) } });
+    s.pkRound += 1;
+    events.push({
+      type: "vote_pk",
+      data: { pk_round: s.pkRound, candidates: tied, tally: Object.fromEntries([...tally.entries()]) },
+    });
     return;
   }
-  const exiled: SeatId | null = max > 0 && tied.length === 1 ? tied[0] : null;
+  const exiled: SeatId | null = max > 0 && tied.length === 1 ? tied[0] : null; // PK2 再平票 → 无人出局
   const passed = aliveSeats(s).filter((t) => s.votes.get(t) === null);
   events.push({
     type: "vote_result",
-    data: { tally: Object.fromEntries([...tally.entries()]), exiled, passed, pk: s.pkCandidates !== null },
+    data: { tally: Object.fromEntries([...tally.entries()]), exiled, passed, pk: s.pkRound > 0 },
   });
   s.pkCandidates = null;
+  s.pkRound = 0;
   if (exiled !== null) {
     const role = s.roles.get(exiled) as Role;
     s.alive.set(exiled, false);
@@ -169,6 +180,7 @@ export function createUndercover(): GameModule<State> {
         todayDescribes: [],
         votes: new Map(),
         pkCandidates: null,
+        pkRound: 0,
         winner: null,
         exiledLog: [],
         initEvents: [],
@@ -206,7 +218,7 @@ export function createUndercover(): GameModule<State> {
       if (alive(seat) !== true) return [];
       const pool = s.pkCandidates ?? aliveSeats(s);
       return [
-        { type: "vote", schema: { target: "enum", values: pool }, hint: s.pkCandidates ? "PK 重投：仅可投平票候选人" : undefined },
+        { type: "vote", schema: { target: "enum", values: pool }, hint: s.pkCandidates ? `PK 第 ${s.pkRound} 轮重投：仅可投平票候选人` : undefined },
         { type: "pass", hint: "弃票" },
       ];
     },
@@ -266,6 +278,7 @@ export function createUndercover(): GameModule<State> {
         today_describes: s.todayDescribes,
         exiled_log: s.exiledLog,
         pk_candidates: s.pkCandidates,
+        pk_round: s.pkRound,
         max_rounds: 3,
       };
       if (s.phase === "describe") {

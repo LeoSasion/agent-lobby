@@ -164,7 +164,66 @@ console.log("\n[场景 5] 狼队密语（r26-b）");
   check("村民视角零 wolf_chat 字段", !("wolf_chat" in vVil.private));
   check("密语超 500 字被拒", game.validate(s5, wolfList[0]!, { type: "wolf_say", text: "长".repeat(501) }).ok === false);
   check("非狼发密语被拒", game.validate(s5, vil, { type: "wolf_say", text: "hi" }).ok === false);
+  // r27-a：每狼每夜密语上限 5 条（防刷屏——第 6 条被拒）
+  for (let i = 0; i < 5; i++) game.apply(s5, wolfList[0]!, { type: "wolf_say", text: `密语${i + 1}` }, rng5);
+  check("每狼每夜密语 5 条上限（第 6 条被拒）", game.validate(s5, wolfList[0]!, { type: "wolf_say", text: "第6条" }).ok === false
+    && game.validate(s5, wolfList[1]!, { type: "wolf_say", text: "队友不受影响" }).ok === true,
+    `wolf${wolfList[0]} 已发 5 条 · wolf${wolfList[1]} 仍可发`);
   check("bot 局狼队密语出现且私有", r1.events.some((e) => e.type === "wolf_said" && e.visibility !== "all"));
+}
+
+// —— 场景 6：r27-e 幻影遗言回归（多 seed 扫描）——
+// r26-b 两步夜（先密语后出刀）× 内核每 step 清空 received：预言家在第二步被重复驱动重交 check，
+// 同批 apply 循环内先手狼刀收齐即推进相位，陈旧 check 落进 day_discuss 分支化作空文本
+// 「幻影遗言」——吞掉夜亡者真遗言；且 acted 可见性误判 all（验人目标全场泄露）。
+// 不变量：① last_words 恒非空 ② 夜亡者（对局继续时）必有遗言 ③ kill/check acted 恒非 all
+console.log("\n[场景 6] r27-e 幻影遗言回归（多 seed 扫描）");
+{
+  let emptyLastWords = 0;
+  let victimSilenced = 0;
+  let nightVisLeak = 0;
+  let nightVictims = 0;
+  const SEEDS = 24;
+  for (let seed = 9000; seed < 9000 + SEEDS; seed++) {
+    const rr = await createMatch({
+      game,
+      drivers: [1, 2, 3, 4, 5, 6].map((i) => createWerewolfBot(`s${seed}b${i}`, i)),
+      seed,
+      timeoutMs: 50,
+    }).run();
+    // ① 空文本遗言（幻影指纹：陈旧动作无 text 字段落进遗言分支）
+    if (rr.events.some((e) => e.type === "last_words" && String((e.data as { text?: string }).text ?? "").length === 0)) {
+      emptyLastWords++;
+    }
+    // ② 夜亡者遗言被吞：player_died(night) 后对局继续（随后有 day_discuss 相位）却无该席位遗言
+    for (let i = 0; i < rr.events.length; i++) {
+      const e = rr.events[i]!;
+      if (e.type !== "player_died" || (e.data as { cause?: string }).cause !== "night") continue;
+      nightVictims++;
+      const dayFollows = rr.events.slice(i).some(
+        (x) => x.type === "phase_started" && (x.data as { phase?: string }).phase === "day_discuss",
+      );
+      if (!dayFollows) continue; // 当夜终局（狼达平价）——无次日，遗言可合法缺席
+      const seat = (e.data as { seat?: number }).seat;
+      const spoke = rr.events.some(
+        (x) => x.type === "last_words" && (x.data as { seat?: number }).seat === seat,
+      );
+      if (!spoke) victimSilenced++;
+    }
+    // ③ 夜间动作 acted/timed_out 可见性泄露（幻影排布下曾以 all 写库）
+    if (
+      rr.events.some((e) => {
+        if (e.type !== "acted" && e.type !== "timed_out") return false;
+        const a = (e.type === "acted" ? e.data.action : e.data.default_action) as { type?: string } | undefined;
+        return (a?.type === "kill" || a?.type === "check") && e.visibility === "all";
+      })
+    ) {
+      nightVisLeak++;
+    }
+  }
+  check(`幻影遗言零出现（${SEEDS} 局 · 夜亡 ${nightVictims} 人）`, emptyLastWords === 0, `空文本遗言 × ${emptyLastWords}`);
+  check("夜亡者遗言不被吞（对局继续的夜亡者必有遗言）", victimSilenced === 0, `被吞 × ${victimSilenced}`);
+  check("夜间动作 acted 恒非 all 可见性（含幻影易发排布）", nightVisLeak === 0, `泄露局 × ${nightVisLeak}`);
 }
 
 console.log(`\n=== 结果：${failed === 0 ? "全部通过" : failed + " 项失败"} ===`);

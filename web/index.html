@@ -191,6 +191,18 @@ select,textarea,input[type=number],input:not([type]){background:#10150f;color:va
 .tv .tvcm .star.h2{color:var(--amb)}
 .tv .tvcm .tx{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tv .tvcm .tx.dim{color:var(--faint);letter-spacing:.15em}
+/* r27-b 金句频道：大厅级跨桌高光轮播带（区别于顶部「赛场脉搏」原始事件流——那是脉搏，这是嗓门） */
+.cmq{display:flex;align-items:baseline;gap:12px;padding:8px 0 9px;border-bottom:1px solid var(--line);margin-bottom:14px;min-height:26px}
+.cmq .qlab{font-family:var(--mono);font-size:10px;letter-spacing:.32em;color:var(--faint);flex:none}
+.cmq-body{flex:1;min-width:0;font-size:13px;line-height:1.6}
+.cmq .qrow{display:inline-flex;gap:9px;align-items:baseline;max-width:100%;cursor:pointer}
+.cmq .qrow:hover .tx{color:var(--grn)}
+.cmq .qrow.fresh{animation:freshin .45s ease-out}
+.cmq .star{color:var(--amb);font-size:11px;flex:none}
+.cmq .tx{color:var(--ink);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cmq .src{color:var(--faint);font-size:11px;flex:none;letter-spacing:.06em}
+.cmq .tno{font-size:10px;color:var(--faint);flex:none;letter-spacing:.12em}
+.cmq .tx.dim{color:var(--dim)}
 @keyframes freshin{from{opacity:0;transform:translateY(-6px)}}
 .tvfoot b.changed{animation:numPulse .9s ease-out}
 @keyframes numPulse{0%{color:#fff;text-shadow:0 0 10px rgba(69,217,142,.9)}}
@@ -490,6 +502,7 @@ textarea{width:100%;min-height:44px;resize:vertical}
       <div class="rail colrule-r" id="rail-lobby"></div>
       <div class="main">
         <div class="ch" id="wall-ttl">直播墙 <small>LIVE WALL · 多桌并发 · 点击任意一桌进入围观</small></div>
+        <div class="cmq" id="cmq"><span class="qlab">金 句 频 道</span><div class="cmq-body" id="cmq-body"><span class="tx dim">解说暖场中——等待今夜第一句高光</span></div><span class="tno num" id="cmq-n"></span></div>
         <div class="wall" id="wall"><div class="tv empty">正在打探今晚的桌子…</div></div>
 
         <div class="sect eyebrow" style="display:flex;align-items:baseline;gap:14px">「 今 日 赛 程 」<span style="letter-spacing:.2em;font-size:11px;color:var(--faint)" class="num" id="sched-cnt"></span></div>
@@ -626,7 +639,7 @@ function evText(e) {
     case "described": return `${d.seat}号描述：${esc(d.text)}`;
     case "word_assigned": return `【发词】${d.seat}号已拿到词（私有）`;
     case "player_exiled": return `${d.seat}号被放逐——身份是「${d.was_undercover ? "卧底" : "平民"}」`;
-    case "vote_pk": return `平票 PK！候选：${(d.candidates ?? []).join("、")} 号 —— 全员仅可在候选中重投`;
+    case "vote_pk": return `平票 PK${d.pk_round ? ` 第 ${d.pk_round} 轮` : ""}！候选：${(d.candidates ?? []).join("、")} 号 —— 全员仅可在候选中重投`;
     case "vote_result": return `计票 ${esc(JSON.stringify(d.tally))} → ${d.exiled != null ? d.exiled + "号被放逐" : "无人出局"}`;
     case "player_died": return `${d.seat}号出局（${d.cause === "night" ? "夜间遇害" : "投票放逐"}）`;
     case "night_kill_decided": return `【狼队】刀口 → ${d.target != null ? d.target + "号" : "空刀"}（私有事件，仅狼可见）`;
@@ -804,6 +817,7 @@ async function loadLobby() {
     $("#sbar-live").textContent = `${mr.matches.filter((m) => !m.finished).length} live`;
     loadWallViews();
     startWallSSE(); // r20：直播墙实时链路（SSE 直连，4s 轮询降级兜底）
+    startQuoteLoop(); // r27-b：金句频道轮播（SSE/轮询喂流与脉搏带共用）
   } catch { /* 网关暂不可达 */ }
 }
 
@@ -943,6 +957,7 @@ function ingestEvent(mid, e) {
   // r26-c TV 卡解说位：高光事件（hot≥1）经规则解说引擎采词——直播卡常驻最近一条解说金句
   const cm = commentate(e);
   if (cm && cm.hot >= 1) WALL.cm[mid] = { txt: cm.t, hot: cm.hot };
+  if (cm && cm.hot >= 2) pushQuote(mid, cm.t); // r27-b 金句频道：跨桌聚合高光轮播
   WALL.ts.push(Date.now());
   if (WALL.ts.length > 240) WALL.ts.splice(0, 120);
   pushBand(mid, txt, hot);
@@ -955,6 +970,41 @@ function pushBand(mid, txt, hot) {
   TK.items = TK.items.slice(0, 6);
   $("#ticker").innerHTML = TK.items.slice(0, 3).map((t, i) =>
     `<span class="${t.hot ? "hot" : ""}" ${i === 0 ? 'style="animation:freshin .45s ease-out"' : ""} onclick="gotoMatch('${esc(t.mid)}')">${esc(t.text)}</span>`).join("");
+}
+
+/* r27-b 大厅级金句轮播带：跨桌聚合 commentate hot≥2 金句——新句插队置顶，
+   4.2s 轮播环回，点击跳桌。冷启动/静止时保持暖场文案（零卡片 · 细线 + 留白）。 */
+const CMQ = { items: [], cursor: 0, timer: null };
+function pushQuote(mid, txt) {
+  const top = CMQ.items[0];
+  if (top && top.mid === mid && top.txt === txt) return; // 同桌同句去抖
+  const game = (WALL.live.find((x) => x.match_id === mid) ?? {}).game ?? "";
+  CMQ.items.unshift({ mid, txt, game, t: Date.now() });
+  if (CMQ.items.length > 12) CMQ.items.length = 12;
+  CMQ.cursor = 0; // 新金句到——切回最新
+  renderQuote(true);
+}
+function renderQuote(fresh) {
+  const el = document.getElementById("cmq-body");
+  if (!el) return;
+  const nEl = document.getElementById("cmq-n");
+  const it = CMQ.items[CMQ.cursor];
+  if (!it) {
+    el.innerHTML = '<span class="tx dim">解说暖场中——等待今夜第一句高光</span>';
+    if (nEl) nEl.textContent = "";
+    return;
+  }
+  const g = GAME_NAMES[it.game] ?? it.game;
+  el.innerHTML = `<span class="qrow${fresh ? " fresh" : ""}" onclick="gotoMatch('${esc(it.mid)}')"><span class="star">★</span><span class="tx">${esc(it.txt)}</span><span class="src num">—— ${esc(g)} · ${esc(String(it.mid).slice(2, 8))}</span></span>`;
+  if (nEl) nEl.textContent = CMQ.items.length > 1 ? `${CMQ.cursor + 1}/${CMQ.items.length}` : "";
+}
+function startQuoteLoop() {
+  if (CMQ.timer) return;
+  CMQ.timer = setInterval(() => {
+    if (CMQ.items.length < 2) return;
+    CMQ.cursor = (CMQ.cursor + 1) % CMQ.items.length;
+    renderQuote(true);
+  }, 4200);
 }
 
 function renderEvflow(mid) {
@@ -1405,6 +1455,7 @@ function commentate(e) {
     case "last_words":
       return { hot: 1, t: `【遗言】${d.seat} 号留下最后的证词——死者的信息量往往最致命` };
     case "vote_pk":
+      if (d.pk_round === 2) return { hot: 2, t: `二次平票！${(d.candidates ?? []).join("、")} 号终极 PK——再平就无人出局，白刃见红了` };
       return { hot: 1, t: `平票！${(d.candidates ?? []).join("、")} 号进入 PK 重投——票型收敛的时刻到了` };
     case "vote_result":
       if (d.exiled != null) return { hot: 2, t: `计票落定——${d.exiled} 号被放逐出局，身份揭晓` };
@@ -1867,7 +1918,7 @@ function renderUndercover(v, box, interactive) {
     const total = p.alive_seats.length, got = p.votes_cast;
     sayHtml += `<div class="voteline">放逐投票${p.pending_voters ? ` · 待投 ${p.pending_voters.length} 人` : ""}<span class="ticks">${Array.from({ length: total }, (_, i) => `<i class="${i < got ? "on" : ""}"></i>`).join("")}</span></div>`;
   }
-  if (p.pk_candidates) sayHtml += `<div class="voteline">平票 PK · 候选 ${(p.pk_candidates ?? []).join("、")} 号</div>`;
+  if (p.pk_candidates) sayHtml += `<div class="voteline">平票 PK${p.pk_round === 2 ? " 第 2 轮（再平无人出局）" : ""} · 候选 ${(p.pk_candidates ?? []).join("、")} 号</div>`;
   sayHtml += `</div>`;
   let html = `<div class="wolf-stage">
     <div class="round-table"><div class="table-disc"></div>${seats}
@@ -2017,6 +2068,8 @@ window.__r23 = { CM, commentate, pushCommentary, renderCommentary, CM_PRIVATE };
 window.__r24 = { renderDilemma, renderUndercover, miniStageInner, viewStats, evText, GAME_DESC, SEATS_DEFAULT, PHASES };
 /* r26 测试钩子：狼队密语渲染 + TV 卡解说位 + LLM 解说层 */
 window.__r26 = { pushCommentary, fireLLMCommentary, renderCommentary, LLM_CM, toggleLLMCM, commentate, WALL, ingestEvent, renderWall, renderWolf, renderActions };
+/* r27 测试钩子：金句频道轮播带 + undercover PK 两轮制渲染 */
+window.__r27 = { pushQuote, renderQuote, startQuoteLoop, CMQ, commentate, evText, renderUndercover };
 </script>
 </body>
 </html>

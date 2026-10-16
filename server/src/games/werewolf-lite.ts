@@ -248,7 +248,11 @@ export function createWerewolfLite(): GameModule<State> {
 
     activeSeats(s) {
       if (s.phase === "finished") return [];
-      if (s.phase === "night") return nightActors(s);
+      // r27-e：夜间已交行动者退出活跃集。r26-b 两步夜（先密语后出刀）让夜间横跨多个 step，
+      // 而内核每 step 清空 received——已交的预言家会被重复驱动重交 check；同批 apply 循环内
+      // 先手狼刀收齐即把相位推进到 day_discuss，后手这份陈旧 check 便落进遗言分支，
+      // 化作空文本「幻影遗言」吞掉夜亡者真遗言（且其 acted 可见性误判 all——验人目标泄露）。
+      if (s.phase === "night") return nightActors(s).filter((t) => !s.nightActions.has(t));
       if (s.phase === "day_discuss") {
         // 开场遗言优先（死者依次讲），随后存活者依序发言
         if (s.lwIndex < s.lwQueue.length) return [s.lwQueue[s.lwIndex]];
@@ -264,6 +268,9 @@ export function createWerewolfLite(): GameModule<State> {
 
       if (s.phase === "night") {
         if (alive(seat) !== true || (role !== "werewolf" && role !== "seer")) return [];
+        // r27-e：与 activeSeats 同步——已交夜间行动者法表清空（you.active=false，
+        // 视图不再兜售 check/kill；重复 POST 由内核按活跃集拒以 NOT_YOUR_TURN）
+        if (s.nightActions.has(seat)) return [];
         if (role === "werewolf") {
           const targets = aliveSeats(s).filter((t) => s.roles.get(t) !== "werewolf");
           if (targets.length === 0) return [{ type: "pass", hint: "无刀可出" }];
@@ -310,10 +317,14 @@ export function createWerewolfLite(): GameModule<State> {
         }
         if (action.type === "pass") return { ok: true };
         // r26-b 狼队密语：仅夜间存活狼可发；不写 nightActions（不占收齐名额）
+        // r27-a 频率限制：每狼每夜 ≤5 条（防刷屏；超时兜底/QPS 之外的引擎级防线）
         if (role === "werewolf" && action.type === "wolf_say") {
           const text = action.text;
           if (typeof text !== "string" || text.length < 1 || text.length > 500) {
             return { ok: false, error: `ILLEGAL_ACTION：text 须为 1-500 字符（按 UTF-16 码元计，当前 ${typeof text === "string" ? text.length : typeof text}）` };
+          }
+          if (s.wolfChat.filter((c) => c.seat === seat).length >= 5) {
+            return { ok: false, error: "ILLEGAL_ACTION：本夜密语已达上限（5 条/夜）——话要说在刀口上" };
           }
           return { ok: true };
         }

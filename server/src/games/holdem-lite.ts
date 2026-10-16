@@ -287,11 +287,18 @@ export function createHoldemLite(config: HoldemConfig = {}): GameModule<State> {
     }];
   }
 
-  /** 无行动余地时发完剩余公共牌（不设行动权） */
+  /** 无行动余地时发完剩余公共牌（不设行动权）
+   * r27-c：runout 补发全部街道相位——正常收街由内核 announcePhase 按相位变化播报（唯一），
+   * 但 runout 在单个 apply 内连发多街直抵摊牌/终局，内核只见最终 finished——flop/turn/river
+   * 全部丢失（backlog「runout 漏发 phase_started」的准确病灶：中间街+最终街都得引擎自发） */
   function runoutRest(s: State, rng: Rng): GameEvent[] {
     void rng;
     const events: GameEvent[] = [];
-    while (s.street !== "river") events.push(...dealNextStreet(s));
+    const NEXT: Record<string, string> = { preflop: "flop", flop: "turn", turn: "river" };
+    while (s.street !== "river") {
+      events.push({ type: "phase_started", data: { phase: NEXT[s.street]!, round: s.handNo } });
+      events.push(...dealNextStreet(s));
+    }
     s.toAct = null;
     return events;
   }

@@ -1,8 +1,9 @@
 /**
  * 冒烟测试：相位间隙提前提交（HTTP 通道回归 · E2E）
  * 场景：狼人杀网关固定 minPhaseMs=4000——每步结算后有 4s 强制间隙。
- *   人类座 1 为村民时，夜晚由 bot 立即结算；白天首个行动者必为座 1
- *   （若有夜亡者则遗言先行——座 1 阵亡时其法动为 last_words，同样是首个行动者）。
+ *   r27-e 预算：r26-b 狼队密语让夜间横跨两步（先声明后出刀，各 4s 间隙）；
+ *   夜亡者为 bot 时其遗言再占一步（+4s）——座 1 的 you.active 窗口最迟 ≈12s，轮询预算 16s。
+ *   人类座 1 为村民/夜亡者皆可命中：白天首个属于座 1 的行动（夜亡=last_words，存活=say）
  *   在间隙内轮询到 you.active=true 后立即 POST——必须被缓冲，回合开启时入账。
  * 修复前表现：视相位已推进、回合未开启 → 422 NOT_YOUR_TURN 的不一致窗口。
  * 运行：node --experimental-strip-types src/smoke-http-gap.ts
@@ -71,9 +72,10 @@ async function main(): Promise<void> {
   check("开局（人类为村民）", matchId !== "" && seatToken !== "", `尝试 ${tries} 次`);
 
   // 2. 间隙轮询：夜晚结算后 phase=day_discuss 且 you.active → 立即 POST
+  //    r27-e：预算 16s——两步夜（密语步+出刀步）+ 夜亡 bot 遗言步，各步 4s 间隙
   const t0 = Date.now();
   let view: AgentView | null = null;
-  while (Date.now() - t0 < 6000) {
+  while (Date.now() - t0 < 16000) {
     const v = await api("/matches/" + matchId + "/view", { headers: { "x-seat-token": seatToken } });
     view = v.body as unknown as AgentView;
     if (view.phase === "day_discuss" && view.you.active) break;
@@ -84,9 +86,14 @@ async function main(): Promise<void> {
     view?.phase === "day_discuss" && view?.you.active === true,
     `phase=${view?.phase ?? "?"}`,
   );
+  // 防御：窗口耗尽未见活跃席位时干净收场（旧版此处 TypeError 掩盖真实失败原因）
+  const legal = view?.legal_actions?.[0];
+  if (!legal) {
+    console.log(`\n=== 结果：${failed} 项失败（未进入座 1 行动窗口，跳过后续用例） ===`);
+    process.exit(1);
+  }
 
   // 3. 照法定动作提交（say 或 last_words——取决于座 1 是否夜亡），带 nonce 供幂等重放用例
-  const legal = view!.legal_actions[0]!;
   const action =
     legal.type === "last_words"
       ? { type: "last_words", text: "（间隙测试）遗言：信息给大家了。" }

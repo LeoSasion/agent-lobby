@@ -203,6 +203,27 @@ for (const s of botSuites) {
   botRuns.push({ match: m, seats: s.seats, label: s.label, hands, eliminations: elim });
 }
 check("视图信息隔离（每 phase × 每席位）", violations.length === 0, violations.length ? violations[0] : "0 违规");
+// r27-c：正常收街无相位双发——引擎只在 runout 补发中间街，与内核 announcePhase 播报互斥不重叠
+{
+  let dup = 0, checked = 0;
+  for (const b of botRuns) {
+    const evs = b.match.eventsFor("spectator") as unknown as { type: string; data: Record<string, unknown> }[];
+    const perHand = new Map<number, Set<string>>();
+    let curHand = 0;
+    for (const e of evs) {
+      if (e.type === "hand_started") curHand = Number(e.data.hand_no ?? 0);
+      if (e.type === "phase_started") {
+        const set = perHand.get(curHand) ?? new Set<string>();
+        const key = String(e.data.phase ?? "?");
+        if (set.has(key)) dup++;
+        set.add(key);
+        perHand.set(curHand, set);
+        checked++;
+      }
+    }
+  }
+  check("正常局每手每街相位唯一（补发与内核不双发）", dup === 0 && checked > 20, `${checked} 个相位事件 · ${dup} 处重复`);
+}
 const streetsSeen = new Set([...coverage.keys()].map((k) => k.split("#")[0]));
 check(
   "相位覆盖：四条街均被观察",
@@ -374,6 +395,8 @@ function layeredScript(name: string): SeatDriver {
 interface H2Info {
   seed: number;
   hash: string;
+  /** r27-c：事件数组（runout phase_started 配对断言用） */
+  evs: { type: string; data: { phase?: string; street?: string; hand_no?: number } }[];
   committed: Record<number, number>;
   evals: Map<number, HandEval>;
   amounts: Record<number, number>;
@@ -436,6 +459,7 @@ async function runLayered(seed: number): Promise<H2Info | null> {
   return {
     seed,
     hash: hashEvents(evs),
+    evs: evs as unknown as { type: string; data: { street?: string; hand_no?: number } }[],
     committed,
     evals,
     amounts: (he2.data as { amounts: Record<string, number> }).amounts as Record<number, number>,
@@ -495,6 +519,17 @@ if (caseL) {
     `pot=${caseL.pot} · total=${total}`,
   );
   check("runout 完整（flop 3 + turn 1 + river 1）", JSON.stringify(caseL.streetCards) === JSON.stringify([3, 1, 1]));
+  // r27-c：runout 手的街道相位完整——内核播 preflop+river，runoutRest 补发中间街 flop/turn（4 相位 3 街牌）
+  {
+    const evs = caseL.evs;
+    const starts = evs.map((e, i) => (e.type === "hand_started" ? i : -1)).filter((i) => i >= 0);
+    const h2 = evs.slice(starts[1] ?? 0);
+    const ps = h2.filter((e) => e.type === "phase_started").map((e) => e.data.phase);
+    const sd = h2.filter((e) => e.type === "street_dealt").map((e) => e.data.street);
+    check("runout 街道相位完整（preflop+flop+turn+river，无重复）",
+      ps.join(",") === "preflop,flop,turn,river" && sd.join(",") === "flop,turn,river",
+      `phase=[${ps.join(",")}] · street=[${sd.join(",")}]`);
+  }
   check("终局按筹码最高计分（短码 3×本码后领先）", caseL.scores[L] === 1, JSON.stringify(caseL.scores));
   check("50 手未到 → hand_limit 收束", caseL.reason === "hand_limit", caseL.reason);
   // 确定性：同 seed 重跑哈希一致

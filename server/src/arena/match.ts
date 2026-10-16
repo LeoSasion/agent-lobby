@@ -292,11 +292,19 @@ export class Match {
         this.store.append("timed_out", { seat, default_action: action }, this.eventVisibility(seat, action), this.submittedAt.get(seat));
       }
     }
+    // r27-e 防御纵深：同时相位批次内先手 apply 可能「收齐即结算」推进相位，
+    // 后手 acted 的可见性若在循环内逐席位计算会看到新相位——狼人杀曾因此把预言家
+    // 的 check 以 all 可见性写库（验人目标全场可见）。批次统一以循环前状态裁定，
+    // 与各席位提交时 validate 所见的相位一致（顺序相位单席位批次两者等价）。
+    const visBatch = new Map<SeatId, MatchEvent["visibility"]>();
+    for (const seat of active) {
+      visBatch.set(seat, this.eventVisibility(seat, this.received.get(seat)!));
+    }
     // 确定性：同时相位按座位号顺序应用；游戏模块异常不外抛，转为 match_failed 优雅终局
     for (const seat of [...active].sort((a, b) => a - b)) {
       const action = this.received.get(seat)!;
       const reasoning = this.reasons.get(seat);
-      const vis = this.eventVisibility(seat, action);
+      const vis = visBatch.get(seat)!;
       let res: { state: unknown; events: GameEvent[] };
       try {
         res = this.game.apply(this.state, seat, action, this.rng);

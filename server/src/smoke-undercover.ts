@@ -126,26 +126,117 @@ check("双跑事件哈希一致", hashEvents(rC.events) === hashEvents(rE.events
 const replayed = replayEvents(game, rC.events);
 check("事件重放还原同一终局（scores 一致）", JSON.stringify(replayed.scores) === JSON.stringify(rC.scores));
 
-// —— 场景 F：平票 PK（构造性验证）——
-console.log("\n[场景 F] 平票 PK");
+// —— 场景 F：平票 PK 两轮制（构造性验证，r27-d）——
+console.log("\n[场景 F] 平票 PK 两轮制");
 {
   const rng2 = () => 0.99;
   const st = game.init([1, 2, 3, 4, 5, 6], rng2);
-  // 跳过描述阶段：全员逐个 describe
-  for (let seat = 1; seat <= 6; seat++) {
-    game.apply(st, seat, { type: "describe", text: `描述${seat}` }, rng2);
-  }
-  // 三对三平票：1,2,3 投 4；4,5,6 投 1 → 平票 PK
+  const describeAll = (tag: string): void => {
+    for (let seat = 1; seat <= 6; seat++) {
+      game.apply(st, seat, { type: "describe", text: `描述${tag}${seat}` }, rng2);
+    }
+  };
+  describeAll("一");
+  // 三对三平票：1,2,3 投 4；4,5,6 投 1 → 平票 PK 第 1 轮
   game.apply(st, 1, { type: "vote", target: 4 }, rng2);
   game.apply(st, 2, { type: "vote", target: 4 }, rng2);
   game.apply(st, 3, { type: "vote", target: 4 }, rng2);
   game.apply(st, 4, { type: "vote", target: 1 }, rng2);
   game.apply(st, 5, { type: "vote", target: 1 }, rng2);
   const r6 = game.apply(st, 6, { type: "vote", target: 1 }, rng2);
-  const pk = r6.events.find((e) => e.type === "vote_pk");
-  const pkD = (pk?.data ?? {}) as { candidates?: number[] };
-  check("三对三平票触发 PK（候选恰为两被投者）", !!pk && [...(pkD.candidates ?? [])].sort().join(",") === "1,4");
-  check("PK 后相位回 vote 且票池重置", st.phase === "vote" && st.pkCandidates !== null);
+  const pk1 = r6.events.find((e) => e.type === "vote_pk");
+  const pk1D = (pk1?.data ?? {}) as { candidates?: number[]; pk_round?: number };
+  check(
+    "三对三平票触发 PK1（候选恰为两被投者，pk_round=1）",
+    !!pk1 && [...(pk1D.candidates ?? [])].sort().join(",") === "1,4" && pk1D.pk_round === 1,
+  );
+  check("PK1 后相位回 vote 且票池重置（pkRound=1）", st.phase === "vote" && st.pkCandidates !== null && st.pkRound === 1);
+  check("viewOf 暴露 pk_round", (game.viewOf(st, "spectator").public as { pk_round?: number }).pk_round === 1);
+
+  // PK1 再三对三平票 → PK2：候选更新为本次平票者，pk_round=2
+  game.apply(st, 1, { type: "vote", target: 1 }, rng2);
+  game.apply(st, 2, { type: "vote", target: 4 }, rng2);
+  game.apply(st, 3, { type: "vote", target: 1 }, rng2);
+  game.apply(st, 4, { type: "vote", target: 4 }, rng2);
+  game.apply(st, 5, { type: "vote", target: 1 }, rng2);
+  const rPK1b = game.apply(st, 6, { type: "vote", target: 4 }, rng2);
+  const pk2 = rPK1b.events.find((e) => e.type === "vote_pk");
+  const pk2D = (pk2?.data ?? {}) as { candidates?: number[]; pk_round?: number };
+  check(
+    "PK1 再平票触发 PK2（pk_round=2，候选保持）",
+    !!pk2 && pk2D.pk_round === 2 && [...(pk2D.candidates ?? [])].sort().join(",") === "1,4" && st.pkRound === 2,
+  );
+
+  // PK2 再三对三平票 → 无人出局：vote_result exiled=null 且 pk=true，进下一轮 describe
+  game.apply(st, 1, { type: "vote", target: 1 }, rng2);
+  game.apply(st, 2, { type: "vote", target: 4 }, rng2);
+  game.apply(st, 3, { type: "vote", target: 1 }, rng2);
+  game.apply(st, 4, { type: "vote", target: 4 }, rng2);
+  game.apply(st, 5, { type: "vote", target: 1 }, rng2);
+  const rEnd = game.apply(st, 6, { type: "vote", target: 4 }, rng2);
+  const vr = rEnd.events.find((e) => e.type === "vote_result");
+  const vrD = (vr?.data ?? {}) as { exiled?: unknown; pk?: boolean };
+  check(
+    "PK2 再平票无人出局（exiled=null 且 pk=true）",
+    !!vr && vrD.exiled === null && vrD.pk === true,
+  );
+  check("无人出局后进下一轮 describe（round=2，PK 态清零）", st.phase === "describe" && st.round === 2 && st.pkCandidates === null && st.pkRound === 0);
+
+  // 回合推进：下一轮全员弃票（全 pass）→ 无人出局 round=3
+  describeAll("二");
+  for (let seat = 1; seat <= 6; seat++) game.apply(st, seat, { type: "pass" }, rng2);
+  check("全弃票无人出局且推进 round=3", st.phase === "describe" && st.round === 3 && st.pkRound === 0);
+
+  // 第 3 轮打完 → 卧底存活卧底胜（3 轮上限）
+  describeAll("三");
+  for (let seat = 1; seat <= 6; seat++) game.apply(st, seat, { type: "pass" }, rng2);
+  check("3 轮打完卧底存活 → 卧底胜终局", st.phase === "finished" && st.winner === "undercover");
+}
+
+// —— 场景 G：PK 候选收敛（三路平票 → PK1 二路 → PK2 一锤定音，r27-d）——
+console.log("\n[场景 G] PK 候选收敛");
+{
+  const rng3 = () => 0.5;
+  const st = game.init([1, 2, 3, 4, 5, 6], rng3);
+  for (let seat = 1; seat <= 6; seat++) {
+    game.apply(st, seat, { type: "describe", text: `描述${seat}` }, rng3);
+  }
+  // 三路平票 2:2:2：1,2 投 3；3,4 投 5；5,6 投 2 → PK1 候选 [2,3,5]
+  game.apply(st, 1, { type: "vote", target: 3 }, rng3);
+  game.apply(st, 2, { type: "vote", target: 3 }, rng3);
+  game.apply(st, 3, { type: "vote", target: 5 }, rng3);
+  game.apply(st, 4, { type: "vote", target: 5 }, rng3);
+  game.apply(st, 5, { type: "vote", target: 2 }, rng3);
+  const rPK1 = game.apply(st, 6, { type: "vote", target: 2 }, rng3);
+  const pkA = rPK1.events.find((e) => e.type === "vote_pk");
+  const pkAD = (pkA?.data ?? {}) as { candidates?: number[] };
+  check("三路平票 PK1 候选三席", !!pkA && [...(pkAD.candidates ?? [])].sort().join(",") === "2,3,5");
+
+  // PK1：2 票投 2、2 票投 3、2 人弃 → 二路平票 → PK2 候选收敛 [2,3]
+  game.apply(st, 1, { type: "vote", target: 2 }, rng3);
+  game.apply(st, 2, { type: "vote", target: 2 }, rng3);
+  game.apply(st, 3, { type: "vote", target: 3 }, rng3);
+  game.apply(st, 4, { type: "vote", target: 3 }, rng3);
+  game.apply(st, 5, { type: "pass" }, rng3);
+  const rPK2 = game.apply(st, 6, { type: "pass" }, rng3);
+  const pkB = rPK2.events.find((e) => e.type === "vote_pk");
+  const pkBD = (pkB?.data ?? {}) as { candidates?: number[]; pk_round?: number };
+  check(
+    "PK1 二路平票 → PK2 候选收敛（[2,3,5]→[2,3]，pk_round=2）",
+    !!pkB && pkBD.pk_round === 2 && [...(pkBD.candidates ?? [])].sort().join(",") === "2,3",
+  );
+
+  // PK2：3 票投 2、3 人弃 → 一锤定音放逐 2 号
+  game.apply(st, 1, { type: "vote", target: 2 }, rng3);
+  game.apply(st, 3, { type: "vote", target: 2 }, rng3);
+  game.apply(st, 4, { type: "pass" }, rng3);
+  game.apply(st, 5, { type: "vote", target: 2 }, rng3);
+  game.apply(st, 6, { type: "pass" }, rng3);
+  const rExile = game.apply(st, 2, { type: "pass" }, rng3);
+  const ex = rExile.events.find((e) => e.type === "player_exiled");
+  const exD = (ex?.data ?? {}) as { seat?: number };
+  check("PK2 多数票放逐成功（player_exiled seat=2）", !!ex && exD.seat === 2 && st.pkRound === 0);
+  check("放逐后进下一轮 describe", st.phase === "describe" && st.round === 2);
 }
 
 console.log(`\n=== 结果：${failed === 0 ? "全部通过" : failed + " 项失败"} ===`);
