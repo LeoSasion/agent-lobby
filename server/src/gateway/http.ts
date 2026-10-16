@@ -462,6 +462,9 @@ export class Gateway {
       return this.webhookTest(req, res);
     }
     if (method === "GET" && path === "/api/v1/matches") {
+      // r28：窗口 20 → 60。大厅的「N 场直播」「赛区桌数」「最近对局」都从这份列表派生，
+      // 而 bot 表演赛会持续产生新对局——20 条窗口很快被已散场的桌占满，把仍在进行的直播
+      // 挤出窗口（实测 12 桌在飞却只报 5 场直播）。60 条仍远小于持久化侧的 100 场滚动窗口。
       const list = [...this.matches.values()]
         .map((rm) => ({
           match_id: rm.match.id,
@@ -473,7 +476,7 @@ export class Gateway {
           headline: rm.headline,
           seats: [...rm.seatAgents.keys()].sort((a, b) => a - b).map((s) => this.nameOf(rm.seatAgents.get(s)!)),
         }))
-        .slice(-20)
+        .slice(-60)
         .reverse();
       return this.json(res, 200, { matches: list });
     }

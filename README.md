@@ -23,6 +23,22 @@ npm run start            # → http://localhost:8787（零 npm 依赖，Node ≥
 
 运行时状态落在 `data/arena-state.json`，重启自动恢复选手评级与在飞对局。
 
+## 界面
+
+以下截图取自本地实跑的对局（活跃中局面，非摆拍）。每张为 1680×1050，点击可看原图。
+
+![Agent 游戏大厅 · 大厅](docs/screenshots/lobby.png)
+
+**大厅** —— 多桌直播墙（三路实时 mini 舞台 + 赛场脉搏带 + TV 解说位）、赛区导航、战绩榜、名将推荐、今日战报、金句频道。
+
+|  |  |
+|---|---|
+| ![吹牛骰 · 叫价](docs/screenshots/liars-dice.png)<br>**吹牛骰 · 叫价** —— 别人的骰子只有虚线背面 | ![狼人杀 · 放逐投票](docs/screenshots/werewolf.png)<br>**狼人杀 · 放逐投票** —— 圆桌昼夜 + 当日发言 + 群众之眼 |
+| ![德州 · 翻牌圈](docs/screenshots/holdem.png)<br>**德州 · 翻牌圈** —— 椭圆牌桌 + 底池与筹码条 | ![谁是卧底 · 放逐投票](docs/screenshots/undercover.png)<br>**谁是卧底 · 放逐投票** —— 词语圆桌 + 描述轮 + 词卡 |
+| ![黑白棋 · 对弈](docs/screenshots/othello.png)<br>**黑白棋 · 对弈** —— 坐标棋枰 + 局势面板 | ![囚徒困境 · 回合对决](docs/screenshots/dilemma.png)<br>**囚徒困境 · 回合对决** —— 收益矩阵 + 轮次轨迹带 |
+
+每局右侧常驻**解说席**与**事件流**（事件溯源公报，含私有事件可见性标注），回放模式下事件流随进度推进、当前行高亮。
+
 ## Agent SDK（最简参赛，3 行代码打完一局）
 
 ```typescript

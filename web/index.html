@@ -405,6 +405,10 @@ select,textarea,input[type=number],input:not([type]){background:#10150f;color:va
 .cnt .v{font-family:var(--serif);font-size:27px;color:#e8f0ea}
 .cnt .who{color:var(--dim);font-size:11px;margin-left:auto}
 .cnt.turn-c .v{color:var(--grn)}
+/* r28 修复：第 176 行的 .oth-side{position:absolute;right:0;top:8px} 是给大厅直播卡迷你舞台用的，
+   选择器未限定作用域，泄漏到正式对局视图——.oth-stage 无定位祖先，整块「局势」面板被甩到
+   页面右上角盖住页头（截图时肉眼可见）。正式视图恢复为正常文档流。 */
+.oth-stage .oth-side{position:static;text-align:left}
 /* r17 回放时间轴（草案 B 席位泳道选定）：摘要卡 + 泳道轨迹 + 日志同步高亮 */
 .nowcard{display:flex;align-items:center;gap:14px;border:1px solid var(--line);background:#0e1310;padding:10px 14px;margin-top:10px}
 .nowcard .seq{font-family:var(--serif);font-size:22px;color:var(--amb);min-width:64px}
@@ -621,12 +625,47 @@ function seatNames(evs) { const st = evs.find((e) => e.type === "match_started")
 function revealedRoles(evs) { const w = evs.find((e) => e.type === "game_won"); return w ? w.data.roles : null; }
 const cellName = (c) => "ABCDEFGH"[c % 8] + (Math.floor(c / 8) + 1);
 
+/* r28：动作中文名 + 牌面文本。脉搏带/事件流此前对 holdem 事件缺 case，
+   会直接落到默认分支吐原始 JSON（`action {"seat":6,...}`），跨桌聚合时尤其刺眼 */
+const ACT_NAME = { bid:"叫价", challenge:"开牌", place:"落子", pass:"过", kill:"出刀", say:"发言", vote:"投票", describe:"描述", move:"抉择", wolf_say:"密语", call:"跟注", fold:"弃牌", raise:"加注", allin:"全下" };
+const HOLDEM_ACT = { check:"看牌", call:"跟注", fold:"弃牌", raise:"加注", allin:"全下" };
+const cardTxt = (c) => (c ? c.slice(0, c.length - 1) + (SUITS[c.slice(-1)] ?? c.slice(-1)) : "?");
+/* 席位→数值 的映射直出 JSON 太生硬（终局分数 / 计票 / 总收益都是这种形状）——统一走这里 */
+const numMap = (o, suf = "") => Object.entries(o ?? {}).map(([k, v]) => `${k}号 ${v}${suf}`).join(" · ");
+
 function evText(e) {
   const d = e.data ?? {};
   switch (e.type) {
     case "match_started": return `开局 · ${esc(d.game)} · ${(d.drivers ?? []).map(esc).join(" / ")}`;
     case "phase_started": return `— ${phaseName(d.phase)}（第 ${d.round} 轮）—`;
-    case "acted": return `${d.seat}号行动 ${esc(JSON.stringify(d.action))}`;
+    case "acted": {
+      const a = d.action ?? {}, t = a?.type;
+      // 同名不同义：狼人杀 check 带 target（验人），holdem check 无 target（看牌）
+      if (t === "check") return `${d.seat}号行动 · ${a.target != null ? `验人 ${a.target} 号` : "看牌"}`;
+      const extra = (t === "vote" || t === "kill") && a.target != null ? ` → ${a.target} 号`
+        : t === "raise" && a.to != null ? ` 至 ${a.to}` : "";
+      return `${d.seat}号行动 · ${ACT_NAME[t] ?? t}${extra}`;
+    }
+    /* r28：holdem 专属事件此前全落默认分支吐原始 JSON（跨桌聚合的脉搏带尤其刺眼） */
+    case "hand_started": return `第 ${d.hand_no} 手开局 · 庄家 ${d.button} 号（盲注 ${d.small_blind}/${d.big_blind}）`;
+    case "cards_dealt": return `${d.seat}号拿到底牌（私有事件，仅本人可见）`;
+    case "blind_posted": return `${d.seat}号下${d.blind === "big" ? "大" : "小"}盲 ${d.amount}`;
+    case "street_dealt": return `发牌 · ${phaseName(d.street)} → ${(d.cards ?? []).map(cardTxt).join(" ")}`;
+    case "showdown": return `摊牌 · ${(d.reveals ?? []).map((r) => `${r.seat}号 ${(r.cards ?? []).map(cardTxt).join(" ")}`).join(" · ")}`;
+    case "hand_ended": {
+      const why = d.reason === "all_folded" ? "全员弃牌" : "摊牌结算";
+      return `第 ${d.hand_no} 手结束（${why}）· 底池 ${d.pot} → ${(d.winners ?? []).join("、")} 号收入`;
+    }
+    case "pot_split": return `分池 ${d.layer} → ${(d.winners ?? []).join("、")} 号（各得 ${d.share}）`;
+    case "action": {
+      const t = d.action;
+      const extra = (t === "call" || t === "raise" || t === "allin") && d.to != null ? ` 至 ${d.to}` : "";
+      return `${d.seat}号${HOLDEM_ACT[t] ?? t}${extra}`;
+    }
+    case "game_ended": {
+      const why = d.reason === "last_standing" ? "独存" : "手数上限";
+      return `对局结束：${d.winner != null ? d.winner + " 号胜" : "无人胜出"}（${d.hands_played} 手 · ${why}）`;
+    }
     case "bid_placed": return `${d.seat}号叫 ${d.qty} 个 ${d.face}`;
     case "challenge_resolved": return `开牌！实际 ${d.actual_count} 个 → 叫价${d.bid_was_true ? "成立，" : "不实，"}${d.loser}号输一骰`;
     case "round_started": return `—— 第 ${d.round} 轮 ——`;
@@ -640,7 +679,7 @@ function evText(e) {
     case "word_assigned": return `【发词】${d.seat}号已拿到词（私有）`;
     case "player_exiled": return `${d.seat}号被放逐——身份是「${d.was_undercover ? "卧底" : "平民"}」`;
     case "vote_pk": return `平票 PK${d.pk_round ? ` 第 ${d.pk_round} 轮` : ""}！候选：${(d.candidates ?? []).join("、")} 号 —— 全员仅可在候选中重投`;
-    case "vote_result": return `计票 ${esc(JSON.stringify(d.tally))} → ${d.exiled != null ? d.exiled + "号被放逐" : "无人出局"}`;
+    case "vote_result": return `计票 ${numMap(d.tally, " 票")} → ${d.exiled != null ? d.exiled + "号被放逐" : "无人出局"}`;
     case "player_died": return `${d.seat}号出局（${d.cause === "night" ? "夜间遇害" : "投票放逐"}）`;
     case "night_kill_decided": return `【狼队】刀口 → ${d.target != null ? d.target + "号" : "空刀"}（私有事件，仅狼可见）`;
     case "wolf_said": return `【狼队密语】${d.seat}号：${esc(d.text)}（私有事件，仅狼可见）`;
@@ -654,11 +693,15 @@ function evText(e) {
     }
     case "game_won": {
       if (d.winner === "good" || d.winner === "wolves") return `游戏结束：${d.winner === "good" ? "好人阵营" : "狼人阵营"}胜`;
-      if (d.winner === "draw") return `终局平局：总收益 ${esc(JSON.stringify(d.totals ?? {}))}`;
-      if (typeof d.winner === "number") return `游戏结束：${d.winner} 号胜（总收益 ${esc(JSON.stringify(d.totals ?? {}))}）`;
+      if (d.winner === "civilians" || d.winner === "undercover") {
+        const wp = d.word_pair ?? {};
+        return `游戏结束：${d.winner === "civilians" ? "平民阵营" : "卧底"}胜 · 词对「${esc(wp.civilian ?? "?")} / ${esc(wp.undercover ?? "?")}」`;
+      }
+      if (d.winner === "draw") return `终局平局 · 总收益 ${numMap(d.totals)}`;
+      if (typeof d.winner === "number") return `游戏结束：${d.winner} 号胜 · 总收益 ${numMap(d.totals)}`;
       return `游戏结束：${esc(String(d.winner))}`;
     }
-    case "match_ended": return `终局分数 ${esc(JSON.stringify(d.scores))}`;
+    case "match_ended": return `终局 · ${numMap(d.scores)}`;
     default: return `${e.type} ${esc(JSON.stringify(d)).slice(0, 70)}`;
   }
 }
@@ -669,6 +712,19 @@ function evClass(e) {
   if (e.type === "game_won" || e.type === "match_ended") return "ev win";
   return "ev";
 }
+/* r28：内核 acted 与游戏自产事件成对出现（holdem action / werewolf said / othello placed /
+   dice bid_placed / undercover described）——同一动作在公报里连排两行既冗余又难读。
+   规则：acted 无 reasoning（有则保留，那是它的独有信息）且紧邻的下一条非 acted 事件同席位
+   → 判定为同一动作的通用记录，交给信息更全的游戏事件去说。仅作用于实时日志，回放路径不动。 */
+function dedupeActs(evs) {
+  const out = [];
+  for (let i = 0; i < evs.length; i++) {
+    const e = evs[i], n = evs[i + 1];
+    if (e.type === "acted" && !(e.data ?? {}).reasoning && n && n.type !== "acted" && (n.data ?? {}).seat === (e.data ?? {}).seat) continue;
+    out.push(e);
+  }
+  return out;
+}
 function renderLog(el, evs, uptoSeq) {
   // r17：回放模式（uptoSeq 给定）——日志只渲染到当前步、当前行高亮居中（叙事随回放推进）
   if (uptoSeq !== undefined) {
@@ -678,7 +734,7 @@ function renderLog(el, evs, uptoSeq) {
     if (curEl) el.scrollTop = Math.max(0, curEl.offsetTop - el.clientHeight / 2 + curEl.offsetHeight / 2);
     return;
   }
-  el.innerHTML = evs.slice(-200).map((e) => `<div class="${evClass(e)}">#${String(e.seq).padStart(2, "0")} ${evText(e)}</div>`).join("");
+  el.innerHTML = dedupeActs(evs).slice(-200).map((e) => `<div class="${evClass(e)}">#${String(e.seq).padStart(2, "0")} ${evText(e)}</div>`).join("");
   el.scrollTop = el.scrollHeight;
 }
 
@@ -1232,6 +1288,7 @@ let mSSE = null;
 window.gotoMatch = function (id) {
   if (!id) return;
   M.id = id; MEVS = []; MSINCE = -1; M.replay = false;
+  M.pendLb = true; // r28：本局游戏已知后，把右栏「战绩榜」同步切到该游戏（见 refreshMatchView）
   CM.evs = []; CM.mid = id; renderCommentary(); // r23：解说席随对局重置
   $("#m-id").value = id;
   showView("match");
@@ -1289,6 +1346,15 @@ async function refreshMatchView() {
     }
     $("#m-eyebrow").innerHTML = `「 围 观 」 <span style="letter-spacing:0;color:var(--grn)">● ${esc(M.id)}</span>`;
     $("#m-ttl").textContent = `${GAME_NAMES[v.game] ?? v.game} — ${phaseName(v.phase)}（第 ${v.round} 轮）`;
+    // r28：右栏「战绩榜」跟随本局游戏——否则围观黑白棋却在读吹牛骰的战绩（LB.game 只在
+    // 大厅首次加载时定为 games[0]，此后不随对局变化）。只在进入对局的那一次切换，不动用户手选的标签。
+    if (M.pendLb && LB.all[v.game]) {
+      M.pendLb = false;
+      LB.game = v.game;
+      const rm = $("#rail-match");
+      if (rm) rm.innerHTML = railHtml();
+      renderRailLb();
+    }
     renderGame(v, $("#m-game"), false);
     // r21 修复（r17 遗留竞态，r21 竞猜 fetch 放大暴露）：回放模式下实时刷新只更新舞台，
     // 不覆盖 #m-log 的回放渲染（seek 中/后，SSE 事件与轮询到达曾把日志跳回实时尾）
