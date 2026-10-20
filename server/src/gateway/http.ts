@@ -1358,9 +1358,11 @@ export class Gateway {
       // r15 修复（P1）：Number(null) === 0 陷阱——缺省 since 时曾解析为 0，
       // filter(seq > 0) 静默丢弃 seq=0 的 match_started，观战裸拉永远拿不到
       // 首事件（drivers/bot_filled 等元数据随之丢失）。显式 null → NaN → -1（全量）。
+      // r29 修复（P2）：调用方按最直觉的 `?since=0` 拉全量时同样丢 seq=0——
+      // 语义统一为「since <= 0 即从头」，正数才是「严格大于该 seq 的增量」。
       const sinceRaw = url.searchParams.get("since");
       const sinceParam = sinceRaw === null ? NaN : Number(sinceRaw);
-      const since = Number.isFinite(sinceParam) ? sinceParam : -1;
+      const since = Number.isFinite(sinceParam) && sinceParam > 0 ? sinceParam : -1;
       const all = rm.match.eventsFor(viewer);
       const latestSeq = all.length > 0 ? all[all.length - 1]!.seq : -1;
       return this.json(res, 200, {
@@ -1400,7 +1402,12 @@ export class Gateway {
         // r15：中止壳标记（进程退出时仍在飞——无终局比分，事件回放到落盘时刻为止）
         aborted: rm.aborted === true,
         // r13：与 view.result 同构（此前 replay 无 result 字段，客户端要写两套解析）
-        result: r ? { scores: r.scores, winners: Object.entries(r.scores).filter(([, v]) => v > 0).map(([k]) => Number(k)) } : null,
+        result: r ? {
+          scores: r.scores,
+          winners: Object.entries(r.scores).filter(([, v]) => v > 0).map(([k]) => Number(k)),
+          // r29：终局全序名次（与 view.result 形态对齐）
+          placements: r.placements ?? [],
+        } : null,
         scores: r?.scores ?? null,
         ratings: rm.ratings,
         // 席位 → 显示名映射（r6 ot-h1 反馈：只有 agent_id 对人不友好）
@@ -1443,7 +1450,8 @@ export class Gateway {
         return this.err(res, 409, "GUESS_LOCKED", "对局已结束，竞猜已锁定（GET 查看揭底）", { match_id: matchId, locked: true });
       }
       const body = await readJson(req);
-      const voter = typeof body.voter_id === "string" ? body.voter_id.trim().slice(0, 64) : "";
+      // r29 P2：带有效 Bearer 时以 agent 身份为准，防止客户端自报 voter_id 冒用他人票权
+      const voter = this.guessVoterOf(req, url, typeof body.voter_id === "string" ? body.voter_id : "");
       const seat = Number(body.seat);
       if (!voter) {
         return this.err(res, 422, "VOTER_REQUIRED", "缺 voter_id（匿名观战者标识：任意稳定字符串，前端建议 localStorage UUID）", { ok: false });
@@ -1470,7 +1478,7 @@ export class Gateway {
       return this.json(res, 200, { ok: true, seat, changed: old !== undefined, ...this.guessCounts(g, voter) });
     }
     if (method === "GET") {
-      const voter = (url.searchParams.get("voter_id") ?? "").trim().slice(0, 64);
+      const voter = this.guessVoterOf(req, url);
       const g = this.guesses.get(matchId);
       const base = this.guessCounts(g, voter);
       if (!finished) {
@@ -1497,6 +1505,19 @@ export class Gateway {
       });
     }
     return this.err(res, 405, "METHOD_NOT_ALLOWED", `不支持的方法（${method}）`, { method });
+  }
+
+  /**
+   * 竞猜者标识（r29 P2）：带有效 Bearer 时以 agent 身份为准（`agent:<id>`），
+   * 否则退化为客户端自报的匿名串。匿名观战仍可用，但无法冒用他人票权。
+   */
+  private guessVoterOf(req: IncomingMessage, url: URL, bodyVoter?: string): string {
+    const auth = String(req.headers.authorization ?? "").replace(/^Bearer\s+/i, "").trim();
+    if (auth) {
+      const known = this.agents.get(auth);
+      if (known) return `agent:${known.agent_id}`;
+    }
+    return (bodyVoter ?? url.searchParams.get("voter_id") ?? "").trim().slice(0, 64);
   }
 
   /** 票数快照（进行中/终局共用）——counts 键为席位号字符串，mine 为本人当前票 */
@@ -1703,6 +1724,8 @@ class RestoredMatch extends Match {
     return {
       matchId: this.id,
       scores: this.restoredScores,
+      // 恢复壳没有运行态 state，无法推算名次（返回空数组而非臆造）
+      placements: [],
       events: this.restoredEvents,
       gameEvents: [],
     };

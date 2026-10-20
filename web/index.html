@@ -636,7 +636,7 @@ const numMap = (o, suf = "") => Object.entries(o ?? {}).map(([k, v]) => `${k}号
 function evText(e) {
   const d = e.data ?? {};
   switch (e.type) {
-    case "match_started": return `开局 · ${esc(d.game)} · ${(d.drivers ?? []).map(esc).join(" / ")}`;
+    case "match_started": return `开局 · ${esc(GAME_NAMES[d.game] ?? d.game ?? "")} · ${(d.drivers ?? []).map(esc).join(" / ")}`;
     case "phase_started": return `— ${phaseName(d.phase)}（第 ${d.round} 轮）—`;
     case "acted": {
       const a = d.action ?? {}, t = a?.type;
@@ -1345,7 +1345,12 @@ async function refreshMatchView() {
       return;
     }
     $("#m-eyebrow").innerHTML = `「 围 观 」 <span style="letter-spacing:0;color:var(--grn)">● ${esc(M.id)}</span>`;
-    $("#m-ttl").textContent = `${GAME_NAMES[v.game] ?? v.game} — ${phaseName(v.phase)}（第 ${v.round} 轮）`;
+    // r29：同时相位投票进度心跳——票数本就实时在 public.votes_cast（只露票数、不露票向）。
+    // 此前只在事件到达时刷新，投票跨度的 20+ 秒里画面完全静止（实测 33.9 秒静默）。
+    const _vc = Array.isArray(v.public?.votes_cast) ? v.public.votes_cast.length : 0;
+    const _vt = Array.isArray(v.public?.alive_seats) ? v.public.alive_seats.length : 0;
+    const _hbar = _vt > 0 && _vc > 0 && _vc < _vt ? ` · 计票中 ${_vc}/${_vt}` : "";
+    $("#m-ttl").textContent = `${GAME_NAMES[v.game] ?? v.game} — ${phaseName(v.phase)}（第 ${v.round} 轮）${_hbar}`;
     // r28：右栏「战绩榜」跟随本局游戏——否则围观黑白棋却在读吹牛骰的战绩（LB.game 只在
     // 大厅首次加载时定为 games[0]，此后不随对局变化）。只在进入对局的那一次切换，不动用户手选的标签。
     if (M.pendLb && LB.all[v.game]) {
@@ -1473,7 +1478,9 @@ function renderGuess() {
      全下/大翻转/超时代行/终局）——原文自展的（says/acted）交给既有面板
    ③ 三档热度：hot0 常规（※）/ hot1 热（◈ 琥珀）/ hot2 爆点（★ 磷光） */
 const CM = { evs: [], mid: null };
-const CM_PRIVATE = new Set(["night_kill_decided", "checked", "acted", "said", "match_started_private", "word_assigned", "wolf_said"]);
+/* r29 修复：said 曾被误列入私有黑名单——公开发言恰是狼人杀的全部戏剧张力所在，
+   解说据此整场哑火。私有列表只保留真正不能外泄的事件。 */
+const CM_PRIVATE = new Set(["night_kill_decided", "checked", "acted", "match_started_private", "word_assigned", "wolf_said"]);
 /* r26-d LLM 解说替换位：默认关（零依赖铁律）；开启后对 hot≥2 高光事件异步请求 LLM 金句替换规则词。
    未配置 LLM 的网关返回 503 → 静默保持规则词（现状零变化）。 */
 const LLM_CM = { on: false, hits: 0 };
@@ -1504,7 +1511,7 @@ function commentate(e) {
   const d = e.data ?? {};
   switch (e.type) {
     case "match_started":
-      return { hot: 0, t: `解说席就位——${(d.drivers ?? []).length} 位牌手入席，好戏开场` };
+      return { hot: 0, t: `解说席就位——${esc(GAME_NAMES[d.game] ?? d.game ?? "")} · ${(d.drivers ?? []).length} 位牌手入席，好戏开场` };
     /* ── 吹牛骰 ── */
     case "bid_placed":
       if ((d.qty ?? 0) >= 8) return { hot: 1, t: `${d.seat} 号叫出 ${d.qty} 个 ${d.face} 点——全场倒吸一口凉气，这不是常规叫价` };
@@ -1520,11 +1527,23 @@ function commentate(e) {
       return null;
     case "last_words":
       return { hot: 1, t: `【遗言】${d.seat} 号留下最后的证词——死者的信息量往往最致命` };
+    /* r29：公开发言的结构化解说——只描述"说了哪一类话"，不解读内容真假（不越隔离边界）。
+       此前 said 在 CM_PRIVATE 里，导致整场发言轮解说席一个字没有。 */
+    case "said": {
+      const tx = String(d.text ?? "");
+      if (d.kind === "last_words") return { hot: 1, t: `【遗言】${d.seat} 号留下最后的证词——死者的信息量往往最致命` };
+      if (/预言家/.test(tx)) return { hot: 1, t: `${d.seat} 号发言中提到「预言家」——身份对跳的味道` };
+      if (/查杀/.test(tx)) return { hot: 1, t: `${d.seat} 号抛出「查杀」——有人要背锅了` };
+      if (/金水/.test(tx)) return { hot: 0, t: `${d.seat} 号提到「金水」——验人账开始对` };
+      if (tx.length <= 20) return { hot: 0, t: `${d.seat} 号一句话带过——话少的要么没料，要么在藏` };
+      return { hot: 0, t: `${d.seat} 号起身发言，${tx.length} 字证词` };
+    }
     case "vote_pk":
       if (d.pk_round === 2) return { hot: 2, t: `二次平票！${(d.candidates ?? []).join("、")} 号终极 PK——再平就无人出局，白刃见红了` };
       return { hot: 1, t: `平票！${(d.candidates ?? []).join("、")} 号进入 PK 重投——票型收敛的时刻到了` };
     case "vote_result":
-      if (d.exiled != null) return { hot: 2, t: `计票落定——${d.exiled} 号被放逐出局，身份揭晓` };
+      // r29：原文案写「身份揭晓」与实现不符——本实现要到 game_won 才公开全部身份
+      if (d.exiled != null) return { hot: 2, t: `计票落定——${d.exiled} 号被放逐出局${d.flipped_role ? `，身份是${d.flipped_role}` : ""}` };
       return { hot: 0, t: `计票平局，无人出局——拖延对谁有利？` };
     case "player_died":
       return { hot: 1, t: d.cause === "night" ? `${d.seat} 号昨夜倒下——狼刀又快又准` : `${d.seat} 号出局` };
@@ -1567,8 +1586,13 @@ function commentate(e) {
       return { hot: 0, t: base };
     }
     /* ── 谁是卧底（r25）── */
-    case "described":
-      return null; // 克制：描述原文自展（today_describes 面板）——解说不复读
+    case "described": {
+      // r29：原实现 return null 让描述轮整段静默。描述原文由面板自展，解说改为
+      // 只说"说了多长"这类客观结构信号（长度是事实，不涉及词义解读）。
+      const tx = String(d.text ?? "");
+      if (tx.length <= 8) return { hot: 1, t: `${d.seat} 号的描述只有 ${tx.length} 字——短得像在藏什么` };
+      return { hot: 0, t: `${d.seat} 号描述完毕（${tx.length} 字）——措辞越独特越容易被盯上` };
+    }
     case "player_exiled": {
       if (d.was_undercover) return { hot: 2, t: `放逐生效——${d.seat} 号就是卧底！伪装被识破` };
       return { hot: 1, t: `放逐生效——${d.seat} 号是平民……票投歪了，卧底还在场上` };
@@ -1992,8 +2016,10 @@ function renderUndercover(v, box, interactive) {
       <div class="ph">${phaseName(v.phase)}</div><div class="dy">第 ${v.round}/${p.max_rounds ?? 3} 轮 · 存活 ${p.alive_seats.length} / ${N}</div></div></div>
     ${sayHtml}</div>`;
   if (v.private && v.private.word) {
+    // r29：视图不再下发 is_undercover——试玩界面同步去掉"你是卧底"提示。
+    // 玩家只能凭自己的词与别人的描述判断，这才是本游戏的核心。
     html += `<div class="priv-row"><span class="lab">我的词</span><span class="kv" style="font-size:15px;letter-spacing:.2em;color:var(--amb)">${esc(v.private.word)}</span>` +
-      (v.private.is_undercover ? `<span class="kv" style="color:var(--red)">· 你是卧底（词与他人不同——描述要泛化，别被票出）</span>` : `<span class="kv" style="color:var(--dim)">· 词与多数人相同</span>`) + `</span></div>`;
+      `<span class="kv" style="color:var(--dim)">· 不确定就多听别人的描述</span></span></div>`;
   }
   if (interactive) {
     box.innerHTML = html + `<div class="act-area"></div>`;

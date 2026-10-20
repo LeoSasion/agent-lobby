@@ -21,6 +21,8 @@ interface State {
   round: number; // 1 起
   finished: boolean;
   winner: SeatId | null;
+  /** r29：出局回合（座位 → 轮次）。终局名次需要，旧回放/旧存档可能没有此字段——读取处必须兜底 */
+  eliminatedAt?: Map<SeatId, number>;
 }
 
 export interface LiarDiceConfig {
@@ -62,7 +64,7 @@ export function createLiarsDice(config: LiarDiceConfig = {}): GameModule<State> 
 
     init(seats: SeatId[], rng: Rng): State {
       const players = seats.map((seat) => ({ seat, dice: rollDice(perPlayer, rng) }));
-      return { players, bid: null, turn: 0, round: 1, finished: false, winner: null };
+      return { players, bid: null, turn: 0, round: 1, finished: false, winner: null, eliminatedAt: new Map() };
     },
 
     phase(s) {
@@ -154,6 +156,7 @@ export function createLiarsDice(config: LiarDiceConfig = {}): GameModule<State> 
       const alive = s.players.filter((p) => p.dice.length > 0);
       if (alive.length <= 1) {
         if (loser.dice.length === 0) {
+          (s.eliminatedAt ??= new Map()).set(loser.seat, s.round);
           events.push({ type: "player_eliminated", data: { seat: loser.seat } });
         }
         s.finished = true;
@@ -163,6 +166,7 @@ export function createLiarsDice(config: LiarDiceConfig = {}): GameModule<State> 
       }
 
       if (loser.dice.length === 0) {
+        (s.eliminatedAt ??= new Map()).set(loser.seat, s.round);
         events.push({ type: "player_eliminated", data: { seat: loser.seat } });
       }
       s.round += 1;
@@ -202,6 +206,42 @@ export function createLiarsDice(config: LiarDiceConfig = {}): GameModule<State> 
       const out: Record<SeatId, number> = {};
       for (const p of s.players) out[p.seat] = s.finished && p.seat === s.winner ? 1 : 0;
       return out;
+    },
+
+    seatAlive(s, seat) {
+      return (s.players.find((p) => p.seat === seat)?.dice.length ?? 0) > 0;
+    },
+
+    /**
+     * r29：终局全序名次——只按 scores 排会让「第 2 名」与「第 6 名」数据等价。
+     * 排序依据：剩余骰数降序 → 出局轮次降序（越晚出局名次越高）→ 座位号升序。
+     */
+    placements(s) {
+      const elim = s.eliminatedAt ?? new Map<SeatId, number>();
+      const rows = s.players.map((p) => ({
+        seat: p.seat,
+        dice: p.dice.length,
+        elimRound: elim.get(p.seat) ?? null,
+      }));
+      rows.sort((a, b) => {
+        if (b.dice !== a.dice) return b.dice - a.dice;
+        const ea = a.elimRound ?? -1;
+        const eb = b.elimRound ?? -1;
+        if (eb !== ea) return eb - ea;
+        return a.seat - b.seat;
+      });
+      let rank = 0;
+      let prevKey = "";
+      return rows.map((r, i) => {
+        const key = `${r.dice}|${r.elimRound}`;
+        if (key !== prevKey) rank = i + 1;
+        prevKey = key;
+        return {
+          seat: r.seat,
+          rank,
+          note: r.elimRound === null ? `dice=${r.dice}` : `dice=${r.dice},eliminated_round=${r.elimRound}`,
+        };
+      });
     },
   };
 

@@ -1,7 +1,7 @@
 /**
  * 冒烟测试：谁是卧底（undercover）
  * 覆盖：开局不变量（词对/卧底唯一）/ 描述校验（含词拒收/长度限）/ 完整对局（bot 六席）/
- *   信息隔离（word/is_undercover 仅自见+观战零词）/ 放逐亮身份 / 胜负两分支 / 平票 PK / 确定性回放 / 竞猜目标语义
+ *   信息隔离（word 仅自见 + 观战零词 + 身份不外泄）/ 放逐亮身份 / 胜负两分支 / 平票 PK / 确定性回放 / 竞猜目标语义
  * 运行：node --experimental-strip-types src/smoke-undercover.ts
  */
 
@@ -42,7 +42,12 @@ check(
 const vSpec = game.viewOf(s0, "spectator");
 check("观战零词零身份", !JSON.stringify(vSpec).includes(s0.wordPair.civilian) && !JSON.stringify(vSpec).includes(s0.wordPair.undercover) && !JSON.stringify(vSpec.public).includes("is_undercover"));
 const vMe = game.viewOf(s0, 1);
-check("席位私有含词与身份标记", typeof vMe.private.word === "string" && typeof vMe.private.is_undercover === "boolean");
+// r29：视图只发自己的词，不再直接给 is_undercover——
+// 「你不知道自己是不是卧底」是本游戏全部玩法，直接给字段等于把答案发给玩家
+check(
+  "席位私有含词且不给身份",
+  typeof vMe.private.word === "string" && !("is_undercover" in vMe.private),
+);
 const init0 = game.initialEvents?.(s0) ?? [];
 check(
   "初始事件：6 个 word_assigned 全私有",
@@ -67,8 +72,12 @@ function withIsolationCheck(inner: SeatDriver): SeatDriver {
       const pubJson = JSON.stringify(view.public);
       if (pubJson.includes("undercover") && !pubJson.includes("alive_seats")) violations.push("public 疑似泄露身份字段");
       if (/"word"\s*:/.test(pubJson)) violations.push(`seat${view.you.seat}: public 泄露词`);
-      if (view.private.word === undefined || view.private.is_undercover === undefined) {
-        violations.push(`seat${view.you.seat}: private 缺 word/is_undercover`);
+      if (view.private.word === undefined) {
+        violations.push(`seat${view.you.seat}: private 缺 word`);
+      }
+      // 反向断言（r29）：私有视图不得出现身份字段
+      if ("is_undercover" in view.private) {
+        violations.push(`seat${view.you.seat}: private 泄露 is_undercover`);
       }
       return inner.act(view, submit);
     },

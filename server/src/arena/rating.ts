@@ -69,6 +69,27 @@ export class RatingStore {
       deltas.push({ seat: s, agent: seatAgents.get(s)!, old: me.rating, delta, new: Math.round((me.rating + delta) * 10) / 10 });
     }
 
+    // r29 零和化（P1）：逐人独立结算的净漂移 = K × (Σ实际得分 − N/2)，而零和条件
+    // Σ实际 = N/2 在多数赛制下不成立——单一冠军制（吹牛骰/黑白棋/德州）系统性通缩，
+    // 多数人获胜制（卧底平民 5/6 胜）系统性通胀。r29 实测：6 席吹牛骰 −80、狼人杀 −40、卧底 +80。
+    // 减去本局 delta 均值后每局 Σdelta 恒为 0；2 席局一正一负均值本就是 0，数值不变。
+    if (deltas.length > 0) {
+      const mean = deltas.reduce((a, d) => a + d.delta, 0) / deltas.length;
+      if (Math.abs(mean) > 1e-9) {
+        for (const d of deltas) {
+          d.delta = Math.round((d.delta - mean) * 10) / 10;
+          d.new = Math.round((d.old + d.delta) * 10) / 10;
+        }
+        // 一位小数舍入会留下残余（如 ±0.1）：补给 |delta| 最大的那位，保证严格零和
+        const residual = Math.round(deltas.reduce((a, d) => a + d.delta, 0) * 10) / 10;
+        if (Math.abs(residual) > 1e-9) {
+          const pivot = deltas.reduce((best, d) => (Math.abs(d.delta) > Math.abs(best.delta) ? d : best), deltas[0]!);
+          pivot.delta = Math.round((pivot.delta - residual) * 10) / 10;
+          pivot.new = Math.round((pivot.old + pivot.delta) * 10) / 10;
+        }
+      }
+    }
+
     for (const d of deltas) {
       const r = this.record(gameId, d.agent);
       r.rating = d.new;

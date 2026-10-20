@@ -45,7 +45,23 @@ export interface AgentView {
   deadline_ms: number | null;
   /** 距截止的毫秒数（视图生成时刻计算）；null = 当前无执法时限 */
   ms_remaining: number | null;
-  you: { seat: SeatId; active: boolean; submitted: boolean };
+  /**
+   * 我在本局的状态（r29 修复）：
+   *  - active    = 现在轮到我出招（active=true 时 legal_actions 必非空，二者严格一致）
+   *  - waiting   = 在局但未轮到我
+   *  - eliminated= 已出局（本局仍有其他席位在打）
+   *  - finished  = 已终局
+   *  - spectator = 观战视角
+   * submitted 仅在"本相位我已交过且引擎不再等我"时为 true；多动作相位（狼人杀夜间密语）下可同时为 true 且 active。
+   */
+  you: {
+    seat: SeatId;
+    active: boolean;
+    submitted: boolean;
+    status: "active" | "waiting" | "eliminated" | "finished" | "spectator";
+    /** status==="eliminated" 的便捷布尔（旧客户端兼容） */
+    eliminated?: boolean;
+  };
   public: Record<string, unknown>;
   private: Record<string, unknown>;
   legal_actions: LegalAction[];
@@ -53,7 +69,12 @@ export interface AgentView {
   history: MatchEvent[];
   history_truncated: boolean;
   /** 终局比分与胜者（对局中为 null）；winners = 最高分席位（狼人杀为获胜阵营全体，平局为空） */
-  result: { scores: Record<SeatId, number>; winners: SeatId[] } | null;
+  result: {
+    scores: Record<SeatId, number>;
+    winners: SeatId[];
+    /** 终局全序名次（r29）：rank 从 1 起，同 rank 并列；多模型对照实验靠它区分第 2 名与第 6 名 */
+    placements?: { seat: SeatId; rank: number; note?: string }[];
+  } | null;
 }
 
 /** 提交结果：非法动作附 legal_actions，Agent 可自纠（协议 422 语义） */

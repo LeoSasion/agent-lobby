@@ -496,6 +496,33 @@ export function createWerewolfLite(): GameModule<State> {
       }
       return out;
     },
+
+    /**
+     * r29：狼队密语（wolf_say）不写 nightActions、不占夜间收齐名额——
+     * 交完密语后本席位仍须保留出刀（狼）/验人（预言家）的行动权，故豁免"已交即退出活跃集"。
+     */
+    multiActionPhase(s, seat) {
+      if (s.phase !== "night") return false;
+      const role = s.roles.get(seat);
+      if (role !== "werewolf" && role !== "seer") return false;
+      return !s.nightActions.has(seat);
+    },
+
+    seatAlive(s, seat) {
+      return s.alive.get(seat) === true;
+    },
+
+    /** r29：终局名次——按阵营给序（胜方并列 1，负方并列 2），note 带身份供复盘 */
+    placements(s) {
+      const goodWin = s.winner === "good";
+      const won = (seat: SeatId) => {
+        const isWolf = s.roles.get(seat) === "werewolf";
+        return s.winner !== null && (goodWin ? !isWolf : isWolf);
+      };
+      return s.seats
+        .map((seat) => ({ seat, rank: won(seat) ? 1 : 2, note: s.roles.get(seat) }))
+        .sort((a, b) => a.rank - b.rank || a.seat - b.seat);
+    },
   };
 
   return game;

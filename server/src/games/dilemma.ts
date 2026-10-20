@@ -208,6 +208,24 @@ export function createDilemma(config: DilemmaConfig = {}): GameModule<State> {
       }
       return out;
     },
+
+    /** 囚徒困境无出局机制：局中所有席位始终存活 */
+    seatAlive() {
+      return true;
+    },
+
+    /** r29：终局名次按累计收益降序（同分并列同名次，note 带总分） */
+    placements(s) {
+      const rows = s.seats.map((seat) => ({ seat, total: s.totals.get(seat) ?? 0 }));
+      rows.sort((a, b) => b.total - a.total || a.seat - b.seat);
+      let rank = 0;
+      let prev: number | null = null;
+      return rows.map((r, i) => {
+        if (prev === null || r.total !== prev) rank = i + 1;
+        prev = r.total;
+        return { seat: r.seat, rank, note: `total=${r.total}` };
+      });
+    },
   };
 
   return game;

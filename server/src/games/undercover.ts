@@ -5,8 +5,9 @@
  *   → vote（同时投票放逐，平票 PK 重投——两轮制：r27-d 首轮平票进 PK1，PK1 再平票进 PK2（候选收敛为本次平票者），
  *   PK2 再平票无人出局进下一轮）→ 被放逐者亮身份 → 下一轮
  * 胜负：放逐卧底 = 平民胜；存活 ≤3 且卧底在场 = 卧底胜；3 轮打完卧底仍存活 = 卧底胜
- * 信息隔离：private.word + private.is_undercover（卧底词异于他人 = 卧底自知身份——经典规则）；
- *   描述与投票公开；被放逐者身份公开（亮身份）；终局 game_won 公开全部身份与词对（观赏性）
+ * 信息隔离：private.word 仅发给本人，**不发 is_undercover**（r29 修正——玩家不知道自己是不是卧底，
+ *   只能从别人的描述里察觉自己格格不入，这是本游戏的核心机制）；描述与投票公开；
+ *   被放逐者身份公开（亮身份）；终局 game_won 公开全部身份与词对（观赏性）
  */
 
 import type { Action, LegalAction, SeatId, Viewer } from "../protocol.ts";
@@ -50,7 +51,7 @@ interface State {
   seats: SeatId[];
   roles: Map<SeatId, Role>;
   words: Map<SeatId, string>;
-  wordPair: { civilian: string; undercover: string; cat: string };
+  wordPair: { civilian: string; undercover: string; category: string };
   alive: Map<SeatId, boolean>;
   round: number;
   phase: "describe" | "vote" | "finished";
@@ -171,7 +172,7 @@ export function createUndercover(): GameModule<State> {
         seats: [...seats],
         roles,
         words,
-        wordPair: { civilian: civilianWord, undercover: undercoverWord, cat: pair.cat },
+        wordPair: { civilian: civilianWord, undercover: undercoverWord, category: pair.cat },
         alive: new Map(seats.map((t) => [t, true])),
         round: 1,
         phase: "describe",
@@ -296,7 +297,9 @@ export function createUndercover(): GameModule<State> {
         public: pub,
         private: {
           word: s.words.get(viewer) ?? null,
-          is_undercover: s.roles.get(viewer) === "undercover",
+          // r29 P1 修复：此前这里直接给 is_undercover，等于把答案发给玩家——
+          // 「你不知道自己是不是卧底，只能从别人的描述里察觉自己格格不入」是本游戏的全部玩法。
+          // 现只发自己的词，身份须自行推断（与设计意向「系统不另行告知」一致）。
           alive: s.alive.get(viewer) === true,
         },
       };
@@ -325,6 +328,22 @@ export function createUndercover(): GameModule<State> {
         out[t] = s.winner !== null && (civWin ? !isUC : isUC) ? 1 : 0;
       }
       return out;
+    },
+
+    seatAlive(s, seat) {
+      return s.alive.get(seat) === true;
+    },
+
+    /** r29：终局名次——按阵营（胜方并列 1，负方并列 2），note 带身份供复盘 */
+    placements(s) {
+      const civWin = s.winner === "civilians";
+      const won = (seat: SeatId) => {
+        const isUC = s.roles.get(seat) === "undercover";
+        return s.winner !== null && (civWin ? !isUC : isUC);
+      };
+      return s.seats
+        .map((seat) => ({ seat, rank: won(seat) ? 1 : 2, note: s.roles.get(seat) }))
+        .sort((a, b) => a.rank - b.rank || a.seat - b.seat);
     },
   };
 

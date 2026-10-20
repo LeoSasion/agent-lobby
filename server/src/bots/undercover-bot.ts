@@ -65,7 +65,7 @@ export function createUndercoverBot(name: string, idx: number): SeatDriver {
     act: async (view: AgentView, submit) => {
       const pub = view.public as unknown as UCViewPublic;
       const me = view.you.seat;
-      const priv = view.private as { word?: string; is_undercover?: boolean };
+      const priv = view.private as { word?: string };
 
       if (pub.phase === "describe") {
         // 描述：类别模板 hash 选句——「猜词靠风格」的假象但绝不泄词
@@ -76,7 +76,7 @@ export function createUndercoverBot(name: string, idx: number): SeatDriver {
         const pick = pool[Math.floor(h(`${myCatKey}:${word.length}:${pub.round}`) * pool.length)] ?? "跟我拿到的词有关";
         const text = pub.round === 1 && h(`${word}:${me}`) > 0.5 ? `我想想……${pick}` : pick;
         return void (await submit({ type: "describe", text } satisfies Action, {
-          reasoning: `按词的模糊联想描述（${priv.is_undercover ? "我词可能与众不同，描述要更泛化" : "描述贴合我的词"}）`,
+          reasoning: "按词的模糊联想描述（只知道自己拿到的词，不预设身份）",
         }));
       }
 
@@ -86,7 +86,7 @@ export function createUndercoverBot(name: string, idx: number): SeatDriver {
         // 确定性 hash 投票 + 卧底自保（绝不投自己）；被证实为平民的出局者天然不在存活池
         const target = pool[Math.floor(h(`${me}:${pub.round}:${pool.join(",")}`) * pool.length)]!;
         return void (await submit({ type: "vote", target } satisfies Action, {
-          reasoning: `凭描述的直觉投票（${priv.is_undercover ? "我是卧底，票要避开队友……没有队友，避开被围剿的焦点" : "谁的描述最含糊投谁"}）`,
+          reasoning: "凭描述的直觉投票（谁的描述最含糊投谁）",
         }));
       }
 

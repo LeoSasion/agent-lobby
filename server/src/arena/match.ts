@@ -29,6 +29,8 @@ export interface RecordedGameEvent {
 export interface MatchResult {
   matchId: string;
   scores: Record<SeatId, number>;
+  /** r29：终局全序名次 */
+  placements: { seat: SeatId; rank: number; note?: string }[];
   events: readonly MatchEvent[];
   gameEvents: RecordedGameEvent[];
 }
@@ -61,7 +63,12 @@ export function composeAgentView(opts: {
   youSubmitted?: boolean;
   /** 本相位已提交（含超时默认）的座位——viewOf ctx 的数据源（r7：day_vote votes_cast 曾因读 s.votes 恒空） */
   submittedSeats?: SeatId[];
-  result?: { scores: Record<SeatId, number>; winners: SeatId[] } | null;
+  result?: {
+    scores: Record<SeatId, number>;
+    winners: SeatId[];
+    /** r29：终局全序名次（多模型对照实验的最小可观测单元） */
+    placements?: { seat: SeatId; rank: number; note?: string }[];
+  } | null;
 }): AgentView {
   const snap = opts.game.viewOf(
     opts.state,
@@ -69,6 +76,29 @@ export function composeAgentView(opts: {
     opts.submittedSeats ? { submittedSeats: opts.submittedSeats } : undefined,
   );
   const active = opts.finished ? [] : opts.game.activeSeats(opts.state);
+  // 显式收窄：typeof === "number" 才能让 TS 把席位当 SeatId 用（isSeat 布尔无法收窄 opts.viewer）
+  const seatViewer: SeatId | null = typeof opts.viewer === "number" ? opts.viewer : null;
+  const submitted = opts.youSubmitted === true;
+  // r29 P1 修复：已交动作者在本相位退出活跃集，且 legal_actions 必须为空。
+  // 此前同时相位（day_vote / 卧底 vote / 囚徒）提交后仍 active=true 且继续兜售动作，
+  // 按视图机械执行的 Agent 必然重复提交吃 422——四人独立撞到，一人自建脚本绕过。
+  // 多动作相位（狼人杀夜间"密语 + 出刀"）由游戏显式豁免：密语不占收齐名额，仍需保留行动权。
+  const stillMulti = seatViewer !== null && submitted && !opts.finished
+    ? (opts.game.multiActionPhase?.(opts.state, seatViewer) ?? false)
+    : false;
+  const canAct =
+    seatViewer !== null && !opts.finished && active.includes(seatViewer) && (!submitted || stillMulti);
+  const alive = seatViewer !== null ? opts.game.seatAlive?.(opts.state, seatViewer) : undefined;
+  // status：让"没轮到我 / 我已出局 / 已终局"三种此前同形的状态可区分（r29 P2）
+  const status: "active" | "waiting" | "eliminated" | "finished" | "spectator" = seatViewer === null
+    ? "spectator"
+    : opts.finished
+      ? "finished"
+      : canAct
+        ? "active"
+        : alive === false
+          ? "eliminated"
+          : "waiting";
   return {
     protocol: "arena/v0",
     match_id: opts.matchId,
@@ -80,17 +110,34 @@ export function composeAgentView(opts: {
     ms_remaining: opts.deadlineMs !== null ? Math.max(0, opts.deadlineMs - Date.now()) : null,
     you: {
       seat: opts.viewer === "spectator" ? -1 : opts.viewer,
-      active: opts.viewer !== "spectator" && active.includes(opts.viewer),
-      submitted: opts.youSubmitted ?? false,
+      active: canAct,
+      submitted,
+      status,
+      ...(status === "eliminated" ? { eliminated: true } : {}),
     },
     public: snap.public,
     private: snap.private,
-    legal_actions: opts.viewer === "spectator" ? [] : opts.game.legalActions(opts.state, opts.viewer),
+    // 活跃与法表严格同源：active=false 时绝不兜售动作（消除"照 legal_actions 交"的诱导）
+    legal_actions: canAct && seatViewer !== null ? opts.game.legalActions(opts.state, seatViewer) : [],
     history: opts.visible.slice(-50),
     history_truncated: opts.visible.length > 50,
     // 终局附比分与胜者（一次性判定的便捷出口；对局中为 null）
     result: opts.result ?? null,
   };
+}
+
+/** 终局名次：优先用游戏自实现的 placements；未实现则按 scores 降序 + 座位号升序兜底（r29） */
+export function placementsOf(
+  game: GameModule<unknown>,
+  state: unknown,
+  seats: SeatId[],
+  scores: Record<SeatId, number>,
+): { seat: SeatId; rank: number; note?: string }[] {
+  const custom = game.placements?.(state);
+  if (custom && custom.length > 0) return custom;
+  return [...seats]
+    .sort((a, b) => (scores[b] ?? 0) - (scores[a] ?? 0) || a - b)
+    .map((seat, i) => ({ seat, rank: i + 1 }));
 }
 
 /** 终局胜者：取最高分席位（>0）；平局全员同最高分仍列为 winners，0 分局为空 */
@@ -196,6 +243,7 @@ export class Match {
     this.result = {
       matchId: this.id,
       scores,
+      placements: placementsOf(this.game, this.state, this.seats, scores),
       events: this.store.all(),
       gameEvents: this.gameEvents,
     };
@@ -217,7 +265,13 @@ export class Match {
       // 相位提交进度（公开相位派生信息的唯一正确数据源）：received 是实时缓冲，
       // 游戏侧 s.votes 等要到批量 apply 才写入——窗口期读它恒为空（r7 P0 教训）
       submittedSeats: [...this.received.keys()],
-      result: this.finished && scores ? { scores, winners: winnersOf(scores) } : null,
+      result: this.finished && scores
+        ? {
+            scores,
+            winners: winnersOf(scores),
+            placements: placementsOf(this.game, this.state, this.seats, scores),
+          }
+        : null,
     });
   }
 
@@ -354,6 +408,14 @@ export class Match {
     this.result = {
       matchId: this.id,
       scores,
+      // 状态可能已损坏：名次计算失败不应连带影响终结流程
+      placements: (() => {
+        try {
+          return placementsOf(this.game, this.state, this.seats, scores);
+        } catch {
+          return [];
+        }
+      })(),
       events: this.store.all(),
       gameEvents: this.gameEvents,
     };

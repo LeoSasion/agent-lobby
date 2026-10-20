@@ -75,7 +75,20 @@ const d1 = rs.applyMatch("t", new Map([[1, "A"], [2, "B"]]), { 1: 1, 2: 0 });
 check("同级 2 人局：胜 +20 / 负 -20（K=40）", d1[0].delta === 20 && d1[0].new === 1220 && d1[1].delta === -20 && d1[1].new === 1180);
 const rs3 = new RatingStore();
 const d3 = rs3.applyMatch("t3", new Map([[1, "A"], [2, "B"], [3, "C"]]), { 1: 1, 2: 0, 3: 0 });
-check("同级 3 人局：胜 +20 / 负各 -20", d3[0].delta === 20 && d3[1].delta === -20 && d3[2].delta === -20);
+// r29 零和化：旧口径「胜 +20 / 负各 -20」总和为 -20（单一冠军制系统性通缩），
+// 现减去本局 delta 均值使每局严格零和——3 席净漂移 0。
+const d3sum = Math.round(d3.reduce((a, d) => a + d.delta, 0) * 100) / 100;
+// 锁不变量而非特定值：零和 + 胜负方向 + 量级正确（余数补偿落在最大 |delta| 上，末位可能 ±0.1）
+check(
+  "同级 3 人局：严格零和（胜 ≈ +26.7 / 负各 ≈ -13.3）",
+  d3sum === 0 &&
+    d3[0].delta > 0 &&
+    d3[1].delta < 0 &&
+    d3[2].delta < 0 &&
+    Math.abs(d3[0].delta - 26.7) <= 0.15 &&
+    Math.abs(d3[1].delta + 13.3) <= 0.15,
+  JSON.stringify(d3.map((d) => d.delta)) + ` Σ=${d3sum}`,
+);
 const rsK = new RatingStore();
 rsK.record("t4", "A").games = 10;
 rsK.record("t4", "B").games = 10;
