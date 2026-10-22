@@ -8,7 +8,7 @@
  *  - 驱动崩溃/超时一律兜底，比赛永不卡死（容错优先）
  */
 
-import type { Action, AgentView, MatchEvent, SeatId, SubmitResult } from "../protocol.ts";
+import type { Action, AgentView, MatchEvent, SeatId, SubmitOptions, SubmitResult } from "../protocol.ts";
 import type { GameEvent, GameModule } from "../games/types.ts";
 import { mulberry32, randomSeed } from "../rng.ts";
 import type { Rng } from "../rng.ts";
@@ -18,7 +18,15 @@ import { randomId, withTimeout } from "../util.ts";
 export interface SeatDriver {
   name: string;
   /** 收到自己的 AgentView，通过 submit 提交动作（opts.reasoning 进入回放、opts.nonce 幂等重试）；非法提交会收到错误可重试 */
-  act(view: AgentView, submit: (action: Action, opts?: { reasoning?: string; nonce?: string }) => SubmitResult): Promise<void>;
+  act(view: AgentView, submit: (action: Action, opts?: SubmitOptions) => SubmitResult): Promise<void>;
+  /**
+   * r30：本 step 的驱动已超时/异常时，丢弃驱动侧残留的挂起态。
+   * 内核用 withTimeout 竞速 act()，超时只是不再等它——驱动内部若仍留着上一 step 的
+   * submit 闭包（HTTP 驱动的 pending），相位间隙到达的 POST 会被提交进**已结算的旧 step**：
+   * 动作按旧回合入账、nonce 绑定旧 turnSeq（跨 step 重试即 NONCE_EXPIRED），
+   * 且该动作依据的是过期视图。实现本钩子即可在超时时清掉。
+   */
+  reset?(): void;
 }
 
 export interface RecordedGameEvent {
@@ -61,6 +69,8 @@ export function composeAgentView(opts: {
   deadlineMs: number | null;
   /** 本席位本回合是否已提交（防重复提交的即时信号） */
   youSubmitted?: boolean;
+  /** 决策令牌（r30c）：本视图对应的可提交回合；回放步骤视图不传 */
+  turn?: number;
   /** 本相位已提交（含超时默认）的座位——viewOf ctx 的数据源（r7：day_vote votes_cast 曾因读 s.votes 恒空） */
   submittedSeats?: SeatId[];
   result?: {
@@ -82,12 +92,15 @@ export function composeAgentView(opts: {
   // r29 P1 修复：已交动作者在本相位退出活跃集，且 legal_actions 必须为空。
   // 此前同时相位（day_vote / 卧底 vote / 囚徒）提交后仍 active=true 且继续兜售动作，
   // 按视图机械执行的 Agent 必然重复提交吃 422——四人独立撞到，一人自建脚本绕过。
-  // 多动作相位（狼人杀夜间"密语 + 出刀"）由游戏显式豁免：密语不占收齐名额，仍需保留行动权。
-  const stillMulti = seatViewer !== null && submitted && !opts.finished
-    ? (opts.game.multiActionPhase?.(opts.state, seatViewer) ?? false)
-    : false;
+  //
+  // r30 校正：曾试图用 `multiActionPhase` 对狼人杀夜间（密语后再出刀）开豁免，
+  // 但内核的 received 是「每 step 每席一动作」——同一 step 内视图说 active=true 而
+  // trySubmit 必拒（received.has），网关更会以 DUPLICATE_ACTION + 非空 legal_actions
+  // 回应（自相矛盾的错误体）。而跨 step 时 activeSeats 本就会让该席位重新活跃
+  // （密语不写 nightActions），无需视图层矫饰。故删除该豁免：视图严格只表达
+  // 「此刻提交会被内核接受」。
   const canAct =
-    seatViewer !== null && !opts.finished && active.includes(seatViewer) && (!submitted || stillMulti);
+    seatViewer !== null && !opts.finished && active.includes(seatViewer) && !submitted;
   const alive = seatViewer !== null ? opts.game.seatAlive?.(opts.state, seatViewer) : undefined;
   // status：让"没轮到我 / 我已出局 / 已终局"三种此前同形的状态可区分（r29 P2）
   const status: "active" | "waiting" | "eliminated" | "finished" | "spectator" = seatViewer === null
@@ -121,9 +134,34 @@ export function composeAgentView(opts: {
     legal_actions: canAct && seatViewer !== null ? opts.game.legalActions(opts.state, seatViewer) : [],
     history: opts.visible.slice(-50),
     history_truncated: opts.visible.length > 50,
+    ...(opts.turn !== undefined ? { turn: opts.turn } : {}),
     // 终局附比分与胜者（一次性判定的便捷出口；对局中为 null）
     result: opts.result ?? null,
   };
+}
+
+/**
+ * 按终局比分推算名次（无游戏 state 时的兜底口径）。
+ * 契约：rank 从 1 起、**同分并列同一 rank**、下一名次按位次跳过（1,1,3）。
+ * r30c 修复：原实现用 `rank: i+1` 直接给严格序——黑白棋（唯一未实现 placements 的游戏）
+ * 和平时两边都是 0.5 分，却被排成第 1 名与第 2 名，与 winnersOf 的「平局返回空」、
+ * 与协议「同 rank 并列」同时矛盾：一场平局在名次榜上凭空长出一个亚军。
+ */
+export function placementsFromScores(
+  scores: Record<SeatId, number>,
+  note?: string,
+): { seat: SeatId; rank: number; note?: string }[] {
+  const seats = Object.keys(scores).map(Number).sort((a, b) => (scores[b] ?? 0) - (scores[a] ?? 0) || a - b);
+  let rank = 0;
+  let prev: number | null = null;
+  return seats.map((seat, i) => {
+    const sc = scores[seat] ?? 0;
+    if (prev === null || sc !== prev) {
+      rank = i + 1;
+      prev = sc;
+    }
+    return { seat, rank, note };
+  });
 }
 
 /** 终局名次：优先用游戏自实现的 placements；未实现则按 scores 降序 + 座位号升序兜底（r29） */
@@ -135,16 +173,18 @@ export function placementsOf(
 ): { seat: SeatId; rank: number; note?: string }[] {
   const custom = game.placements?.(state);
   if (custom && custom.length > 0) return custom;
-  return [...seats]
-    .sort((a, b) => (scores[b] ?? 0) - (scores[a] ?? 0) || a - b)
-    .map((seat, i) => ({ seat, rank: i + 1 }));
+  // 以 seats 为准（保证覆盖全部席位，即使 scores 缺键——缺键按 0 分处理）
+  const full: Record<SeatId, number> = {};
+  for (const s of seats) full[s] = scores[s] ?? 0;
+  return placementsFromScores(full);
 }
 
-/** 终局胜者：取最高分席位（>0）；平局全员同最高分仍列为 winners，0 分局为空 */
+/** 终局胜者：取最高分席位；最高分 ≤0.5 视为平局返回空（协议约定「平局 winners 为空」） */
 export function winnersOf(scores: Record<SeatId, number>): SeatId[] {
   let max = 0;
   for (const v of Object.values(scores)) max = Math.max(max, v);
-  if (max <= 0) return [];
+  // r30：判据曾是 max>0，导致「全员 0.5」的平局（囚徒双背叛 / 黑白棋均势）被算成全员胜
+  if (max <= 0.5) return [];
   return Object.entries(scores)
     .filter(([, v]) => v === max)
     .map(([k]) => Number(k));
@@ -176,6 +216,8 @@ export class Match {
   private nonceOwners = new Map<string, { seat: SeatId; turn: number }>();
   /** 回合序号：每次 step() 递增，用于 nonce 与回合绑定 */
   private turnSeq = 0;
+  /** 当前是否处在某个 step 的收集窗口内（step() 开头置 true、收尾置 false） */
+  private inStep = false;
   private turnDeadline: number | null = null;
   private result: MatchResult | null = null;
 
@@ -236,6 +278,11 @@ export class Match {
         await new Promise((r) => setTimeout(r, this.minPhaseMs - stepDur));
       }
     }
+    // fail() 已判定终局（内核/游戏模块异常）时直接返回它，不再对可能已损坏的状态二次取分。
+    // r30 修复：原实现无条件 game.scores(state) —— 状态损坏时此处二次抛错 → run() reject
+    // → 网关的 catch 只 console.error → rm.result 恒 null，对局对外显示「已结束」却
+    // 没有比分、没有 headline、不结算 Elo（僵尸终局）。
+    if (this.result) return this.result;
     const scores = this.game.scores(this.state);
     this.store.append("match_ended", { scores });
     this.finished = true;
@@ -262,6 +309,8 @@ export class Match {
       finished: this.finished,
       deadlineMs: this.turnDeadline,
       youSubmitted: viewer !== "spectator" && this.received.has(viewer),
+      // 决策令牌：本视图对应的可提交回合（step 内 = 当前步；间隙 = 下一步）
+      turn: this.consumeTurn,
       // 相位提交进度（公开相位派生信息的唯一正确数据源）：received 是实时缓冲，
       // 游戏侧 s.votes 等要到批量 apply 才写入——窗口期读它恒为空（r7 P0 教训）
       submittedSeats: [...this.received.keys()],
@@ -325,6 +374,15 @@ export class Match {
 
   private async step(active: SeatId[]): Promise<void> {
     this.turnSeq += 1;
+    this.inStep = true;
+    try {
+      await this.stepBody(active);
+    } finally {
+      this.inStep = false;
+    }
+  }
+
+  private async stepBody(active: SeatId[]): Promise<void> {
     this.turnDeadline = Date.now() + this.timeoutMs + (this.firstStep ? this.graceMs : 0);
     this.firstStep = false;
     // 相位间隙已提前提交的座位直接入账，不再挂起等待
@@ -432,13 +490,28 @@ export class Match {
       );
     } catch {
       // 驱动崩溃或超时：不外抛，交由超时默认动作兜底（容错优先）
+      // r30：同时让驱动丢弃残留挂起态——否则相位间隙的 POST 会提交进已结算的旧 step
+      try {
+        driver.reset?.();
+      } catch {
+        /* 驱动复位异常同样不影响执法 */
+      }
     }
   }
 
-  private trySubmit(seat: SeatId, action: Action, opts?: { reasoning?: string; nonce?: string }): SubmitResult {
+  /**
+   * 此刻提交会被哪个 step 消费：step 收集窗口内 = 当前 turnSeq；相位间隙 = 下一步（turnSeq + 1）。
+   * r30c：nonce 绑定与视图 turn 令牌都以它为准——原实现用 turnSeq 绑定，间隙期提交会在
+   * 下一步才被消费，导致「同一次网络重试」在下一步被判 NONCE_EXPIRED（其实动作已经生效）。
+   */
+  private get consumeTurn(): number {
+    return this.inStep ? this.turnSeq : this.turnSeq + 1;
+  }
+
+  private trySubmit(seat: SeatId, action: Action, opts?: SubmitOptions): SubmitResult {
     if (this.finished) return { ok: false, error: "MATCH_FINISHED", legal_actions: [] };
 
-    // 幂等重试（绑定回合）：
+    // 幂等重试（绑定消费回合）：
     //   同回合同座位同 nonce → 幂等成功（网络重试安全）
     //   跨回合重试 → NONCE_EXPIRED 显式失败——动作早已结算，静默 ok 会吞掉后续回合
     if (opts?.nonce !== undefined) {
@@ -447,13 +520,23 @@ export class Match {
         if (rec.seat !== seat) {
           return { ok: false, error: "NONCE_REUSED：该 nonce 已被其他座位使用", legal_actions: [] };
         }
-        if (rec.turn === this.turnSeq) return { ok: true };
+        if (rec.turn === this.consumeTurn) return { ok: true };
         return {
           ok: false,
           error: "NONCE_EXPIRED：该 nonce 属于已结束的回合，请基于最新 view 重新决策并换新 nonce",
           legal_actions: this.game.legalActions(this.state, seat),
         };
       }
+    }
+
+    // 陈旧视图保护（r30c）：客户端回传 view.turn 时，基于旧视图的提交一律拒掉——否则「第 N 步
+    // 的决策」会在第 N+1 步被静默当成一条新决策入账（动作仍合法，但依据已过期，事后看不出来）。
+    if (opts?.turn !== undefined && opts.turn !== this.consumeTurn) {
+      return {
+        ok: false,
+        error: `STALE_VIEW：视图已过期（你基于第 ${opts.turn} 步决策，当前可提交的是第 ${this.consumeTurn} 步）——请重新 GET view 再决策`,
+        legal_actions: this.game.legalActions(this.state, seat),
+      };
     }
 
     if (!this.game.activeSeats(this.state).includes(seat)) {
@@ -473,7 +556,8 @@ export class Match {
     this.received.set(seat, action);
     this.submittedAt.set(seat, Date.now());
     if (opts?.nonce !== undefined) {
-      this.nonceOwners.set(opts.nonce, { seat, turn: this.turnSeq });
+      // 绑「消费回合」而非当前 turnSeq：间隙期提交由下一步消费，重试也应在那一步幂等命中
+      this.nonceOwners.set(opts.nonce, { seat, turn: this.consumeTurn });
     }
     if (typeof opts?.reasoning === "string" && opts.reasoning.length > 0) {
       this.reasons.set(seat, opts.reasoning.slice(0, 500));

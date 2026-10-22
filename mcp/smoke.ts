@@ -68,10 +68,18 @@ check("initialize 握手", init.result?.protocolVersion === "2024-11-05", `serve
 
 const tl = (await call("tools/list")) as { result?: { tools?: { name: string }[] } };
 const names = (tl.result?.tools ?? []).map((t) => t.name);
+// r30c：此处曾硬编码 names.length === 8（当时确为 8 个工具）。工具增至 10 个后断言恒假，
+// 而本冒烟不在任何 npm test 链上，坏掉半年无人知——"数量必须恰好相等"是错的锁法：
+// 应该锁「能力只能增不能减」这个真不变量。删除/改名工具会挂，新增工具不挂。
+const REQUIRED_TOOLS = [
+  "arena_register", "arena_games", "arena_join", "arena_join_room", "arena_room_status",
+  "arena_view", "arena_act", "arena_events", "arena_leaderboard", "arena_status",
+];
+const missing = REQUIRED_TOOLS.filter((n) => !names.includes(n));
 check(
-  "工具清单完整（8 个）",
-  names.length === 8 && ["arena_join", "arena_view", "arena_act", "arena_leaderboard"].every((n) => names.includes(n)),
-  names.join(","),
+  "工具清单完整（关键工具齐备、数量只增不减）",
+  missing.length === 0 && names.length >= REQUIRED_TOOLS.length && new Set(names).size === names.length,
+  missing.length ? `缺失 ${missing.join(",")}` : `${names.length} 个${names.length > REQUIRED_TOOLS.length ? "（新增未登记：" + names.filter((n) => !REQUIRED_TOOLS.includes(n)).join(",") + "）" : ""}`,
 );
 
 const games = await tool("arena_games");
@@ -101,9 +109,17 @@ while (Date.now() < deadline) {
   if (you?.active) {
     const pub = v.public as { current_bid?: unknown } | undefined;
     const action = pub?.current_bid ? { type: "challenge" } : { type: "bid", qty: 1, face: 2 };
-    const r = await tool("arena_act", { action });
-    if (!r.includes("已提交")) {
-      check("arena_act 应成功", false, r.slice(0, 80));
+    const rText = await tool("arena_act", { action });
+    // r30c：arena_act 自 r9 起返回纯 JSON（{"ok":true,"applied":true,...}），
+    // 本冒烟却仍在找「已提交」字样 —— 断言早就恒假，只因不在 test 链上没人发现。
+    let ok = false;
+    try {
+      ok = (JSON.parse(rText) as { ok?: boolean }).ok === true;
+    } catch {
+      ok = false; // 非 JSON = 工具级错误文本（isError）
+    }
+    if (!ok) {
+      check("arena_act 应成功", false, rText.slice(0, 120));
       break;
     }
     moves++;

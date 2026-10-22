@@ -9,6 +9,7 @@
 
 import type { Action, AgentView } from "../protocol.ts";
 import type { SeatDriver } from "../arena/match.ts";
+import { wordPairs } from "../games/undercover.ts";
 
 interface UCViewPublic {
   round: number;
@@ -47,6 +48,19 @@ const CAT_TEMPLATES: Record<string, string[]> = {
   "乐器": ["跟音乐有关", "要用手或嘴演奏", "会出声的物件"],
 };
 
+/** 全类别模板池：词未被词对库收录时退化用它（模块级常量——此前每次描述都 flat 一遍 66 条） */
+const ALL_TEMPLATES = Object.values(CAT_TEMPLATES).flat();
+
+/** 词 → 类别（词对里的两个词同类别）。用于让 bot 的描述与自己的词同域——
+ *  此前描述从 22 个类别的 66 条模板里全池抽，约 95% 的概率描述与自己词的类别无关
+ *  （拿到「电梯」却描述「一种动物」），对真人观战是纯噪声。 */
+const WORD_CAT = new Map<string, string>(
+  wordPairs().flatMap((p) => [[p.c, p.cat], [p.u, p.cat]] as [string, string][]),
+);
+
+/** 同类别模板只有 3 条，6 席必撞车；座位化语气前缀拉开区分度（不含词、不泄密） */
+const WRAPPERS = ["", "嗯——", "简单说，", "让我想想，", "大概就是", "我这么说吧，"];
+
 /** 简单确定性 hash（同 seed 回放一致） */
 function h(s: string): number {
   let x = 2166136261;
@@ -68,15 +82,16 @@ export function createUndercoverBot(name: string, idx: number): SeatDriver {
       const priv = view.private as { word?: string };
 
       if (pub.phase === "describe") {
-        // 描述：类别模板 hash 选句——「猜词靠风格」的假象但绝不泄词
+        // 描述：按自己词的类别取模板池（词对两词同类别，故平民/卧底同池——不构成身份泄露），
+        // 未收录的词退化到全池。绝不出现词本身（description 含词会被内核 422）。
         const word = priv.word ?? "";
-        const cat = (Object.keys(CAT_TEMPLATES).find((k) => word && CAT_TEMPLATES[k] && k) ?? "");
-        // 私有视图没有类别（那是 state 内部字段）——bot 只见词：用词长与 hash 决定模板池
-        const pool = Object.values(CAT_TEMPLATES).flat();
-        const pick = pool[Math.floor(h(`${myCatKey}:${word.length}:${pub.round}`) * pool.length)] ?? "跟我拿到的词有关";
-        const text = pub.round === 1 && h(`${word}:${me}`) > 0.5 ? `我想想……${pick}` : pick;
-        return void (await submit({ type: "describe", text } satisfies Action, {
-          reasoning: "按词的模糊联想描述（只知道自己拿到的词，不预设身份）",
+        const cat = WORD_CAT.get(word);
+        const pool = (cat !== undefined ? CAT_TEMPLATES[cat] : undefined) ?? ALL_TEMPLATES;
+        const core = pool[Math.floor(h(`${myCatKey}:${cat ?? "-"}:${word.length}:${pub.round}`) * pool.length)]
+          ?? "跟我拿到的词有关";
+        const wrapper = WRAPPERS[Math.floor(h(`${cat ?? "-"}:${me}:${pub.round}`) * WRAPPERS.length)] ?? "";
+        return void (await submit({ type: "describe", text: wrapper + core } satisfies Action, {
+          reasoning: "按词的类别作模糊联想描述（只知道自己拿到的词，不预设身份）",
         }));
       }
 

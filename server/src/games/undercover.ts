@@ -130,9 +130,18 @@ function tryResolveVote(s: State, events: GameEvent[]): void {
   }
   const exiled: SeatId | null = max > 0 && tied.length === 1 ? tied[0] : null; // PK2 再平票 → 无人出局
   const passed = aliveSeats(s).filter((t) => s.votes.get(t) === null);
+  // r30（backlog P1 收口）：补 flipped_role——被放逐者当场亮身份是本作公开规则
+  // （player_exiled 已带 role），vote_result 缺该字段时前端只能等第二条事件拼，且已就绪的分支成了死代码。
+  const flippedRole = exiled !== null ? (s.roles.get(exiled) as Role) : null;
   events.push({
     type: "vote_result",
-    data: { tally: Object.fromEntries([...tally.entries()]), exiled, passed, pk: s.pkRound > 0 },
+    data: {
+      tally: Object.fromEntries([...tally.entries()]),
+      exiled,
+      flipped_role: flippedRole,
+      passed,
+      pk: s.pkRound > 0,
+    },
   });
   s.pkCandidates = null;
   s.pkRound = 0;

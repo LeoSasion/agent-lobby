@@ -16,10 +16,10 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHmac } from "node:crypto";
-import type { Action, AgentView, MatchEvent, SeatId, SubmitResult } from "../protocol.ts";
+import type { Action, AgentView, MatchEvent, SeatId, SubmitOptions, SubmitResult } from "../protocol.ts";
 import type { GameModule } from "../games/types.ts";
 import { callLLMCommentary } from "../commentary/llm.ts";
-import { Match, composeAgentView, winnersOf } from "../arena/match.ts";
+import { Match, composeAgentView, placementsFromScores, placementsOf, winnersOf } from "../arena/match.ts";
 import type { MatchResult, SeatDriver } from "../arena/match.ts";
 import { createMatch } from "../arena/lobby.ts";
 import { replayToState } from "../arena/replay.ts";
@@ -32,27 +32,37 @@ import { randomId, withTimeout } from "../util.ts";
 /** HTTP Pull 座位驱动：act() 挂起等待，直到 Agent 经 POST /actions 提交（或超时兜底）。
  *  相位切换间隙（上一回合已结算、新回合 step 尚未开启）收到的提交先落地缓冲，
  *  新回合开启时立即入账——消除轮询型 Agent 的 NOT_YOUR_TURN 窗口 */
-class HttpSeatDriver implements SeatDriver {
+export class HttpSeatDriver implements SeatDriver {
   readonly name: string;
+  /** 间隙缓冲的最长等待（超时即回明确错误，绝不无限挂起 POST） */
+  private readonly earlyTimeoutMs: number;
   private pending: {
-    submit: (a: Action, opts?: { reasoning?: string; nonce?: string }) => SubmitResult;
+    submit: (a: Action, opts?: SubmitOptions) => SubmitResult;
     resolve: () => void;
   } | null = null;
   private early: {
     action: Action;
-    opts?: { reasoning?: string; nonce?: string };
+    opts?: SubmitOptions;
     resolve: (r: SubmitResult) => void;
+    timer: ReturnType<typeof setTimeout>;
   } | null = null;
 
-  constructor(name: string) {
+  constructor(name: string, earlyTimeoutMs = 60_000) {
     this.name = name;
+    this.earlyTimeoutMs = earlyTimeoutMs;
   }
 
-  act(_view: AgentView, submit: (a: Action, opts?: { reasoning?: string; nonce?: string }) => SubmitResult): Promise<void> {
+  /** r30：内核判定本 step 驱动超时后调用——丢弃残留的 submit 闭包，避免间隙 POST 提交进旧 step */
+  reset(): void {
+    this.pending = null;
+  }
+
+  act(_view: AgentView, submit: (a: Action, opts?: SubmitOptions) => SubmitResult): Promise<void> {
     return new Promise<void>((resolve) => {
       if (this.early) {
         const e = this.early;
         this.early = null;
+        clearTimeout(e.timer);
         const r = submit(e.action, e.opts);
         e.resolve(r);
         if (r.ok) resolve();
@@ -63,7 +73,7 @@ class HttpSeatDriver implements SeatDriver {
     });
   }
 
-  handleAction(action: Action, opts?: { reasoning?: string; nonce?: string }): Promise<SubmitResult> {
+  handleAction(action: Action, opts?: SubmitOptions): Promise<SubmitResult> {
     if (this.pending) {
       const r = this.pending.submit(action, opts);
       if (r.ok) {
@@ -80,7 +90,20 @@ class HttpSeatDriver implements SeatDriver {
       });
     }
     return new Promise<SubmitResult>((resolve) => {
-      this.early = { action, opts, resolve };
+      // r30 修复：原实现把 Promise 无限挂起——若该动作注定等不到下一次 act()
+      // （对局刚终局、房间未开局、该席位此后不再活跃），POST 永不返回，连接与 Promise 一起泄漏。
+      const timer = setTimeout(() => {
+        if (this.early && this.early.timer === timer) {
+          this.early = null;
+          resolve({
+            ok: false,
+            error: "NOT_YOUR_TURN：等待回合开启超时（对局可能已结束或该席位不再行动），请重新 GET view 再决策",
+            legal_actions: [],
+          });
+        }
+      }, this.earlyTimeoutMs);
+      timer.unref?.();
+      this.early = { action, opts, resolve, timer };
     });
   }
 }
@@ -112,6 +135,12 @@ interface GuessState {
   /** voter_id → 当前投给的席位（改票 = 老票 -1 新票 +1） */
   voters: Map<string, SeatId>;
 }
+
+/** 单局竞猜观众数上限（r30 防刷：匿名票池纯内存、无上限时一个脚本即可撑爆） */
+const MAX_GUESS_VOTERS = 2000;
+
+/** LLM 解说在飞请求上限（r30：该端点无鉴权且按调用计费，必须有并发闸） */
+const MAX_LLM_IN_FLIGHT = 20;
 
 /** 多人房间：真人选手按加入顺序定座，满员自动开局（房主可强制开局并 bot 补位） */
 interface RoomPlayer {
@@ -151,6 +180,8 @@ export class Gateway {
   private knownMatchIds = new Set<string>();
   /** r21 观众竞猜票池（内存态，随对局生命周期；终局后保留供 reveal 查询） */
   private guesses = new Map<string, GuessState>();
+  /** LLM 解说在飞计数（r30 并发闸） */
+  private llmInFlight = 0;
   private indexHtml: string | null = null;
   private dataFile: string;
   private persistTimer: ReturnType<typeof setInterval> | null = null;
@@ -177,6 +208,9 @@ export class Gateway {
     server.listen(port, onReady);
     // 定期持久化（30s）
     this.persistTimer = setInterval(() => {
+      // r30：长跑内存治理放在落盘之前——先释放，再写盘
+      this.pruneStaleMatches();
+      this.pruneStaleRooms();
       this.persistState().catch(() => {});
     }, 30_000);
     // 进程退出时保存
@@ -218,6 +252,13 @@ export class Gateway {
         };
       });
     for (const r of records) this.knownMatchIds.add(r.match_id);
+    // r30：id 簿记本身也要有上限——原实现只在导出时 slice(-5000)，内存 Set 仍无限增长
+    if (this.knownMatchIds.size > 6000) {
+      for (const id of this.knownMatchIds) {
+        if (this.knownMatchIds.size <= 5000) break;
+        this.knownMatchIds.delete(id); // Set 迭代中删除当前元素是合法的；插入序 = 从最老删起
+      }
+    }
     const data = {
       saved_at: new Date().toISOString(),
       ratings: this.ratings.export(),
@@ -230,6 +271,34 @@ export class Gateway {
     const dir = dirname(this.dataFile);
     await mkdir(dir, { recursive: true });
     await writeFile(this.dataFile, JSON.stringify(data), "utf8");
+  }
+
+  /**
+   * r30：长跑内存治理——bot 表演赛会持续生产对局，matches 只增不减（每 30s 落盘只切 100 场，
+   * 但内存里全留着）。窗口超过 600 场时按开始时间淘汰已结束的旧局，保留 400 场。
+   * 未结束的对局一律不动；被淘汰的 id 仍留在 knownMatchIds 里，404 hint 因此能说明"曾存在已清理"。
+   */
+  private pruneStaleMatches(): void {
+    if (this.matches.size <= 600) return;
+    const finishedOldestFirst = [...this.matches.values()]
+      .filter((rm) => rm.match.isFinished())
+      .sort((a, b) => a.startedAt - b.startedAt);
+    let over = this.matches.size - 400;
+    for (const rm of finishedOldestFirst) {
+      if (over <= 0) break;
+      this.matches.delete(rm.match.id);
+      this.guesses.delete(rm.match.id); // 竞猜票池随对局一起回收（此前会永久留在内存）
+      over--;
+    }
+  }
+
+  /** r30：waiting 房间 TTL——从未开局的房间无人可续，纯泄漏（12h 足够覆盖一场线下组局） */
+  private pruneStaleRooms(): void {
+    const ttl = 12 * 3600_000;
+    const now = Date.now();
+    for (const [id, r] of this.rooms) {
+      if (r.status === "waiting" && now - r.createdAt > ttl) this.rooms.delete(id);
+    }
   }
 
   /** 从 JSON 文件恢复（ratings + agents + 对局历史元数据） */
@@ -346,19 +415,31 @@ export class Gateway {
     }
     // r26-d LLM 解说替换位：规则词典的异步增强层（未配置 → 503，前端静默回退规则词）
     if (method === "POST" && path === "/api/v1/commentary/llm") {
-      const body = await readJson(req);
-      const r = await callLLMCommentary({
-        mid: String(body.mid ?? ""),
-        seq: Number(body.seq),
-        type: String(body.type ?? ""),
-        data: body.data,
-        ruleText: typeof body.rule_text === "string" ? body.rule_text : "",
-      });
-      if (!r.ok) {
-        const status = r.code === "LLM_NOT_CONFIGURED" ? 503 : r.code === "LLM_BAD_INPUT" ? 422 : 502;
-        return this.err(res, status, r.code, r.message, { path: "/api/v1/commentary/llm" });
+      // r30：本端点是全站唯一「无鉴权且直接花钱」的入口——没有并发闸时一个循环脚本
+      // 就能把 LLM 额度打空（前端只在 LLM 开关打开且高光事件时调用，正常观战远达不到 20 并发）。
+      if (this.llmInFlight >= MAX_LLM_IN_FLIGHT) {
+        return this.err(res, 429, "RATE_LIMITED",
+          `LLM 解说并发已达上限（${MAX_LLM_IN_FLIGHT}）——规则解说已在客户端就位，稍后重试即可`,
+          { path: "/api/v1/commentary/llm" });
       }
-      return this.json(res, 200, { ok: true, text: r.text, cached: r.cached });
+      this.llmInFlight += 1;
+      try {
+        const body = await readJson(req);
+        const r = await callLLMCommentary({
+          mid: String(body.mid ?? ""),
+          seq: Number(body.seq),
+          type: String(body.type ?? ""),
+          data: body.data,
+          ruleText: typeof body.rule_text === "string" ? body.rule_text : "",
+        });
+        if (!r.ok) {
+          const status = r.code === "LLM_NOT_CONFIGURED" ? 503 : r.code === "LLM_BAD_INPUT" ? 422 : 502;
+          return this.err(res, status, r.code, r.message, { path: "/api/v1/commentary/llm" });
+        }
+        return this.json(res, 200, { ok: true, text: r.text, cached: r.cached });
+      } finally {
+        this.llmInFlight -= 1;
+      }
     }
     if (method === "POST" && path === "/api/v1/agents") {
       const body = await readJson(req);
@@ -1049,27 +1130,24 @@ export class Gateway {
     }
   }
 
-  /** 战报标题：异常中断优先，狼人杀报阵营，其余报胜者席位 */
+  /** 战报标题：异常中断优先；阵营制（狼人杀/卧底）报阵营，其余报胜者席位 */
   private makeHeadline(gameId: string, r: MatchResult): string {
     if (r.events.some((e) => e.type === "match_failed")) return "异常中断";
-    if (gameId === "werewolf_lite") {
+    if (gameId === "werewolf_lite" || gameId === "undercover") {
       const won = r.events.find((e) => e.type === "game_won");
       const w = (won?.data as { winner?: string } | undefined)?.winner;
-      return w === "good" ? "好人阵营胜" : w === "wolves" ? "狼人阵营胜" : "已结束";
-    }
-    let top: SeatId | null = null;
-    let max = -1;
-    let draw = true;
-    for (const [seat, sc] of Object.entries(r.scores)) {
-      const v = Number(sc);
-      if (v > max) {
-        max = v;
-        top = Number(seat);
+      if (gameId === "werewolf_lite") {
+        return w === "good" ? "好人阵营胜" : w === "wolves" ? "狼人阵营胜" : "已结束";
       }
-      if (v !== 0.5) draw = false;
+      return w === "civilians" ? "平民阵营胜" : w === "undercover" ? "卧底胜" : "已结束";
     }
-    if (draw) return "平局";
-    return top !== null ? `${top} 号位胜` : "已结束";
+    // r30 修复：原判据「所有席位都是 0.5 才算平局」——阵营制/多席位并列最高分时会取第一个
+    // 最高分席位报「N 号位胜」（卧底平民 5 人各 1 分 → 谎称 1 号位胜）。改为以 winnersOf 为准：
+    // 无胜者=平局，多席位=并列胜，唯一=该席位胜。
+    const winners = winnersOf(r.scores);
+    if (winners.length === 0) return "平局";
+    if (winners.length === 1) return `${winners[0]} 号位胜`;
+    return `${winners.length} 席并列胜`;
   }
 
   /** 观战 Web 静态页（零依赖托管） */
@@ -1232,6 +1310,8 @@ export class Gateway {
     // 终局时刻的回放视图同样携带 result 便捷出口（r9：回放消费者无需再调 /replay 换比分；
     // 持久化恢复壳经真实游戏模块重放，此处比分亦是对落盘数据的确定性交叉验证）
     const finalScores = terminal ? game.scores(state) : null;
+    // r30：补 placements——与 view.result / /replay 三处形态统一（此前只有它能拿到名次）
+    const seatList = (all.find((e) => e.type === "match_started")?.data.seats as SeatId[] | undefined) ?? [];
     const view = composeAgentView({
       game,
       state,
@@ -1241,7 +1321,13 @@ export class Gateway {
       finished: terminal,
       deadlineMs: null,
       submittedSeats,
-      result: finalScores ? { scores: finalScores, winners: winnersOf(finalScores) } : null,
+      result: finalScores
+        ? {
+            scores: finalScores,
+            winners: winnersOf(finalScores),
+            placements: placementsOf(game, state, seatList, finalScores),
+          }
+        : null,
     });
     return this.json(res, 200, { view, upto, total_events: all.length, events: visible.slice(-120) });
   }
@@ -1327,9 +1413,11 @@ export class Gateway {
       }
       const body = body0;
       const action = (body.action ?? body) as Action;
-      const opts: { reasoning?: string; nonce?: string } = {};
+      const opts: SubmitOptions = {};
       if (typeof body.reasoning === "string") opts.reasoning = body.reasoning.slice(0, 500);
       if (typeof body.nonce === "string") opts.nonce = body.nonce.slice(0, 64);
+      // r30c 决策令牌：客户端把视图里的 turn 原样回传即启用陈旧提交保护（不传则跳过校验）
+      if (typeof body.turn === "number" && Number.isInteger(body.turn)) opts.turn = body.turn;
       const r = await driver.handleAction(action, opts);
       if (r.ok) {
         if (replayKey) {
@@ -1348,11 +1436,12 @@ export class Gateway {
           view: { ...full, history: [], history_truncated: true },
         });
       }
-      const code =
-        ["MATCH_FINISHED", "NOT_YOUR_TURN", "NONCE_REUSED", "NONCE_EXPIRED", "DUPLICATE_ACTION", "ILLEGAL_ACTION", "SEAT_INVALID"].find(
-          (c) => String(r.error).startsWith(c),
-        ) ?? "UNKNOWN";
-      return this.err(res, 422, code, String(r.error), { ok: false, legal_actions: r.legal_actions });
+      // 错误码直接从错误文本头部取：内核约定错误以 `CODE` 或 `CODE：说明` 开头。
+      // r30c 之前是 8 项硬编码白名单 + UNKNOWN 兜底——每加一个码（如 STALE_VIEW）
+      // 都会先退化成 UNKNOWN 让客户端无法分支，故改成结构识别，裸码与带说明都覆盖。
+      const rawErr = String(r.error);
+      const code = /^([A-Z][A-Z0-9_]{2,})(?=[：:]|$)/.exec(rawErr)?.[1] ?? "UNKNOWN";
+      return this.err(res, 422, code, rawErr, { ok: false, legal_actions: r.legal_actions });
     }
     if (op === "events" && method === "GET") {
       // r15 修复（P1）：Number(null) === 0 陷阱——缺省 since 时曾解析为 0，
@@ -1404,7 +1493,9 @@ export class Gateway {
         // r13：与 view.result 同构（此前 replay 无 result 字段，客户端要写两套解析）
         result: r ? {
           scores: r.scores,
-          winners: Object.entries(r.scores).filter(([, v]) => v > 0).map(([k]) => Number(k)),
+          // r30 修复：原为「所有得分>0 的席位」，与 view.result 的「最高分席位」口径不同——
+          // 囚徒平局时 view.winners=[] 而 replay.winners=[1,2]，同一局两个端点互相打脸。
+          winners: winnersOf(r.scores),
           // r29：终局全序名次（与 view.result 形态对齐）
           placements: r.placements ?? [],
         } : null,
@@ -1456,6 +1547,10 @@ export class Gateway {
       if (!voter) {
         return this.err(res, 422, "VOTER_REQUIRED", "缺 voter_id（匿名观战者标识：任意稳定字符串，前端建议 localStorage UUID）", { ok: false });
       }
+      // r30：匿名票权的最小防刷——过短标识既易碰撞也易被批量伪造（单字符遍历即可顶票）
+      if (voter.length < 6) {
+        return this.err(res, 422, "VOTER_REQUIRED", "voter_id 至少 6 个字符（须为稳定标识；前端请用 localStorage 持久化的 UUID）", { ok: false, voter_min_length: 6 });
+      }
       if (!Number.isInteger(seat) || !validSeats.includes(seat)) {
         return this.err(res, 422, "SEAT_INVALID", `席位无效（有效席位：${validSeats.join("、")}）`, { ok: false, valid_seats: validSeats });
       }
@@ -1463,6 +1558,11 @@ export class Gateway {
       if (!g) {
         g = { votes: new Map(), voters: new Map() };
         this.guesses.set(matchId, g);
+      }
+      // r30：单局竞猜人数上限——匿名票池是纯内存态且随对局保留，无上限时一个脚本即可把
+      // Map 撑到百万级（票数统计也随之 O(n)）。改票不受限，只拦新观众。
+      if (!g.voters.has(voter) && g.voters.size >= MAX_GUESS_VOTERS) {
+        return this.err(res, 429, "RATE_LIMITED", `本局竞猜人数已达上限（${MAX_GUESS_VOTERS}），不再接受新观众投票`, { ok: false });
       }
       const old = g.voters.get(voter);
       if (old === seat) {
@@ -1724,8 +1824,11 @@ class RestoredMatch extends Match {
     return {
       matchId: this.id,
       scores: this.restoredScores,
-      // 恢复壳没有运行态 state，无法推算名次（返回空数组而非臆造）
-      placements: [],
+      // r30c：此前返回空数组「不臆造」。但空数组与「无此对局/未终局」无法区分，客户端读 result.placements
+      // 会以为名次缺失。现用终局比分按统一兜底口径推算（同分并列），note 明示来源——
+      // 比分是落盘的真实数据，不是臆造；缺的只是"身份/筹码"这类需要 state 才能给出的细化名次，
+      // 那部分仍请走 /replay/step（重建 state 后由游戏自实现的 placements 给出）。
+      placements: placementsFromScores(this.restoredScores, "由终局比分推算（恢复壳无运行态）"),
       events: this.restoredEvents,
       gameEvents: [],
     };

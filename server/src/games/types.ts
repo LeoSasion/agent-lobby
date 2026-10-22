@@ -69,17 +69,10 @@ export interface GameModule<S> {
    */
   actionVisibility?(state: S, seat: SeatId, action: Action): EventVisibility;
   /**
-   * 多动作相位豁免（r29 P1 修复）：本相位该席位提交一次动作后，是否仍应视为"待行动"。
-   * 默认 false（每席每相位一次动作）——内核据此在视图中让已交者退出活跃集并清空 legal_actions，
-   * 消除 "you.active=true + legal_actions 非空" 诱导重复提交的坑。
-   * 仅少数游戏需要返回 true：狼人杀夜间，狼可先发 wolf_say 密语再出 kill（密语不占收齐名额）。
-   * 注意：本钩子只影响"视图如何呈现"，不改变内核收齐判定（后者由 activeSeats 决定）。
-   */
-  multiActionPhase?(state: S, seat: SeatId): boolean;
-  /**
    * 终局名次（r29 P1 修复）：多模型对照实验的最小可观测单元。
    * scores 只有冠军 1 分、其余 0，第 2 名与第 6 名在数据上等价；placements 补全序。
-   * 未实现时内核按 scores 降序 + 座位号升序生成兜底名次。
+   * 未实现时内核按 scores 降序 + 座位号升序生成兜底名次——
+   * 注意兜底对「单一冠军制」只能区分冠军与并列末位，多席位赛制（holdem 筹码）须自实现。
    */
   placements?(state: S): { seat: SeatId; rank: number; note?: string }[];
   /**

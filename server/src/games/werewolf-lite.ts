@@ -497,17 +497,6 @@ export function createWerewolfLite(): GameModule<State> {
       return out;
     },
 
-    /**
-     * r29：狼队密语（wolf_say）不写 nightActions、不占夜间收齐名额——
-     * 交完密语后本席位仍须保留出刀（狼）/验人（预言家）的行动权，故豁免"已交即退出活跃集"。
-     */
-    multiActionPhase(s, seat) {
-      if (s.phase !== "night") return false;
-      const role = s.roles.get(seat);
-      if (role !== "werewolf" && role !== "seer") return false;
-      return !s.nightActions.has(seat);
-    },
-
     seatAlive(s, seat) {
       return s.alive.get(seat) === true;
     },

@@ -38,6 +38,15 @@ try {
   /* 首次运行，无历史状态 */
 }
 
+/** 决策令牌（r30c）：最近一次看到的视图回合——arena_act 缺省回传，让陈旧提交被内核拒为 STALE_VIEW。
+ *  只存内存、不落盘：进程重启后第一次 act 会不带令牌（等价于旧行为），随后由 view 重新填上。 */
+let lastTurn: number | null = null;
+
+function rememberTurn(v: unknown): void {
+  const t = (v as { turn?: unknown } | null | undefined)?.turn;
+  if (typeof t === "number") lastTurn = t;
+}
+
 async function saveState(): Promise<void> {
   try {
     await writeFile(STATE_FILE, JSON.stringify(state, null, 2), "utf8");
@@ -52,12 +61,27 @@ async function api(path: string, opts: { method?: string; seat?: boolean; body?:
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (state.api_key) headers.authorization = "Bearer " + state.api_key;
   if (opts.seat && state.seat_token) headers["x-seat-token"] = state.seat_token;
-  const res = await fetch(ARENA + "/api/v1" + path, {
-    method: opts.method ?? "GET",
-    headers,
-    body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-  });
-  return (await res.json()) as Json;
+  // r30c：网络层失败与非 JSON 响应曾裸抛到 tools/call 的 catch —— LLM 客户端只会看到
+  // "fetch failed" / "Unexpected token < in JSON"，无从判断是网关没起还是对局被清理。
+  // 与 sdk/client.ts 的 fetchGuarded 口径对齐：两种情况都转成可读的结构化中文错误。
+  let res: Response;
+  try {
+    res = await fetch(ARENA + "/api/v1" + path, {
+      method: opts.method ?? "GET",
+      headers,
+      body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+    });
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e);
+    throw new Error(`网关不可达（${ARENA}）：${why}。请确认网关已启动（npm start）。`);
+  }
+  try {
+    return (await res.json()) as Json;
+  } catch {
+    throw new Error(
+      `网关返回非 JSON（HTTP ${res.status} · ${path}）——对局可能已被清理、或网关正在重启，请用 arena_join 重新开局。`,
+    );
+  }
 }
 
 interface Tool {
@@ -176,6 +200,7 @@ const tools: Tool[] = [
       if (!state.match_id) throw new Error("尚未加入对局，请先调用 arena_join。");
       const v = await api(`/matches/${state.match_id}/view`, { seat: true });
       if (v.error) throw new Error(`获取失败：${JSON.stringify(v)}`);
+      rememberTurn(v);
       return JSON.stringify(v);
     },
   },
@@ -186,13 +211,16 @@ const tools: Tool[] = [
       '吹牛骰 {"type":"bid","qty":2,"face":5} 或 {"type":"challenge"}；' +
       '黑白棋 {"type":"place","cell":18}；狼人杀 {"type":"kill"/"check"/"say"/"last_words"/"vote","target"/"text"}。' +
       'nonce 可选：缺省自动生成一次性 nonce（重试前请先 arena_view 确认动作是否已入账）；' +
-      '传入固定 nonce 则该次为幂等重试（同 nonce 重发返回原成功，不消耗回合）。返回含结算后的最新视图；拒绝时返回 code + legal_actions 供自纠。',
+      '传入固定 nonce 则该次为幂等重试（同 nonce 重发返回原成功，不消耗回合）。' +
+      'turn 可选：缺省自动回传最近一次 view 的 turn（陈旧视图提交会被拒为 STALE_VIEW；显式传入以此为准）。' +
+      '返回含结算后的最新视图；拒绝时返回 code + legal_actions 供自纠。',
     inputSchema: {
       type: "object",
       properties: {
         action: { type: "object", description: "动作对象（形态见 arena_view 的 legal_actions）" },
         reasoning: { type: "string", description: "决策理由（可选，≤500 字，进入回放）" },
         nonce: { type: "string", description: "幂等重试键（可选，≤64 字符）——网络类重试复用同 nonce；换新 nonce = 全新决策" },
+        turn: { type: "number", description: "决策令牌（可选）——缺省自动取最近一次 view 的 turn" },
       },
       required: ["action"],
     },
@@ -206,6 +234,9 @@ const tools: Tool[] = [
           ? args.nonce.slice(0, 64)
           : "n-" + Math.random().toString(36).slice(2, 10),
       };
+      // r30c 决策令牌：显式 turn 优先，否则回传最近一次 view 的 turn
+      const turn = typeof args.turn === "number" && Number.isInteger(args.turn) ? args.turn : lastTurn;
+      if (typeof turn === "number") body.turn = turn;
       // r11 w11-m1 P1-3：客户端侧截断也须回填 reasoning_truncated（跨通道一致——此前只有网关 HTTP 响应带该字段时才转发）
       let clientTruncated = false;
       if (typeof args.reasoning === "string") {
@@ -224,6 +255,8 @@ const tools: Tool[] = [
       if (r.ok) {
         // r9 mcp9-d1：响应前缀人读文本不利于程序化解析——改纯 JSON（ok/applied/replayed 语义与 docs §3.1 一致；
         // replayed=true 表示 nonce 重放命中，本次未发生新入账）
+        // r30c：顺带用结算后的视图刷新决策令牌，连续 arena_act 不必每步重读
+        rememberTurn(r.view);
         return JSON.stringify({
           ok: true,
           applied: r.applied === true,
@@ -288,8 +321,10 @@ const tools: Tool[] = [
           } else {
             lines.push(`阶段：${v.phase}（第 ${v.round} 轮）· 我方${you?.active ? "行动中" : "等待中"}`);
           }
-        } catch {
-          lines.push("（对局信息获取失败）");
+        } catch (e) {
+          // r30c：诊断工具吞掉错误原因等于没有诊断价值——保留首行原因（多为网关不可达/对局被清理）
+          const why = e instanceof Error ? e.message.split("\n")[0] : String(e);
+          lines.push(`（对局信息获取失败：${why}）`);
         }
       }
       return lines.join("\n");

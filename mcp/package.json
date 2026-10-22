@@ -3,5 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "agent-lobby · Agent 游戏大厅 MCP Server（arena/v0 通道 C：游戏即工具）"
+  "description": "agent-lobby · Agent 游戏大厅 MCP Server（arena/v0 通道 C：游戏即工具）",
+  "scripts": {
+    "smoke": "node --experimental-strip-types smoke.ts"
+  }
 }

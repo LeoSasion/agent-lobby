@@ -433,8 +433,10 @@ export function createWerewolfBot(name: string, bias = 0): SeatDriver {
 
         // 无狼查杀时：散票（集中投票会因 3/5 概率命中村民而恶化局势，66% 为散票基线）
         // 公式 (me+bias+round)%len：bot 席位间天然互碰撞最小（r4b 实测 hash 散票引发随机放逐 → 狼胜率 76%）
+        // r30c：此处原用裸 pub.round，而同函数上方已有 round = pub.round ?? 1 的兜底——
+        // 视图缺 round 时会算出 NaN 下标 → target=undefined → 422，该席本相位既不投票也不重试。
         if (targets.length === 0) return done(submit, { type: "pass" });
-        return done(submit, { type: "vote", target: targets[(me + pub.round + bias) % targets.length] });
+        return done(submit, { type: "vote", target: targets[(me + round + bias) % targets.length] });
       }
 
       return done(submit, { type: "pass" });

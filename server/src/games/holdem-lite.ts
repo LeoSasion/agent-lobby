@@ -750,6 +750,37 @@ export function createHoldemLite(config: HoldemConfig = {}): GameModule<State> {
       for (const p of s.players) out[p.seat] = p.seat === winner ? 1 : 0;
       return out;
     },
+
+    /** 出局态：筹码归零即出局（与 view.players[].eliminated 同源） */
+    seatAlive(s, seat) {
+      return (s.players.find((p) => p.seat === seat)?.chips ?? 0) > 0;
+    },
+
+    /**
+     * r30：终局全序名次。scores 只有冠军 1 分，其余 5 人全是 0——兜底名次会把
+     * 「第 2 名」与「第 6 名」判成并列，多模型对照实验在 holdem 上直接失去分辨率。
+     * 排序：剩余筹码降序 → 出局顺序（越晚出局越好）→ 座位号升序。
+     */
+    placements(s) {
+      const rows = s.players.map((p) => ({
+        seat: p.seat,
+        chips: p.chips,
+        bust: s.bustedOrder.indexOf(p.seat), // -1 = 未出局
+      }));
+      rows.sort((a, b) => b.chips - a.chips || b.bust - a.bust || a.seat - b.seat);
+      let rank = 0;
+      let prevKey: string | null = null;
+      return rows.map((r, i) => {
+        const key = `${r.chips}|${r.bust}`;
+        if (key !== prevKey) rank = i + 1;
+        prevKey = key;
+        return {
+          seat: r.seat,
+          rank,
+          note: r.bust >= 0 ? `chips=${r.chips},eliminated_order=${r.bust + 1}` : `chips=${r.chips}`,
+        };
+      });
+    },
   };
 
   return game;

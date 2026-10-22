@@ -21,6 +21,8 @@ export {
   type ActOptions,
   type ActResult,
   type MatchResult,
+  /** 终局名次条目（r30c 与 MatchResult.placements 一并导出） */
+  type Placement,
   type GameInfo,
   type LeaderboardRow,
 } from "./client.ts";

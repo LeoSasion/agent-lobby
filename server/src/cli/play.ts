@@ -140,7 +140,10 @@ async function post(action: Record<string, unknown>): Promise<{ ok: boolean; err
     headers: H,
     body: JSON.stringify({ action }),
   });
-  return (await r.json()) as { ok: boolean; error?: string };
+  // r30c：422 的错误体是 {error,code,message}，没有 ok 字段——旧代码 await r.json() 后取 r.ok
+  // 得到的永远是 undefined，于是任何失败都打印成「被拒(?)」，看不出是 NOT_YOUR_TURN 还是 ILLEGAL_ACTION。
+  const b = (await r.json()) as { ok?: boolean; error?: string; code?: string; message?: string };
+  return { ok: b.ok === true, error: b.error ?? b.code ?? b.message };
 }
 
 console.log(`参赛中：match=${matchId}`);

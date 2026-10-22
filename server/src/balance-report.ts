@@ -157,7 +157,10 @@ for (const { events: evs } of holdemEvents) {
   else if (reason === "hand_limit") holdemHandLimit++;
 }
 console.log(`  胜场分布: 1号(紧凶)=${holdemWins["1"]} · 2号(松凶)=${holdemWins["2"]} · 3号(稳健)=${holdemWins["3"]}`);
-console.log(`  平均手数: ${(holdemHands / HOLDEM_GAMES).toFixed(1)} · 摊牌率 ${((holdemShowdowns / holdemHands) * 100).toFixed(0)}% · 终局: 清台 ${holdemLastStanding} / 手数上限 ${holdemHandLimit}`);
+// r30c：holdemHands 为 0 时（异常局全部无 hand_ended）除法得 NaN，报告会打出「摊牌率 NaN%」——
+// 报告本身是排障工具，最不该在生产异常时输出 NaN，改为显式 "—"
+const showdownRate = holdemHands > 0 ? `${((holdemShowdowns / holdemHands) * 100).toFixed(0)}%` : "—";
+console.log(`  平均手数: ${(holdemHands / HOLDEM_GAMES).toFixed(1)} · 摊牌率 ${showdownRate} · 终局: 清台 ${holdemLastStanding} / 手数上限 ${holdemHandLimit}`);
 const holdemMax = Math.max(holdemWins["1"], holdemWins["2"], holdemWins["3"]);
 if (holdemMax > HOLDEM_GAMES * 0.55) console.log("  ⚠️ 某风格显著占优（>55%）");
 else console.log("  ✓ 风格差异在合理范围");

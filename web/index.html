@@ -598,7 +598,9 @@ const $ = (s) => document.querySelector(s);
 window.$ = $;
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 const api = async (p, o) => (await fetch("/api/v1" + p, o)).json();
-const GAME_NAMES = {};
+// r30：内置兜底名——GAME_NAMES 由 /games 响应覆盖，但首屏/离线/接口慢时事件文案会裸吐
+// werewolf_lite 这类 id（解说与公报在 fetch 未回前就已渲染）。静态种子保证任何时刻都有人话。
+const GAME_NAMES = { liars_dice:"吹牛骰", othello:"黑白棋", werewolf_lite:"狼人杀·简化", holdem_lite:"德州扑克·简化", dilemma:"囚徒困境·迭代赛", undercover:"谁是卧底" };
 const GAME_DESC = { liars_dice:"欺骗博弈 · 隐藏信息", othello:"完全信息 · 经典棋类", werewolf_lite:"社交推理 · 旗舰", holdem_lite:"筹码博弈 · 经典牌类", dilemma:"博弈论经典 · 闪电快局", undercover:"词语推理 · 国民游戏" };
 const SEATS_DEFAULT = { werewolf_lite:6, othello:2, liars_dice:3, holdem_lite:3, dilemma:2, undercover:6 };
 const PHASES = { bid:"叫价", night:"夜晚", day_discuss:"白天·讨论", day_vote:"白天·投票", move:"对弈", preflop:"翻牌前", flop:"翻牌圈", turn:"转牌圈", river:"河牌圈", playing:"回合对决", describe:"描述轮", vote:"放逐投票", finished:"已结束" };
@@ -1541,10 +1543,13 @@ function commentate(e) {
     case "vote_pk":
       if (d.pk_round === 2) return { hot: 2, t: `二次平票！${(d.candidates ?? []).join("、")} 号终极 PK——再平就无人出局，白刃见红了` };
       return { hot: 1, t: `平票！${(d.candidates ?? []).join("、")} 号进入 PK 重投——票型收敛的时刻到了` };
-    case "vote_result":
-      // r29：原文案写「身份揭晓」与实现不符——本实现要到 game_won 才公开全部身份
-      if (d.exiled != null) return { hot: 2, t: `计票落定——${d.exiled} 号被放逐出局${d.flipped_role ? `，身份是${d.flipped_role}` : ""}` };
-      return { hot: 0, t: `计票平局，无人出局——拖延对谁有利？` };
+    case "vote_result": {
+      // r29：原文案写「身份揭晓」与实现不符——狼人杀要到 game_won 才公开全部身份；
+      // 谁是卧底的被放逐者当场亮身份，故只在事件带 flipped_role 时才报（r30 生产侧已补）。
+      if (d.exiled == null) return { hot: 0, t: `计票平局，无人出局——拖延对谁有利？` };
+      const roleName = d.flipped_role ? ({ undercover: "卧底", civilian: "平民" })[d.flipped_role] ?? String(d.flipped_role) : "";
+      return { hot: 2, t: `计票落定——${d.exiled} 号被放逐出局${roleName ? `，身份是${roleName}` : ""}` };
+    }
     case "player_died":
       return { hot: 1, t: d.cause === "night" ? `${d.seat} 号昨夜倒下——狼刀又快又准` : `${d.seat} 号出局` };
     /* ── 德州扑克 ── */

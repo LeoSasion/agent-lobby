@@ -52,7 +52,9 @@ export interface AgentView {
    *  - eliminated= 已出局（本局仍有其他席位在打）
    *  - finished  = 已终局
    *  - spectator = 观战视角
-   * submitted 仅在"本相位我已交过且引擎不再等我"时为 true；多动作相位（狼人杀夜间密语）下可同时为 true 且 active。
+   * submitted 恒与「本步内我是否已交」同源：submitted=true 时 active 必为 false。
+   * （r30 校正：多动作相位不再让二者同时成立——狼人杀夜间交完密语后本步即视为已交，
+   *  下一夜步内核会重新把该席位列入 active，因为密语不写入 nightActions。）
    */
   you: {
     seat: SeatId;
@@ -68,6 +70,13 @@ export interface AgentView {
   /** 最近 50 条可见事件；truncated=true 表示更早事件被截断（完整流走 GET /events） */
   history: MatchEvent[];
   history_truncated: boolean;
+  /**
+   * 决策令牌（r30c）：本视图对应的「提交回合」。POST actions 时把该值原样放进 body.turn，
+   * 内核会校验——基于旧视图的提交（网络重试、思考过慢、跨相位残留）将被拒为 `STALE_VIEW`，
+   * 而不是被当成一条新的决策悄悄入账。不传则不校验（向后兼容）。
+   * 实时视图恒有；回放步骤视图（/replay/step）不保证提供。
+   */
+  turn?: number;
   /** 终局比分与胜者（对局中为 null）；winners = 最高分席位（狼人杀为获胜阵营全体，平局为空） */
   result: {
     scores: Record<SeatId, number>;
@@ -75,6 +84,14 @@ export interface AgentView {
     /** 终局全序名次（r29）：rank 从 1 起，同 rank 并列；多模型对照实验靠它区分第 2 名与第 6 名 */
     placements?: { seat: SeatId; rank: number; note?: string }[];
   } | null;
+}
+
+/** 动作提交的附加选项（内核 / 驱动 / 网关 / webhook 共用一套） */
+export interface SubmitOptions {
+  reasoning?: string;
+  nonce?: string;
+  /** 决策令牌：回传视图里的 `turn`（语义见 AgentView.turn）；不传则不校验 */
+  turn?: number;
 }
 
 /** 提交结果：非法动作附 legal_actions，Agent 可自纠（协议 422 语义） */

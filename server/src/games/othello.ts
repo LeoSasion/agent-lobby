@@ -77,6 +77,16 @@ function counts(board: number[]): { black: number; white: number; empty: number 
   return { black, white, empty: 64 - black - white };
 }
 
+/**
+ * 座位 → 棋子颜色（1 黑 / 2 白）。
+ * r30：棋盘此前直接写 `board[cell] = seat`，隐式假设"座位号恰好等于颜色"——
+ * 当前座位恒为 1..N 所以不出错，但一旦席位非从 1 起编号（或将来扩到 >2 席），
+ * 写入 3 号座位就会把棋盘写成非法值、flipsFor 的 `3 - player` 也随之失效。
+ */
+function colorOf(blackSeat: SeatId, seat: SeatId): number {
+  return seat === blackSeat ? 1 : 2;
+}
+
 export function createOthello(): GameModule<State> {
   const game: GameModule<State> = {
     meta: { id: "othello", name: "黑白棋", minSeats: 2, maxSeats: 2, defaultTimeoutMs: 60_000 },
@@ -112,7 +122,7 @@ export function createOthello(): GameModule<State> {
 
     legalActions(s, seat) {
       if (s.finished || s.turn !== seat) return [];
-      const cells = legalCells(s.board, seat);
+      const cells = legalCells(s.board, colorOf(s.blackSeat, seat));
       if (cells.length === 0) return [{ type: "pass", hint: "无合法落子，只能虚着" }];
       return [
         {
@@ -127,7 +137,7 @@ export function createOthello(): GameModule<State> {
       if (s.finished) return { ok: false, error: "MATCH_FINISHED" };
       if (s.turn !== seat) return { ok: false, error: "NOT_YOUR_TURN" };
       if (action.type === "pass") {
-        if (legalCells(s.board, seat).length > 0) {
+        if (legalCells(s.board, colorOf(s.blackSeat, seat)).length > 0) {
           return { ok: false, error: "ILLEGAL_ACTION：有合法落子时不可虚着" };
         }
         return { ok: true };
@@ -137,7 +147,7 @@ export function createOthello(): GameModule<State> {
         if (!Number.isInteger(cell) || (cell as number) < 0 || (cell as number) > 63) {
           return { ok: false, error: "ILLEGAL_ACTION：cell 须为 0-63 的整数" };
         }
-        if (flipsFor(s.board, cell as number, seat).length === 0) {
+        if (flipsFor(s.board, cell as number, colorOf(s.blackSeat, seat)).length === 0) {
           return { ok: false, error: "ILLEGAL_ACTION：该落点无法翻转任何棋子" };
         }
         return { ok: true };
@@ -163,9 +173,10 @@ export function createOthello(): GameModule<State> {
       }
 
       const cell = action.cell as number;
-      const flips = flipsFor(s.board, cell, seat);
-      s.board[cell] = seat;
-      for (const f of flips) s.board[f] = seat;
+      const color = colorOf(s.blackSeat, seat);
+      const flips = flipsFor(s.board, cell, color);
+      s.board[cell] = color;
+      for (const f of flips) s.board[f] = color;
       s.passes = 0;
       s.lastMove = cell;
       s.turn = other;
@@ -194,7 +205,7 @@ export function createOthello(): GameModule<State> {
     },
 
     timeoutAction(s, seat) {
-      const cells = legalCells(s.board, seat);
+      const cells = legalCells(s.board, colorOf(s.blackSeat, seat));
       if (cells.length === 0) return { type: "pass" };
       return { type: "place", cell: cells[0] };
     },

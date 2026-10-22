@@ -5,6 +5,7 @@
  */
 
 import type { Action, AgentView, LegalAction, MatchEvent, SeatId } from "../protocol.ts";
+import type { RatingDelta } from "../arena/rating.ts";
 
 export interface QuickstartOptions {
   game: string;
@@ -16,6 +17,11 @@ export interface QuickstartOptions {
 export interface ActOptions {
   reasoning?: string;
   nonce?: string;
+  /**
+   * 决策令牌：缺省自动取最近一次成功读到的 `view.turn`（推荐——这样基于旧视图的
+   * 提交会被内核拒为 STALE_VIEW，而不是被当成新决策入账）。显式传入则以此为准。
+   */
+  turn?: number;
 }
 
 export interface ActResult {
@@ -37,9 +43,24 @@ export interface ActResult {
   reasoning_truncated?: boolean;
 }
 
+/** 终局名次条目（与 view.result.placements、/replay result.placements 同源） */
+export interface Placement {
+  seat: SeatId;
+  rank: number;
+  note?: string;
+}
+
 export interface MatchResult {
   matchId: string;
   scores: Record<SeatId, number>;
+  /** 胜方席位；平局或无胜方时为空数组（与 /replay result.winners 同源，不再用 score>0 自行推断） */
+  winners: SeatId[];
+  /** 终局全序名次（含并列） */
+  placements: Placement[];
+  /** 终局原因（cleared / hand_limit / rounds_limited 等；部分游戏为 null） */
+  reason: string | null;
+  /** 本局 Elo 变化；未参与评级（如纯 bot 局）为 null */
+  ratings: RatingDelta[] | null;
   events: MatchEvent[];
 }
 
@@ -272,6 +293,8 @@ export class MatchHandle {
 
   private client: ArenaClient;
   private _finished = false;
+  /** 最近一次读到的视图决策令牌（act() 缺省回传；r30c） */
+  private lastTurn: number | null = null;
 
   constructor(client: ArenaClient, init: MatchHandleInit) {
     this.client = client;
@@ -281,12 +304,19 @@ export class MatchHandle {
     this.agentId = init.agentId;
   }
 
+  /** 记住视图的决策令牌（act() 缺省回传它，从而得到「陈旧视图提交被拒」的保护——r30c） */
+  private rememberTurn(v: AgentView | null | undefined): void {
+    if (v && typeof v.turn === "number") this.lastTurn = v.turn;
+  }
+
   /** 获取当前 AgentView（slim=true 省略 history——高频轮询省流量，完整历史走 pollEvents） */
   async view(slim = false): Promise<AgentView> {
     const r = await this.client.api(`/matches/${this.matchId}/view${slim ? "?slim=1" : ""}`, {
       headers: { "x-seat-token": this.seatToken },
     });
-    return r as unknown as AgentView;
+    const v = r as unknown as AgentView;
+    this.rememberTurn(v);
+    return v;
   }
 
   /**
@@ -301,6 +331,9 @@ export class MatchHandle {
     const reasonTrunc = typeof opts?.reasoning === "string" && opts.reasoning.length > 500;
     if (opts?.reasoning) body.reasoning = opts.reasoning.slice(0, 500);
     if (opts?.nonce) body.nonce = opts.nonce.slice(0, 64);
+    // 决策令牌：显式传入优先，否则回传最近一次 view()/views() 读到的 turn（两者都没有则不带）
+    const turn = opts?.turn ?? this.lastTurn;
+    if (typeof turn === "number") body.turn = turn;
     const res = await fetchGuarded(this.client.url + `/api/v1/matches/${this.matchId}/actions`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-seat-token": this.seatToken },
@@ -315,6 +348,8 @@ export class MatchHandle {
     if (!res.ok && res.status !== 422) {
       throw new ArenaApiError(res.status, r);
     }
+    // 成功响应的 view 已是结算后的新视图——同步令牌，连续 act 不必每步都重读 view
+    this.rememberTurn((r.view ?? null) as AgentView | null);
     return { ...(r as unknown as ActResult), status: res.status, ...(reasonTrunc ? { reasoning_truncated: true } : {}) };
   }
 
@@ -378,15 +413,26 @@ export class MatchHandle {
     }
   }
 
-  /** 终局后加载完整结果（含 scores + events） */
+  /** 终局后加载完整结果（scores + winners + placements + reason + ratings + events） */
   private async loadResult(): Promise<void> {
     if (this.result) return;
     const r = await this.client.api(`/matches/${this.matchId}/replay`, {
       headers: { "x-seat-token": this.seatToken },
     });
+    // r30c：此前只取 scores + events，把 /replay 已经给出的 winners / placements / ratings 全丢了——
+    // 用 SDK 的选手拿不到「我赢了没有」「第几名」「Elo 变了多少」，只能拿 score>0 自己猜，
+    // 恰是 r30 在网关侧刚统一掉的那种多口径推断。这里改为原样透传。
+    const result = (r.result ?? null) as {
+      winners?: SeatId[];
+      placements?: Placement[];
+    } | null;
     this.result = {
       matchId: this.matchId,
       scores: (r.scores ?? {}) as Record<SeatId, number>,
+      winners: result?.winners ?? [],
+      placements: result?.placements ?? [],
+      reason: (r.reason as string | null | undefined) ?? null,
+      ratings: (r.ratings as RatingDelta[] | null | undefined) ?? null,
       events: (r.events ?? []) as MatchEvent[],
     };
   }
