@@ -19,6 +19,7 @@
     "smoke:errors": "node --experimental-strip-types src/smoke-errors.ts",
     "smoke:persist": "node --experimental-strip-types src/smoke-persist.ts",
     "smoke:invariants": "node --experimental-strip-types src/smoke-invariants.ts",
+    "report:balance": "node --experimental-strip-types src/balance-report.ts",
     "typecheck": "tsc --noEmit",
     "test": "npm run typecheck && npm run smoke:invariants && npm run smoke && npm run smoke:othello && npm run smoke:werewolf && npm run smoke:holdem && npm run smoke:dilemma && npm run smoke:undercover && npm run smoke:llm && npm run smoke:framework && npm run smoke:webhook && npm run smoke:gap && npm run smoke:room && npm run smoke:errors && npm run smoke:persist",
     "start": "node --experimental-strip-types src/server.ts",

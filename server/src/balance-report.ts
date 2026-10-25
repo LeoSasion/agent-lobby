@@ -2,17 +2,24 @@
  * 游戏平衡统计验证（平台裁判视角）
  * 批量运行 bot 对 bot 对局，统计各方胜率，评估游戏是否平衡
  * 运行：node --experimental-strip-types src/balance-report.ts
+ *
+ * 覆盖六款游戏。r30e 补上 dilemma 与 undercover —— 此前只有四款，
+ * 而卧底是「多数人获胜制」（平民 5/6 胜），最易出零和偏差，却长期在监控盲区。
  */
 
 import { createLiarsDice } from "./games/liars-dice.ts";
 import { createOthello } from "./games/othello.ts";
 import { createWerewolfLite } from "./games/werewolf-lite.ts";
 import { createHoldemLite } from "./games/holdem-lite.ts";
+import { createDilemma } from "./games/dilemma.ts";
+import { createUndercover } from "./games/undercover.ts";
 import { createMatch } from "./arena/lobby.ts";
 import { createRuleBot, createHangingBot } from "./bots/rule-bot.ts";
 import { createOthelloBot } from "./bots/othello-bot.ts";
 import { createWerewolfBot } from "./bots/werewolf-bot.ts";
 import { createHoldemBot } from "./bots/holdem-bot.ts";
+import { createDilemmaBot } from "./bots/dilemma-bot.ts";
+import { createUndercoverBot } from "./bots/undercover-bot.ts";
 import type { GameModule } from "./games/types.ts";
 import type { SeatDriver } from "./arena/match.ts";
 import type { MatchEvent } from "./protocol.ts";
@@ -21,6 +28,11 @@ const WW_GAMES = 50;
 const DICE_GAMES = 30;
 const OTHELLO_GAMES = 20;
 const HOLDEM_GAMES = 40;
+const DILEMMA_GAMES = 30;
+const UC_GAMES = 30;
+
+/** 百分比格式化：分母为 0 时给 "—" 而不是 NaN（排障工具最不该在异常时输出 NaN） */
+const pct = (n: number, d: number): string => (d > 0 ? `${((n / d) * 100).toFixed(1)}%` : "—");
 
 async function runBatch(
   label: string,
@@ -158,12 +170,69 @@ for (const { events: evs } of holdemEvents) {
 }
 console.log(`  胜场分布: 1号(紧凶)=${holdemWins["1"]} · 2号(松凶)=${holdemWins["2"]} · 3号(稳健)=${holdemWins["3"]}`);
 // r30c：holdemHands 为 0 时（异常局全部无 hand_ended）除法得 NaN，报告会打出「摊牌率 NaN%」——
-// 报告本身是排障工具，最不该在生产异常时输出 NaN，改为显式 "—"
-const showdownRate = holdemHands > 0 ? `${((holdemShowdowns / holdemHands) * 100).toFixed(0)}%` : "—";
+// 报告本身是排障工具，最不该在生产异常时输出 NaN，故统一走 pct()（分母为 0 给 "—"）
+const showdownRate = pct(holdemShowdowns, holdemHands);
 console.log(`  平均手数: ${(holdemHands / HOLDEM_GAMES).toFixed(1)} · 摊牌率 ${showdownRate} · 终局: 清台 ${holdemLastStanding} / 手数上限 ${holdemHandLimit}`);
 const holdemMax = Math.max(holdemWins["1"], holdemWins["2"], holdemWins["3"]);
 if (holdemMax > HOLDEM_GAMES * 0.55) console.log("  ⚠️ 某风格显著占优（>55%）");
 else console.log("  ✓ 风格差异在合理范围");
+
+// —— 囚徒困境：合作率与「背叛是否被惩罚」 ——
+// 设计意图：TFT 一旦被背叛就永久报复，AllD 永不改口 ⇒ 单方背叛（CD）只可能出现在第 1 轮。
+// 若 CD 分布在多轮，说明 TFT 的报复逻辑坏了 —— 这是本段唯一真能失败的不变量。
+console.log("\n[囚徒困境·迭代] 2 席 bot 对 bot（30 局）");
+const dilemmaEvents = await runBatch("总计", createDilemma(), () => [
+  createDilemmaBot("一报还一报", "tft"),
+  createDilemmaBot("永久背叛", "betray"),
+], DILEMMA_GAMES);
+let dCC = 0, dDD = 0, dCD = 0, dLateCD = 0;
+let dSeat1 = 0, dSeat2 = 0, dDraw = 0;
+for (const { events: evs } of dilemmaEvents) {
+  for (const e of evs) {
+    if (e.type !== "round_resolved") continue;
+    const d = e.data as { pattern?: string; round?: number };
+    if (d.pattern === "CC") dCC++;
+    else if (d.pattern === "DD") dDD++;
+    else if (d.pattern === "CD") { dCD++; if ((d.round ?? 0) > 1) dLateCD++; }
+  }
+  const w = (evs.find((e) => e.type === "game_won")?.data as { winner?: unknown } | undefined)?.winner;
+  if (w === 1) dSeat1++;
+  else if (w === 2) dSeat2++;
+  else dDraw++;
+}
+const dRounds = dCC + dDD + dCD;
+console.log(`  回合构成: 双合作 ${pct(dCC, dRounds)} · 双背叛 ${pct(dDD, dRounds)} · 单方背叛 ${pct(dCD, dRounds)}`);
+console.log(`  胜负: 1号(一报还一报)=${dSeat1} · 2号(永久背叛)=${dSeat2} · 平=${dDraw}`);
+if (dLateCD > 0) console.log(`  ⚠️ 第 2 轮后仍出现单方背叛 ${dLateCD} 次 —— TFT 报复逻辑失效`);
+else console.log("  ✓ 单方背叛仅出现在首轮（背叛被有效惩罚）");
+if (dSeat2 === 0) console.log("  ⚠️ 永久背叛未能占优 —— 收益结算可能反了");
+
+// —— 谁是卧底：卧底 vs 平民胜率 ——
+console.log("\n[谁是卧底] 6 席 bot 对 bot（30 局）");
+const ucEvents = await runBatch("总计", createUndercover(), () =>
+  [0, 1, 2, 3, 4, 5].map((i) => createUndercoverBot(`uc-bot-${i}`, i)),
+  UC_GAMES,
+);
+let ucUndercover = 0;
+let ucCivilian = 0;
+let ucStall = 0;
+let ucVoteRounds = 0;
+for (const { events: evs } of ucEvents) {
+  const w = (evs.find((e) => e.type === "game_won")?.data as { winner?: string } | undefined)?.winner;
+  if (w === "undercover") ucUndercover++;
+  else if (w === "civilians") ucCivilian++;
+  else ucStall++;
+  ucVoteRounds += evs.filter((e) => e.type === "vote_result").length;
+}
+const ucRate = ucUndercover / UC_GAMES;
+console.log(`  卧底胜 ${ucUndercover} · 平民胜 ${ucCivilian} · 异常 ${ucStall}`);
+console.log(`  卧底胜率: ${(ucRate * 100).toFixed(1)}%（1 打 5，理想 20-40%）`);
+console.log(`  平均投票轮数: ${(ucVoteRounds / UC_GAMES).toFixed(1)}`);
+// 报警线定 45% 而非 55%：1 打 5 的局，随机投票的基线本就只有 20%，
+// 若卧底能赢到一半以上，说明平民 bot 完全没有利用「描述与词类别不符」这个唯一线索。
+if (ucRate < 0.15) console.log("  ⚠️ 卧底胜率过低（<15%）——描述区分度不足或投票过准");
+else if (ucRate > 0.45) console.log("  ⚠️ 卧底胜率偏高（>45%）——1 打 5 却胜负各半，平民未利用描述线索");
+else console.log("  ✓ 胜率在合理区间");
 
 // —— 框架不变量抽检 ——
 console.log("\n[框架不变量抽检] 全超时 + 确定性");
