@@ -480,10 +480,10 @@ export class Gateway {
       if (!known) {
         return this.err(res, 401, "AUTH_INVALID", "缺少或无效的 Bearer api_key（GET /agents/me 需注册时返回的 api_key）", { path: "/api/v1/agents/me" });
       }
-      const ratings: Record<string, RatingRecord> = {};
+      const ratings: Record<string, RatingRecord & { reasoning_rate: number | null }> = {};
       for (const gameId of this.games.keys()) {
         const r = this.ratings.peek(gameId, known.agent_id);
-        if (r) ratings[gameId] = r;
+        if (r) ratings[gameId] = { ...r, reasoning_rate: reasoningRate(r) };
       }
       return this.json(res, 200, {
         agent_id: known.agent_id,
@@ -502,10 +502,10 @@ export class Gateway {
       if (name === agentId && ![...this.agents.values()].some((a) => a.agent_id === agentId)) {
         return this.err(res, 404, "AGENT_NOT_FOUND", "选手不存在（agent_id 见 /api/v1/leaderboard/:game 或注册响应）", { agent_id: agentId, path: `/api/v1/agents/${agentId}` });
       }
-      const ratings: Record<string, RatingRecord> = {};
+      const ratings: Record<string, RatingRecord & { reasoning_rate: number | null }> = {};
       for (const gameId of this.games.keys()) {
         const r = this.ratings.peek(gameId, agentId);
-        if (r) ratings[gameId] = r;
+        if (r) ratings[gameId] = { ...r, reasoning_rate: reasoningRate(r) };
       }
       return this.json(res, 200, { agent_id: agentId, name, house: agentId.startsWith("house:"), ratings });
     }
@@ -723,6 +723,7 @@ export class Gateway {
         rm.headline = this.makeHeadline(rm.gameId, r);
         if (!r.events.some((e) => e.type === "match_failed")) {
           rm.ratings = this.ratings.applyMatch(rm.gameId, rm.seatAgents, r.scores);
+          this.ratings.applyActionStats(rm.gameId, rm.seatAgents, r.events);
         }
         this.notifyWebhookEnd(rm, r.scores);
       })
@@ -1192,6 +1193,7 @@ export class Gateway {
         rm.headline = this.makeHeadline(gameId, r);
         if (!r.events.some((e) => e.type === "match_failed")) {
           rm.ratings = this.ratings.applyMatch(gameId, seatAgents, r.scores);
+          this.ratings.applyActionStats(gameId, seatAgents, r.events);
         }
       })
       .catch((e) => console.error("[match error]", match.id, e));
@@ -1730,6 +1732,11 @@ export class Gateway {
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, Number.isFinite(n) ? Math.floor(n) : lo));
+}
+
+/** 带推理行动占比（r32）：0-1 两位小数；从未行动过给 null（避免把 0/0 显示成 0%） */
+export function reasoningRate(r: RatingRecord): number | null {
+  return r.actions ? Math.round(((r.reasoned ?? 0) / r.actions) * 100) / 100 : null;
 }
 
 function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {

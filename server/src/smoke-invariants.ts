@@ -10,6 +10,7 @@
  *   7. 内存治理：旧对局/房间/id 簿记必须有上限（长跑不 OOM）
  *   8. House Bot 契约：6 个游戏多 seed 零拒绝零超时（拒绝是静默的，必须拦 submit 回调才看得见）
  *   9. 决策令牌：view.turn 可回传，陈旧提交拒为 STALE_VIEW 且不入账
+ *  10. 决策方式记分：acted 的 reasoning 正确累计；持久化导入兼容无该字段的旧数据
  * 运行：node --experimental-strip-types src/smoke-invariants.ts
  */
 
@@ -25,7 +26,8 @@ import { createUndercover } from "./games/undercover.ts";
 import { createWerewolfLite } from "./games/werewolf-lite.ts";
 import { createDilemma } from "./games/dilemma.ts";
 import { HttpSeatDriver } from "./gateway/http.ts";
-import { Gateway } from "./gateway/http.ts";
+import { Gateway, reasoningRate } from "./gateway/http.ts";
+import { RatingStore } from "./arena/rating.ts";
 import { houseBotsFor } from "./bots/registry.ts";
 import { mulberry32 } from "./rng.ts";
 import { tmpdir } from "node:os";
@@ -356,6 +358,30 @@ const staleErr = probe.stale && !probe.stale.ok ? probe.stale.error : "";
 check("视图带 turn 字段", probe.seen !== null, String(probe.seen));
 check("陈旧令牌提交被拒（STALE_VIEW）", probe.stale?.ok === false && staleErr.includes("STALE_VIEW"), staleErr || "未被拒");
 check("被拒后同一步的正确令牌仍可提交", probe.fresh?.ok === true, String(probe.fresh?.ok));
+
+console.log("\n[10] 决策方式记分：reasoning 累计正确、旧数据兼容、零行动 rate 为 null");
+const rs10 = new RatingStore();
+const r10 = await createMatch({
+  game: createDilemma(),
+  drivers: [
+    { name: "reasoner", act: async (_v, submit) => { submit({ type: "move", choice: "cooperate" }, { reasoning: "每步都带推理" }); } },
+    { name: "silent", act: async (_v, submit) => { submit({ type: "move", choice: "betray" }); } },
+  ],
+  seed: 7,
+  timeoutMs: 3000,
+}).run();
+const seatAgents10 = new Map<SeatId, string>([[1, "reasoner"], [2, "silent"]]);
+rs10.applyActionStats("dilemma", seatAgents10, r10.events);
+const ra10 = rs10.record("dilemma", "reasoner");
+const rb10 = rs10.record("dilemma", "silent");
+check("带推理的行动全部计入", ra10.actions === 10 && ra10.reasoned === 10, `reasoner actions=${ra10.actions} reasoned=${ra10.reasoned}`);
+check("不带推理的行动 reasoned 恒 0", rb10.actions === 10 && (rb10.reasoned ?? -1) === 0, `silent actions=${rb10.actions} reasoned=${rb10.reasoned}`);
+const rs10b = new RatingStore();
+rs10b.import({ dilemma: { legacy: { rating: 1200, games: 1, wins: 0, draws: 0, losses: 1 } } });
+const legacy = rs10b.record("dilemma", "legacy");
+check("持久化导入兼容旧数据（actions/reasoned 兜底 0）", legacy.actions === 0 && legacy.reasoned === 0, `legacy actions=${legacy.actions} reasoned=${legacy.reasoned}`);
+check("从未行动 rate 为 null（不显示成 0%）", reasoningRate({ rating: 1200, games: 0, wins: 0, draws: 0, losses: 0 }) === null, "");
+check("rate 计算正确", reasoningRate(ra10) === 1, String(reasoningRate(ra10)));
 
 console.log(`\n=== 结果：${failed === 0 ? "全部通过" : failed + " 项失败"} ===`);
 if (failed > 0) process.exitCode = 1;

@@ -5,7 +5,7 @@
  * - 实际得分：胜 1 / 平 0.5 / 负 0（与 GameModule.scores 对齐）
  */
 
-import type { SeatId } from "../protocol.ts";
+import type { MatchEvent, SeatId } from "../protocol.ts";
 
 export interface RatingRecord {
   rating: number;
@@ -13,6 +13,10 @@ export interface RatingRecord {
   wins: number;
   draws: number;
   losses: number;
+  /** 累计行动数（含超时默认动作），r32 起统计 */
+  actions?: number;
+  /** 其中带 reasoning 的行动数，r32 起统计 */
+  reasoned?: number;
 }
 
 export interface RatingDelta {
@@ -39,7 +43,7 @@ export class RatingStore {
     }
     let r = m.get(agent);
     if (!r) {
-      r = { rating: 1200, games: 0, wins: 0, draws: 0, losses: 0 };
+      r = { rating: 1200, games: 0, wins: 0, draws: 0, losses: 0, actions: 0, reasoned: 0 };
       m.set(agent, r);
     }
     return r;
@@ -110,6 +114,25 @@ export class RatingStore {
       .sort((a, b) => b.rating - a.rating);
   }
 
+  /**
+   * 决策方式统计（r32 · 缺口④「决策方式记分」的最小实现）：
+   * 终局扫裁判视角事件流里的 acted 事件，按席位 → agent 累计行动数与带推理行动数。
+   * 口径：超时默认动作也记 acted 但必无 reasoning → 带推理率自然排除超时。
+   */
+  applyActionStats(gameId: string, seatAgents: Map<SeatId, string>, events: readonly MatchEvent[]): void {
+    for (const e of events) {
+      if (e.type !== "acted") continue;
+      const seat = (e.data as { seat?: unknown }).seat;
+      const agent = typeof seat === "number" ? seatAgents.get(seat) : undefined;
+      if (!agent) continue;
+      const r = this.record(gameId, agent);
+      r.actions = (r.actions ?? 0) + 1;
+      if (typeof (e.data as { reasoning?: unknown }).reasoning === "string") {
+        r.reasoned = (r.reasoned ?? 0) + 1;
+      }
+    }
+  }
+
   /** 持久化导出 */
   export(): Record<string, Record<string, RatingRecord>> {
     const out: Record<string, Record<string, RatingRecord>> = {};
@@ -119,12 +142,12 @@ export class RatingStore {
     return out;
   }
 
-  /** 持久化导入 */
+  /** 持久化导入（旧数据无 actions/reasoned 字段，兜底为 0） */
   import(data: Record<string, Record<string, RatingRecord>>): void {
     for (const [gameId, agents] of Object.entries(data)) {
       const m = new Map<string, RatingRecord>();
       for (const [agent, r] of Object.entries(agents)) {
-        m.set(agent, r);
+        m.set(agent, { actions: 0, reasoned: 0, ...r });
       }
       this.byGame.set(gameId, m);
     }

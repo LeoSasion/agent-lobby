@@ -786,9 +786,11 @@ window.openAgent = async function (id) {
       const r = (p.ratings ?? {})[g.id];
       if (!r) return null;
       const wr = r.games > 0 ? Math.round((r.wins / r.games) * 100) : 0;
+      const rr = typeof r.reasoning_rate === "number" ? Math.round(r.reasoning_rate * 100) : null;
       return `<div class="ag-game" data-agame="${esc(g.id)}"><div class="gname">${esc(g.name)}</div>` +
         `<div class="elo num">${Math.round(r.rating)}</div>` +
-        `<div class="wl">${r.games} 场 · ${r.wins}胜 ${r.draws}平 ${r.losses}负 · <span class="${wr >= 50 ? "hi" : "lo"}">${wr}%</span></div></div>`;
+        `<div class="wl">${r.games} 场 · ${r.wins}胜 ${r.draws}平 ${r.losses}负 · <span class="${wr >= 50 ? "hi" : "lo"}">${wr}%</span></div>` +
+        (rr !== null ? `<div class="wl">推理率 ${rr}%（${r.reasoned}/${r.actions}）</div>` : "") + `</div>`;
     }).filter(Boolean);
     $("#a-games").style.display = "flex";
     $("#a-games").innerHTML = cards.length ? cards.join("") : '<div class="kv">尚无定级对局——Elo 初值 1200。</div>';
