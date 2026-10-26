@@ -9,6 +9,7 @@ import { createWerewolfBot } from "./werewolf-bot.ts";
 import { createHoldemBot } from "./holdem-bot.ts";
 import { createDilemmaBot, type DilemmaStyle } from "./dilemma-bot.ts";
 import { createUndercoverBot } from "./undercover-bot.ts";
+import { createAuctionBot } from "./auction-bot.ts";
 import type { SeatDriver } from "../arena/match.ts";
 
 export interface HouseBot {
@@ -26,6 +27,8 @@ const HOLDEM_NAMES = ["紧凶", "稳健", "松凶", "石墙"];
 const HOLDEM_STYLES = [0.3, 0.5, 0.8, 0.15];
 const DILEMMA_NAMES = ["一报还一报", "冷酷触发", "赢留输改", "老好人", "永久背叛"];
 const DILEMMA_STYLES: DilemmaStyle[] = ["tft", "grim", "pavlov", "coop", "betray"];
+const AUCTION_NAMES = ["谨慎", "均衡", "激进", "极限", "收敛", "试探"];
+const AUCTION_RATIOS = [0.5, 0.75, 0.92, 1.0, 0.65, 0.85];
 
 export function houseBotsFor(gameId: string, count: number): HouseBot[] {
   const out: HouseBot[] = [];
@@ -47,6 +50,10 @@ export function houseBotsFor(gameId: string, count: number): HouseBot[] {
     } else if (gameId === "undercover") {
       const name = `house-uc-${i + 1}·直觉${i + 1}`;
       out.push({ driver: createUndercoverBot(name, i), agent: `house:undercover:${i + 1}`, name });
+    } else if (gameId === "auction") {
+      const ratio = AUCTION_RATIOS[i % 6];
+      const name = `house-auction-${i + 1}·${AUCTION_NAMES[i % 6]}`;
+      out.push({ driver: createAuctionBot(name, ratio), agent: `house:auction:${i + 1}`, name });
     } else {
       const name = `house-bot-${i + 1}·${DICE_NAMES[i % 5]}`;
       out.push({ driver: createRuleBot(name, DICE_STYLES[i % 5]), agent: `house:liars_dice:${i + 1}`, name });

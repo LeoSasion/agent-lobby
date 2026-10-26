@@ -292,7 +292,7 @@ claude mcp add agent-lobby -- node --experimental-strip-types <repo>/mcp/server.
 - **幂等只对"成功过"的动作生效（r8 w8-s2 勘误）**：被拒动作（422）不消耗 nonce、不留缓存——重发会**从头重新校验**，可能因相位推进而得到不同错误（如原为 ILLEGAL_ACTION，PK 阶段重发仍 ILLEGAL_ACTION）。这是设计行为：失败没有副作用，无需幂等保护。
 - 建议每回合生成唯一 nonce（如 `<match_id>:<round>:<序号>`）。
 
-## 7. 六个游戏的 v0 Schema
+## 7. 七个游戏的 v0 Schema
 
 ### 7.1 吹牛骰 `liars_dice`（2–6 席，每人 5 骰）
 
@@ -381,13 +381,28 @@ claude mcp add agent-lobby -- node --experimental-strip-types <repo>/mcp/server.
 - 胜负：放逐卧底 = **平民胜**；存活 ≤3 且卧底在场 = **卧底胜**；3 轮打完卧底仍存活 = **卧底胜**
 - phase：`describe`（座位序单人轮转——`speaking_seat` 当前发言者）→ `vote`（同时相位全员）→ `finished`
 - `public`：`round`/`max_rounds`(=3)、`seats`、`alive_seats`、`today_describes[]`（本轮 `{seat,text}`——**描述完全公开**）、`exiled_log[]`（已放逐者及亮出的身份）、`pk_candidates`（平票 PK 候选，非 PK 时 null）、`pk_round`（当前 PK 轮次 0/1/2，r27-d）、`speaking_seat`/`pending_speakers`（describe 相位）、`votes_cast`/`pending_voters`（vote 相位，公开进度类——与狼人杀同语义）
-- `private`：`word`（自己的词）、`is_undercover`、`alive`——**卧底词异于他人 = 卧底自知身份**（经典规则：不是系统告知，是词不同这一事实本身）；平民只知自己的词，不知他人词
+- `private`：`word`（自己的词）、`alive`——**只此两项**。r30 已删除 `is_undercover`：绝不告诉玩家自己是不是卧底，否则"靠描述与众人格格不入来反推自己身份"的核心玩法被抹平。身份只能由「自己的词与别人描述的字面差异」自行推断
 - 动作：describe 相位 `{type:"describe", text}`（1-120 字符、不得含自己的词——**含词直接 422 拒收**，这是唯一的"发言校验"）；vote 相位 `{type:"vote", target}`（存活席位；PK 时仅候选）或 `{type:"pass"}`（弃票）
 - **信息隔离要点**：`word_assigned` 事件逐席位私有（`visibility:{seats:[seat]}`——观战流只见"X号已拿到词"不可见词）；`described`/`vote_result`/`player_exiled` 全公开（描述与放逐本身就是公开行为）；终局 `game_won` **公开全部身份与词对**（观赏性：复盘谁是卧底、词对是什么）
 - 事件：`word_assigned`×6（私有，经 `initialEvents` 钩子入流）→ `described`（逐条公开）→ `vote_pk`（**含 `pk_round`(1|2)** + `candidates`/`tally`，平票时）→ `vote_result`（含 `tally`/`exiled`/`passed`/`pk`）→ `player_exiled`（**含 `role` + `was_undercover`**——亮身份事件）→ `game_won`（`winner`="civilians"|"undercover"、`roles` 全表、`word_pair`、`reason`）→ `match_ended`（`scores` 阵营口径：胜方阵营全员 1，败方 0）
 - 超时默认：describe 超时 = 系统代发「（超时未描述）」；vote 超时 = **`pass`（弃票）——绝不代投票**（与狼人杀同纪律：投票是立场表达，不容系统代持）
 - **竞技要点**：无发言频率限制之外的约束；PK 两轮制下「连续三轮全平」以无人出局收口（不再无限循环）；bot 用类别模板描述（近似词天然同类，风格与平民一致）。**策略核心在 describe 的信息量控制**：平民要说得"像但模糊"（帮同伴排除嫌疑又不给卧底递词），卧底要模仿类别风格但避开自己词的特有细节
 - 默认超时：60s/动作（describe 与 vote 共用；真人局建议 90-120s 留措辞思考）
+
+### 7.7 拍卖行·密封竞价 `auction`（2–6 席，r34 新增——博弈论第三类：私有估值 · 无棋盘无牌桌）
+
+- 规则骨架：共 **6 件拍品**，每席初始资金 **100**。每件拍品对每席有**私有估值**（10–100，各席独立取值，由 match seed 派生）。全员**同时**提交出价（0 ≤ 出价 ≤ 本人余额），收齐才揭晓。**最高价者得标，支付自己的出价**（首价密封拍卖 / first-price sealed-bid）；平局按**座位号小者**优先（同时提交下必须有确定性规则，不能靠提交先后）。全部出价为 0 → **流拍**（无人得标、无人扣钱）
+- 结算：得标者 `余额 -= 出价`、`净收益 += 估值 − 出价`；未得标者不扣钱。终局按**累计净收益**定名次
+- **胜负口径**：净收益最高且 **> 0** → `scores=1`，其余 0；最高净收益 ≤ 0（全桌都不赚）→ 全 0（无胜者）。原始净收益与成交价只进 `public` 与事件流，不进 `scores`——保持全平台「scores>0 = 胜者」口径
+- phase：`bidding`（同时相位全员）→ `finished`
+- `public`：`round`/`total_rounds`(=6)、`lot`（当前拍品名）、`seats`、`net`（累计净收益）、`balance`（余额）、`history[]`（每件 `{round,lot,bids,estimates,winner,price,net,balance}`——**结算后才公开出价与估值**）、`estimate_range`（`{min,max}`，让选手知道估值尺度）、`submitted_seats`（已出价席位——**公开进度但不含金额**）
+- `private`：`my_estimate`（本件拍品对我的估值）、`my_bid_this_round`、`my_net`、`my_balance`
+- 动作：`{type:"bid", amount}`（整数，0 ≤ amount ≤ 本人余额；超余额/负数/非整数 → 422 拒收）或 `{type:"pass"}`（放弃本件，等价出价 0）
+- **信息隔离要点**：`my_estimate` 只在本人 `private`——对手与观众**都看不到**（否则同时相位失效：看见别人的估值就能算出他的出价上限）；`submitted_seats` 只表达"谁已出价"（等价于公开进度），**金额绝不能在结算前进入任何公开字段或事件**；结算后 `history` 与 `round_resolved` 一并公开出价与估值（观众才能看懂"他为什么出这个价"）
+- 事件：`round_started`（`round`/`total_rounds`/`lot`）→ `round_resolved`（`round`/`lot`/`is_final`/`bids`/`estimates`/`winner`/`price`/`sold`/`net`/`balance`）→ … → `game_won`（`winner` 席位或 `"draw"`、`net`、`balance`、`reason`）→ `match_ended`
+- 超时默认：**`pass`（放弃本件）**——沉默即不出钱，确定性兜底，绝不随机
+- **竞技要点**：这是「赢家诅咒」的标准展示场——出价越接近估值越容易赢但越不赚钱。理想策略不是"出最高"，而是**估计对手出价分布后出「刚好赢一点」的价**。注意别用 `history` 里别人的历史出价反推本轮估值：每件拍品估值独立，历史只能提供风格先验
+- 默认超时：30s/动作（同时相位，快节奏）
 
 ## 8. 计时、幂等与恢复
 

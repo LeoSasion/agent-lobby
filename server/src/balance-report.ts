@@ -13,6 +13,7 @@ import { createWerewolfLite } from "./games/werewolf-lite.ts";
 import { createHoldemLite } from "./games/holdem-lite.ts";
 import { createDilemma } from "./games/dilemma.ts";
 import { createUndercover } from "./games/undercover.ts";
+import { createAuction } from "./games/auction.ts";
 import { createMatch } from "./arena/lobby.ts";
 import { createRuleBot, createHangingBot } from "./bots/rule-bot.ts";
 import { createOthelloBot } from "./bots/othello-bot.ts";
@@ -20,6 +21,7 @@ import { createWerewolfBot } from "./bots/werewolf-bot.ts";
 import { createHoldemBot } from "./bots/holdem-bot.ts";
 import { createDilemmaBot } from "./bots/dilemma-bot.ts";
 import { createUndercoverBot } from "./bots/undercover-bot.ts";
+import { createAuctionBot } from "./bots/auction-bot.ts";
 import type { GameModule } from "./games/types.ts";
 import type { SeatDriver } from "./arena/match.ts";
 import type { MatchEvent } from "./protocol.ts";
@@ -233,6 +235,54 @@ console.log(`  平均投票轮数: ${(ucVoteRounds / UC_GAMES).toFixed(1)}`);
 if (ucRate < 0.15) console.log("  ⚠️ 卧底胜率过低（<15%）——描述区分度不足或投票过准");
 else if (ucRate > 0.45) console.log("  ⚠️ 卧底胜率偏高（>45%）——1 打 5 却胜负各半，平民未利用描述线索");
 else console.log("  ✓ 胜率在合理区间");
+
+// —— 拍卖行·密封竞价：风格胜率与市场热度 ——
+// 判读要点：激进（ratio 高）应当「更容易得标但更不赚钱」，谨慎则相反。
+// 若激进同时拿到最多标且最高净收益，说明出价下限太低、市场过热，需要调估值区间。
+console.log("\n[拍卖行·密封竞价] 4 席 bot 对 bot（40 局）");
+const AUCTION_STYLES: [string, number][] = [
+  ["谨慎", 0.5],
+  ["均衡", 0.75],
+  ["激进", 0.92],
+  ["极限", 1.0],
+];
+const AUCTION_GAMES = 40;
+const auctionEvents = await runBatch("总计", createAuction(), () =>
+  AUCTION_STYLES.map(([n, a]) => createAuctionBot(n, a)),
+  AUCTION_GAMES,
+);
+const auctionWins: Record<string, number> = { "1": 0, "2": 0, "3": 0, "4": 0 };
+const auctionLots: Record<string, number> = { "1": 0, "2": 0, "3": 0, "4": 0 };
+let auctionLotsTotal = 0;
+let auctionUnsold = 0;
+let auctionPriceSum = 0;
+for (const { events: evs } of auctionEvents) {
+  const ended = evs.find((e) => e.type === "match_ended");
+  if (ended) {
+    const sc = (ended.data as { scores?: Record<string, number> }).scores ?? {};
+    for (const [seat, s] of Object.entries(sc)) if (s === 1) auctionWins[seat] = (auctionWins[seat] ?? 0) + 1;
+  }
+  for (const e of evs) {
+    if (e.type !== "round_resolved") continue;
+    const d = e.data as { winner?: number | null; price?: number };
+    auctionLotsTotal++;
+    if (d.winner === null || d.winner === undefined) auctionUnsold++;
+    else {
+      auctionLots[String(d.winner)] = (auctionLots[String(d.winner)] ?? 0) + 1;
+      auctionPriceSum += d.price ?? 0;
+    }
+  }
+}
+console.log(`  胜场分布: 1号(谨慎)=${auctionWins["1"]} · 2号(均衡)=${auctionWins["2"]} · 3号(激进)=${auctionWins["3"]} · 4号(极限)=${auctionWins["4"]}`);
+console.log(`  得标件数: 谨慎=${auctionLots["1"]} · 均衡=${auctionLots["2"]} · 激进=${auctionLots["3"]} · 极限=${auctionLots["4"]}`);
+console.log(`  共 ${auctionLotsTotal} 件 · 流拍 ${auctionUnsold}（${pct(auctionUnsold, auctionLotsTotal)}）· 平均成交价 ${auctionLotsTotal > auctionUnsold ? (auctionPriceSum / (auctionLotsTotal - auctionUnsold)).toFixed(1) : "—"}`);
+const sold = auctionLotsTotal - auctionUnsold;
+const aggressiveShare = sold > 0 ? (auctionLots["3"] + auctionLots["4"]) / sold : 0;
+if (aggressiveShare < 0.3) console.log("  ⚠️ 激进派得标占比过低（<30%）——出价过度保守，市场没有竞争");
+else if (aggressiveShare > 0.85) console.log("  ⚠️ 激进派几乎通吃（>85%）——估值区间可能太宽，谨慎派永远抢不到");
+else console.log("  ✓ 得标分布合理（激进派更容易抢到，符合首价密封直觉）");
+const auctionWr = Math.max(...Object.values(auctionWins)) / AUCTION_GAMES;
+if (auctionWr > 0.6) console.log("  ⚠️ 单一风格胜率过高（>60%）");
 
 // —— 框架不变量抽检 ——
 console.log("\n[框架不变量抽检] 全超时 + 确定性");

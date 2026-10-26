@@ -382,6 +382,27 @@ select,textarea,input[type=number],input:not([type]){background:#10150f;color:va
 .dm-matrix .mx.hot{background:rgba(217,177,63,.07)}
 .dm-matrix .mx.hot b{color:var(--amb)}
 .dm-track-wrap{max-width:640px;margin:16px auto 0}
+/* r34 拍卖行：拍品台 + 席位出价行 + 成交轨迹（同时相位：结算前只露「已出价」不露金额） */
+.au-stage{padding:6px 0;max-width:660px;margin:0 auto}
+.au-lot{text-align:center;padding:14px 0 18px;border-bottom:1px solid var(--line)}
+.au-lot .au-name{font-family:var(--serif);font-size:26px;color:#e8f0ea;letter-spacing:.08em;margin:6px 0 8px}
+.au-rows{margin:14px 0}
+.au-row{display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr;gap:10px;align-items:center;padding:9px 10px;border-bottom:1px solid var(--line);font-size:12px}
+.au-row.win{background:rgba(69,217,142,.06)}
+.au-row.win .au-cell.bid{color:var(--grn)}
+.au-row .nm{color:var(--dim);font-size:11px;letter-spacing:.12em}
+.au-row .nm b{color:#dfe9e2;letter-spacing:0}
+.au-cell{text-align:right;font-family:var(--mono,monospace)}
+.au-cell.lab{color:var(--dim);font-family:inherit;text-align:left}
+.au-cell.bid{font-size:15px}
+.au-cell.pos{color:var(--grn)}
+.au-cell.neg{color:var(--amb)}
+.au-mine{margin:10px 0;padding:10px 12px;border-left:2px solid var(--grn);background:rgba(69,217,142,.04);font-size:12px;color:#cfded5}
+.au-mine b{color:var(--grn);font-family:var(--serif);font-size:15px}
+.au-hist{margin-top:16px}
+.au-hist .au-h{display:flex;gap:12px;align-items:center;font-size:11px;color:var(--dim);padding:5px 0;border-bottom:1px dashed rgba(255,255,255,.06)}
+.au-hist .au-h .lot{flex:1;color:#b9c8bf}
+.au-hist .au-h .pr{font-family:var(--mono,monospace);color:var(--amb)}
 .dm-track{display:flex;gap:10px;overflow-x:auto;padding:10px 2px 12px;border-top:1px solid var(--line);margin-top:8px}
 .dm-track.empty{color:var(--dim);font-size:11.5px;border-top:none;justify-content:center;padding:16px 0}
 .dm-r{min-width:56px;text-align:center}
@@ -600,7 +621,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<
 const api = async (p, o) => (await fetch("/api/v1" + p, o)).json();
 // r30：内置兜底名——GAME_NAMES 由 /games 响应覆盖，但首屏/离线/接口慢时事件文案会裸吐
 // werewolf_lite 这类 id（解说与公报在 fetch 未回前就已渲染）。静态种子保证任何时刻都有人话。
-const GAME_NAMES = { liars_dice:"吹牛骰", othello:"黑白棋", werewolf_lite:"狼人杀·简化", holdem_lite:"德州扑克·简化", dilemma:"囚徒困境·迭代赛", undercover:"谁是卧底" };
+const GAME_NAMES = { liars_dice:"吹牛骰", othello:"黑白棋", werewolf_lite:"狼人杀·简化", holdem_lite:"德州扑克·简化", dilemma:"囚徒困境·迭代赛", undercover:"谁是卧底", auction:"拍卖行·密封竞价" };
 const GAME_DESC = { liars_dice:"欺骗博弈 · 隐藏信息", othello:"完全信息 · 经典棋类", werewolf_lite:"社交推理 · 旗舰", holdem_lite:"筹码博弈 · 经典牌类", dilemma:"博弈论经典 · 闪电快局", undercover:"词语推理 · 国民游戏" };
 const SEATS_DEFAULT = { werewolf_lite:6, othello:2, liars_dice:3, holdem_lite:3, dilemma:2, undercover:6 };
 const PHASES = { bid:"叫价", night:"夜晚", day_discuss:"白天·讨论", day_vote:"白天·投票", move:"对弈", preflop:"翻牌前", flop:"翻牌圈", turn:"转牌圈", river:"河牌圈", playing:"回合对决", describe:"描述轮", vote:"放逐投票", finished:"已结束" };
@@ -688,6 +709,12 @@ function evText(e) {
     case "checked": return `【预言家】查验 ${d.target}号：${d.is_wolf ? "狼人" : "好人"}（私有事件，仅预言家可见）`;
     case "timed_out": return `${d.seat}号超时 → 执行默认动作`;
     case "round_resolved": {
+      // r34：拍卖行与囚徒困境共用事件名，data 结构不同（bids/winner/price vs choices/payoff）
+      if (d.bids) {
+        const bids = d.bids;
+        const parts = Object.keys(bids).map((s) => `${s}号 ${bids[s]}`).join(" · ");
+        return `第 ${d.round} 件「${esc(d.lot ?? "")}」揭晓：${parts} → ${d.winner != null ? `<b>${d.winner}号以 ${d.price} 得标</b>` : "流拍"}`;
+      }
       const ch = d.choices ?? {};
       const lab = (s) => ch[s] === "cooperate" ? "合作" : "背叛";
       const seats = Object.keys(ch);
@@ -699,8 +726,8 @@ function evText(e) {
         const wp = d.word_pair ?? {};
         return `游戏结束：${d.winner === "civilians" ? "平民阵营" : "卧底"}胜 · 词对「${esc(wp.civilian ?? "?")} / ${esc(wp.undercover ?? "?")}」`;
       }
-      if (d.winner === "draw") return `终局平局 · 总收益 ${numMap(d.totals)}`;
-      if (typeof d.winner === "number") return `游戏结束：${d.winner} 号胜 · 总收益 ${numMap(d.totals)}`;
+      if (d.winner === "draw") return `终局平局 · 收益 ${numMap(d.totals ?? d.net)}`;
+      if (typeof d.winner === "number") return `游戏结束：${d.winner} 号胜 · 收益 ${numMap(d.totals ?? d.net)}`;
       return `游戏结束：${esc(String(d.winner))}`;
     }
     case "match_ended": return `终局 · ${numMap(d.scores)}`;
@@ -1578,8 +1605,16 @@ function commentate(e) {
     }
     case "board_full":
       return { hot: 2, t: `棋盘落满——终局清点：黑 ${d.black} 对 白 ${d.white}` };
-    /* ── 囚徒困境（r24）── */
+    /* ── 拍卖行（r34）── 与囚徒困境共用 round_resolved，靠 bids 字段判别 */
     case "round_resolved": {
+      if (d.bids) {
+        if (d.winner == null) return { hot: 1, t: `第 ${d.round} 件「${d.lot}」流拍——无人愿意出价` };
+        const est = (d.estimates ?? {})[String(d.winner)];
+        const gap = typeof est === "number" ? est - d.price : null;
+        const verdict = gap === null ? "" : gap > 0 ? `，净赚 ${gap}` : gap === 0 ? "，刚好回本" : `，亏了 ${-gap}——赢家诅咒`;
+        if (d.is_final) return { hot: 1, t: `末件落槌：${d.winner} 号以 ${d.price} 拿下「${d.lot}」${verdict}——总账即将清算` };
+        return { hot: gap !== null && gap < 0 ? 2 : 0, t: `第 ${d.round} 件「${d.lot}」：${d.winner} 号以 ${d.price} 得标（估值 ${est ?? "?"}${verdict}）` };
+      }
       const ch = d.choices ?? {};
       const seats = Object.keys(ch).map(Number);
       const betrayers = seats.filter((s) => ch[String(s)] === "betray");
@@ -1811,12 +1846,66 @@ window.act = async function (action) {
   pollPlay();
 };
 
+function renderAuction(v, box, interactive) {
+  /* r34 拍卖行：拍品台 + 席位出价行 + 成交轨迹。
+     同时相位铁律：结算前只露「已出价/沉思中」，绝不露金额——否则后手可看价改价，玩法就废了。
+     结算后才公开全部出价与各席估值（观众才能看懂「他为什么出这个价」）。 */
+  const p = v.public;
+  const names = seatNames(interactive ? PEVS : MEVS);
+  const seats = p.seats ?? [];
+  const hist = p.history ?? [];
+  const net = p.net ?? {};
+  const bal = p.balance ?? {};
+  const sub = p.submitted_seats ?? [];
+  const cur = hist.find((h) => h.round === v.round) ?? null;
+  const mine = interactive && v.private && typeof v.private.my_estimate === "number" ? v.private.my_estimate : null;
+
+  const rows = seats.map((s) => {
+    const done = sub.includes(s);
+    const won = cur && cur.winner === s;
+    const n = net[String(s)] ?? 0;
+    const bidCell = cur
+      ? `<span class="au-cell bid">${won ? "★ " : ""}${(cur.bids ?? {})[String(s)] ?? 0}</span>`
+      : `<span class="au-cell">${done ? '<span style="color:var(--grn)">● 已出价</span>' : '<span style="color:var(--dim)">○ 沉思中</span>'}</span>`;
+    return `<div class="${won ? "au-row win" : "au-row"}">
+      <div class="nm"><b>${s}号</b> ${esc(names[s] ?? "")}</div>
+      <div class="au-cell lab">余额 ${bal[String(s)] ?? 0}</div>
+      ${bidCell}
+      <div class="au-cell ${n > 0 ? "pos" : n < 0 ? "neg" : ""}">${n > 0 ? "+" : ""}${n}</div>
+    </div>`;
+  }).join("");
+
+  const histHtml = hist.length
+    ? `<div class="au-hist"><div class="eyebrow" style="font-size:9px;letter-spacing:.3em;color:var(--dim);margin-bottom:4px">成 交 轨 迹</div>${hist
+        .map((h) => `<div class="au-h"><span>${h.round}</span><span class="lot">${esc(h.lot ?? "")}</span><span class="pr">${h.winner === null ? "流拍" : "¥" + h.price}</span><span style="width:52px;text-align:right">${h.winner === null ? "—" : h.winner + "号"}</span></div>`)
+        .join("")}</div>`
+    : "";
+
+  let html = `<div class="au-stage">
+    <div class="au-lot">
+      <div class="eyebrow" style="font-size:9px;letter-spacing:.32em;color:var(--dim)">第 ${v.round}/${p.total_rounds ?? "?"} 件 · ${phaseName(v.phase)}</div>
+      <div class="au-name">${esc(p.lot ?? "")}</div>
+      <div class="kv" style="color:var(--dim);font-size:11px">密封竞价 · 最高价得标并支付自己的出价 · 估值区间 ${(p.estimate_range ?? {}).min ?? "?"}–${(p.estimate_range ?? {}).max ?? "?"}</div>
+    </div>
+    <div class="au-rows">${rows}</div>
+    ${mine !== null ? `<div class="au-mine">你的估值 <b>${mine}</b> —— 只有你看得见。出价越接近它赢面越大，但赚得越少。</div>` : ""}
+    ${histHtml}
+  </div>`;
+  if (interactive) {
+    box.innerHTML = html + `<div class="act-area"></div>`;
+    renderActions(v, box.querySelector(".act-area"));
+  } else {
+    box.innerHTML = html;
+  }
+}
+
 function renderGame(v, box, interactive) {
   if (v.game === "othello") renderOthello(v, box, interactive);
   else if (v.game === "werewolf_lite") renderWolf(v, box, interactive);
   else if (v.game === "undercover") renderUndercover(v, box, interactive);
   else if (v.game === "holdem_lite") renderHoldem(v, box, interactive);
   else if (v.game === "dilemma") renderDilemma(v, box, interactive);
+  else if (v.game === "auction") renderAuction(v, box, interactive);
   else renderDice(v, box, interactive);
 }
 
@@ -2159,6 +2248,11 @@ document.addEventListener("keydown", (e) => {
 });
 
 showView("lobby");
+/* r34：观战直达链接 ?match=<match_id>（可分享）。不带参数则留在大厅。 */
+{
+  const qm = new URLSearchParams(location.search).get("match");
+  if (qm) setTimeout(() => gotoMatch(qm), 900);
+}
 /* r20 测试钩子：E2E 可达（仅测试消费，无业务影响） */
 window.__r20 = { miniStageInner, renderWall, ingestEvent, refreshMinistage, WALL, TK };
 window.__r21 = { GZ, guessVoterId, refreshGuess, castGuess, renderGuess, guessBarsHTML, refreshMatchView };
@@ -2169,6 +2263,8 @@ window.__r24 = { renderDilemma, renderUndercover, miniStageInner, viewStats, evT
 window.__r26 = { pushCommentary, fireLLMCommentary, renderCommentary, LLM_CM, toggleLLMCM, commentate, WALL, ingestEvent, renderWall, renderWolf, renderActions };
 /* r27 测试钩子：金句频道轮播带 + undercover PK 两轮制渲染 */
 window.__r27 = { pushQuote, renderQuote, startQuoteLoop, CMQ, commentate, evText, renderUndercover };
+/* r34 测试钩子：拍卖行渲染器（供观战页 E2E 取用） */
+window.__r34 = { renderAuction };
 </script>
 </body>
 </html>
