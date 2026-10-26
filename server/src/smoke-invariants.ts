@@ -29,6 +29,11 @@ import { createAuction } from "./games/auction.ts";
 import { createTurtleSoup } from "./games/turtle-soup.ts";
 import { createGomoku } from "./games/gomoku.ts";
 import { createJungleChess } from "./games/jungle-chess.ts";
+import { createTwentyFour } from "./games/twenty-four.ts";
+import { createBlackjack } from "./games/blackjack.ts";
+import { createIdiomChain } from "./games/idiom-chain.ts";
+import { createFeihualing } from "./games/feihualing.ts";
+import { createBanqi } from "./games/banqi.ts";
 import { HttpSeatDriver } from "./gateway/http.ts";
 import { Gateway, reasoningRate } from "./gateway/http.ts";
 import { RatingStore } from "./arena/rating.ts";
@@ -289,7 +294,7 @@ console.log("\n[8] House Bot 契约：全游戏多 seed 零拒绝、零超时");
 const BOT_SEEDS = [11, 12, 13];
 const BOT_GAMES = [
   createLiarsDice(), createOthello(), createDilemma(),
-  createUndercover(), createWerewolfLite(), createHoldemLite(), createAuction(), createTurtleSoup(), createGomoku(), createJungleChess(),
+  createUndercover(), createWerewolfLite(), createHoldemLite(), createAuction(), createTurtleSoup(), createGomoku(), createJungleChess(), createTwentyFour(), createBlackjack(), createIdiomChain(), createFeihualing(), createBanqi(),
 ] as unknown as GameModule<unknown>[];
 for (const game of BOT_GAMES) {
   const rejections: string[] = [];

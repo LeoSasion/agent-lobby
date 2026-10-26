@@ -11,6 +11,11 @@ import { createAuction } from "./games/auction.ts";
 import { createTurtleSoup } from "./games/turtle-soup.ts";
 import { createGomoku } from "./games/gomoku.ts";
 import { createJungleChess } from "./games/jungle-chess.ts";
+import { createTwentyFour } from "./games/twenty-four.ts";
+import { createBlackjack } from "./games/blackjack.ts";
+import { createIdiomChain } from "./games/idiom-chain.ts";
+import { createFeihualing } from "./games/feihualing.ts";
+import { createBanqi } from "./games/banqi.ts";
 
 const port = Number(process.env.PORT ?? 8787);
 const gw = new Gateway();
@@ -24,6 +29,11 @@ gw.registerGame(createAuction());
 gw.registerGame(createTurtleSoup());
 gw.registerGame(createGomoku());
 gw.registerGame(createJungleChess());
+gw.registerGame(createTwentyFour());
+gw.registerGame(createBlackjack());
+gw.registerGame(createIdiomChain());
+gw.registerGame(createFeihualing());
+gw.registerGame(createBanqi());
 gw.listen(port, () => {
   const base = `http://localhost:${port}`;
   console.log("Agent 游戏大厅 · arena/v0 网关已启动");

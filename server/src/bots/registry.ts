@@ -13,6 +13,11 @@ import { createAuctionBot } from "./auction-bot.ts";
 import { createTurtleBot } from "./turtle-bot.ts";
 import { createGomokuBot } from "./gomoku-bot.ts";
 import { createJungleBot } from "./jungle-bot.ts";
+import { createTwentyFourBot } from "./twenty-four-bot.ts";
+import { createBlackjackBot } from "./blackjack-bot.ts";
+import { createIdiomBot } from "./idiom-bot.ts";
+import { createFeihualingBot } from "./feihualing-bot.ts";
+import { createBanqiBot } from "./banqi-bot.ts";
 import type { SeatDriver } from "../arena/match.ts";
 
 export interface HouseBot {
@@ -37,6 +42,11 @@ const GOMOKU_NAMES = ["沉稳", "进攻", "均衡"];
 const GOMOKU_AGGRESSION = [0.7, 1.0, 0.9];
 const JUNGLE_NAMES = ["稳健", "凶狠", "保守"];
 const JUNGLE_CAUTION = [1.0, 0.6, 1.4];
+const TF_NAMES = ["快手", "稳妥", "细算", "扫荡", "冷静", "直觉"];
+const BJ_NAMES = ["守成", "激进", "老练", "稳手", "冷面", "机敏"];
+const IDIOM_NAMES = ["博闻", "强记", "机锋", "老成", "敏捷", "沉稳"];
+const FHL_NAMES = ["诗心", "雅韵", "清吟", "墨客", "词锋", "文思"];
+const BANQI_NAMES = ["翻云", "覆雨", "算无遗策", "沉稳", "急进", "老辣"];
 
 export function houseBotsFor(gameId: string, count: number): HouseBot[] {
   const out: HouseBot[] = [];
@@ -58,6 +68,21 @@ export function houseBotsFor(gameId: string, count: number): HouseBot[] {
     } else if (gameId === "undercover") {
       const name = `house-uc-${i + 1}·直觉${i + 1}`;
       out.push({ driver: createUndercoverBot(name, i), agent: `house:undercover:${i + 1}`, name });
+    } else if (gameId === "banqi") {
+      const name = `house-banqi-${i + 1}·${BANQI_NAMES[i % 6]}`;
+      out.push({ driver: createBanqiBot(name), agent: `house:banqi:${i + 1}`, name });
+    } else if (gameId === "feihualing") {
+      const name = `house-fhl-${i + 1}·${FHL_NAMES[i % 6]}`;
+      out.push({ driver: createFeihualingBot(name), agent: `house:feihualing:${i + 1}`, name });
+    } else if (gameId === "idiom_chain") {
+      const name = `house-idiom-${i + 1}·${IDIOM_NAMES[i % 6]}`;
+      out.push({ driver: createIdiomBot(name), agent: `house:idiom_chain:${i + 1}`, name });
+    } else if (gameId === "blackjack") {
+      const name = `house-bj-${i + 1}·${BJ_NAMES[i % 6]}`;
+      out.push({ driver: createBlackjackBot(name), agent: `house:blackjack:${i + 1}`, name });
+    } else if (gameId === "twenty_four") {
+      const name = `house-24-${i + 1}·${TF_NAMES[i % 6]}`;
+      out.push({ driver: createTwentyFourBot(name), agent: `house:twenty_four:${i + 1}`, name });
     } else if (gameId === "jungle_chess") {
       const name = `house-jungle-${i + 1}·${JUNGLE_NAMES[i % 3]}`;
       out.push({ driver: createJungleBot(name, JUNGLE_CAUTION[i % 3]), agent: `house:jungle_chess:${i + 1}`, name });

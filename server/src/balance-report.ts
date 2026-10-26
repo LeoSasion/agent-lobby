@@ -17,6 +17,11 @@ import { createAuction } from "./games/auction.ts";
 import { createTurtleSoup } from "./games/turtle-soup.ts";
 import { createGomoku } from "./games/gomoku.ts";
 import { createJungleChess } from "./games/jungle-chess.ts";
+import { createTwentyFour } from "./games/twenty-four.ts";
+import { createBlackjack } from "./games/blackjack.ts";
+import { createIdiomChain } from "./games/idiom-chain.ts";
+import { createFeihualing } from "./games/feihualing.ts";
+import { createBanqi } from "./games/banqi.ts";
 import { createMatch } from "./arena/lobby.ts";
 import { createRuleBot, createHangingBot } from "./bots/rule-bot.ts";
 import { createOthelloBot } from "./bots/othello-bot.ts";
@@ -28,6 +33,11 @@ import { createAuctionBot } from "./bots/auction-bot.ts";
 import { createTurtleBot } from "./bots/turtle-bot.ts";
 import { createGomokuBot } from "./bots/gomoku-bot.ts";
 import { createJungleBot } from "./bots/jungle-bot.ts";
+import { createTwentyFourBot } from "./bots/twenty-four-bot.ts";
+import { createBlackjackBot } from "./bots/blackjack-bot.ts";
+import { createIdiomBot } from "./bots/idiom-bot.ts";
+import { createFeihualingBot } from "./bots/feihualing-bot.ts";
+import { createBanqiBot } from "./bots/banqi-bot.ts";
 import type { GameModule } from "./games/types.ts";
 import type { SeatDriver } from "./arena/match.ts";
 import type { MatchEvent } from "./protocol.ts";
@@ -380,6 +390,85 @@ console.log(`  红胜 ${jgRed} · 蓝胜 ${jgBlue} · 和棋 ${jgDraw}`);
 console.log(`  和棋率 ${pct(jgDraw, jgTotal)} · 平均 ${(jgMoves / Math.max(1, jgTotal)).toFixed(1)} 手 · 红方先手胜率 ${pct(jgRed, jgTotal)}`);
 if (jgDraw === jgTotal && jgTotal > 0) console.log("  ⚠️ 全部和棋——规则 bot 只会顶牛不会绕道，属能力上限；真人对局不会这样");
 else if (jgTotal < JUNGLE_GAMES) console.log(`  ⚠️ ${JUNGLE_GAMES - jgTotal} 局未走到终局`);
+
+// —— 24 点：解出率 ——
+console.log("\n[24 点] 2 席 bot 对 bot（20 局 × 6 小局）");
+const tfEvents = await runBatch("总计", createTwentyFour({ rounds: 6 }), () =>
+  [createTwentyFourBot("甲"), createTwentyFourBot("乙")], 20);
+let tfSolved = 0;
+let tfRounds = 0;
+for (const { events: evs } of tfEvents) {
+  for (const e of evs) {
+    if (e.type !== "round_resolved") continue;
+    tfRounds++;
+    const ans = (e.data as { answers: Record<string, { ok: boolean }> }).answers;
+    if (Object.values(ans).some((a) => a.ok)) tfSolved++;
+  }
+}
+console.log(`  共 ${tfRounds} 小局 · 至少一人解出 ${tfSolved}（${pct(tfSolved, tfRounds)}）`);
+if (tfRounds > 0 && tfSolved / tfRounds < 0.5) console.log("  ⚠️ 解出率偏低——可能是 bot 求解器或牌组难度问题");
+else console.log("  ✓ 解出率正常（无解牌组约占两成，属规则特性）");
+
+// —— 21 点：对庄家的胜负分布 ——
+console.log("\n[21 点] 3 席 bot 对庄家（20 局 × 4 小局）");
+const bjEvents = await runBatch("总计", createBlackjack({ rounds: 4 }), () =>
+  [createBlackjackBot("甲"), createBlackjackBot("乙"), createBlackjackBot("丙")], 20);
+let bjWin = 0, bjLose = 0, bjPush = 0;
+for (const { events: evs } of bjEvents) {
+  for (const e of evs) {
+    if (e.type !== "round_settled") continue;
+    for (const r of Object.values((e.data as { results: Record<string, { outcome: string }> }).results)) {
+      if (r.outcome === "win") bjWin++;
+      else if (r.outcome === "lose") bjLose++;
+      else bjPush++;
+    }
+  }
+}
+const bjTotal = bjWin + bjLose + bjPush;
+console.log(`  玩家赢 ${bjWin} · 输 ${bjLose} · 平 ${bjPush} · 胜率 ${pct(bjWin, bjTotal)}`);
+if (bjTotal > 0 && bjWin / bjTotal > 0.6) console.log("  ⚠️ 玩家胜率过高——庄家规则可能过保守");
+else console.log("  ✓ 对庄家胜率在合理区间（庄家有规则优势，玩家胜率应低于 50%）");
+
+// —— 成语接龙 ——
+console.log("\n[成语接龙] 3 席 bot 对 bot（20 局）");
+const icEvents = await runBatch("总计", createIdiomChain(), () =>
+  [createIdiomBot("甲"), createIdiomBot("乙"), createIdiomBot("丙")], 20);
+let icLinks = 0;
+let icDraw = 0;
+for (const { events: evs } of icEvents) {
+  icLinks += evs.filter((e) => e.type === "linked").length;
+  const won = evs.find((e) => e.type === "game_won");
+  if (!won) icDraw++;
+}
+console.log(`  平均接龙 ${(icLinks / 20).toFixed(1)} 环 · 未终局 ${icDraw}`);
+console.log(icLinks / 20 < 2 ? "  ⚠️ 平均接龙过短——词库连通性可能不足" : "  ✓ 接龙长度正常（死路是玩法的一部分）");
+
+// —— 飞花令 ——
+console.log("\n[飞花令] 3 席 bot 对 bot（20 局）");
+const fhlEvents = await runBatch("总计", createFeihualing(), () =>
+  [createFeihualingBot("甲"), createFeihualingBot("乙"), createFeihualingBot("丙")], 20);
+let fhlLines = 0;
+for (const { events: evs } of fhlEvents) fhlLines += evs.filter((e) => e.type === "recited").length;
+console.log(`  平均念 ${(fhlLines / 20).toFixed(1)} 句`);
+console.log(fhlLines / 20 < 2 ? "  ⚠️ 平均句数过少——诗库覆盖可能不足" : "  ✓ 句数正常");
+
+// —— 军棋翻棋 ——
+console.log("\n[军棋·翻棋] 2 席 bot 对 bot（20 局）");
+const bqEvents = await runBatch("总计", createBanqi(), () =>
+  [createBanqiBot("甲"), createBanqiBot("乙")], 20);
+let bqSolidWin = 0, bqHollowWin = 0, bqDrawBq = 0, bqPly = 0;
+for (const { events: evs } of bqEvents) {
+  const won = evs.find((e) => e.type === "game_won");
+  if (!won) continue;
+  const d = won.data as { winner: unknown; side?: string; ply?: number };
+  if (d.winner === "draw") bqDrawBq++;
+  else if (d.side === "solid" || (typeof d.winner === "number" && evs.some((e) => e.type === "board_dealt" && (e.data as { solid: number }).solid === d.winner))) bqSolidWin++;
+  else bqHollowWin++;
+  bqPly += d.ply ?? 0;
+}
+const bqTotal = bqSolidWin + bqHollowWin + bqDrawBq;
+console.log(`  实心胜 ${bqSolidWin} · 空心胜 ${bqHollowWin} · 和 ${bqDrawBq} · 平均 ${(bqPly / Math.max(1, bqTotal)).toFixed(1)} 步`);
+console.log(bqTotal < 20 ? `  ⚠️ ${20 - bqTotal} 局未走到终局` : "  ✓ 对局均能在闸门内收口");
 
 // —— 框架不变量抽检 ——
 console.log("\n[框架不变量抽检] 全超时 + 确定性");
