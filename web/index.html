@@ -134,7 +134,9 @@ select,textarea,input[type=number],input:not([type]){background:#10150f;color:va
 .tv.over .tvfoot .go{color:var(--amb)}
 .tv.empty{cursor:default;align-items:center;justify-content:center;text-align:center;color:var(--dim);font-size:14px;padding:clamp(28px,4cqi,56px)}
 /* r20 · 具象 mini 舞台 + 实时事件流 */
-.ministage{height:clamp(104px,12cqi,124px);position:relative;margin:8px 0 4px;min-width:0}
+.ministage{height:clamp(104px,12cqi,124px);position:relative;margin:8px 0 4px;min-width:0;
+  background-image:linear-gradient(rgba(69,217,142,.028) 1px,transparent 1px),linear-gradient(90deg,rgba(69,217,142,.028) 1px,transparent 1px);
+  background-size:16px 16px;background-position:center}
 .ministage.flash,.flashTarget.flash{animation:msPulse 1.1s ease-out}
 @keyframes msPulse{0%{box-shadow:0 0 0 0 rgba(69,217,142,.5)}100%{box-shadow:0 0 0 12px rgba(69,217,142,0)}}
 .mn-orb{position:absolute;left:0;top:2px;width:48px;height:48px}
@@ -371,7 +373,7 @@ select,textarea,input[type=number],input:not([type]){background:#10150f;color:va
 .gmk .gc.legal{cursor:pointer}
 .gmk .gc.legal:hover::after{content:"";width:40%;height:40%;border-radius:50%;background:rgba(69,217,142,.22)}
 .gmk .gc .stone{width:80%;height:80%;border-radius:50%;z-index:1}
-.gmk .gc .stone.b{background:#141a17;border:1px solid #46534c}
+.gmk .gc .stone.b{background:#1c2420;border:1px solid #6f8279}
 .gmk .gc .stone.w{background:#e2ece6;border:1px solid #b9c8bf}
 .gmk .gc.last::before{content:"";position:absolute;width:18%;height:18%;border-radius:50%;background:var(--amb);z-index:2}
 .gmk .gc.win .stone{box-shadow:0 0 0 2px var(--amb)}
@@ -612,6 +614,53 @@ textarea{width:100%;min-height:44px;resize:vertical}
 .bqp{width:70%;height:70%;border-radius:4px;display:grid;place-items:center;font-family:"ArenaBrush","STKaiti",var(--serif);font-size:clamp(11px,2.6cqi,15px);line-height:1;position:relative;z-index:1}
 .bqp.solid{background:#45d98e;color:#08100c;border:1px solid #45d98e}
 .bqp.hollow{background:transparent;color:#45d98e;border:1px solid rgba(69,217,142,.6)}
+
+/* ===== r40 动态公报：在原有平面语法上加「动效 + 层级」——不加颜色、不加拟物、不加阴影 ===== */
+@keyframes gh-rise{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+@keyframes gh-pulse{0%,100%{opacity:.3}50%{opacity:1}}
+@keyframes gh-sweep{0%{transform:translateX(-120%)}100%{transform:translateX(120%)}}
+/* 全站扫描线：CRT 质感，极淡，不拦点击 */
+body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:9998;
+  background:repeating-linear-gradient(0deg,rgba(255,255,255,.016) 0 1px,transparent 1px 3px)}
+/* 统一游戏头：序号 / 名称 / 副标题 / 两个关键指标 */
+.ghead{display:flex;align-items:flex-start;gap:16px;padding:8px 0 12px;margin-bottom:12px;border-bottom:1px solid var(--line);animation:gh-rise .3s cubic-bezier(.2,.7,.3,1) both}
+.ghead-idx{font-family:var(--mono);font-size:38px;line-height:.85;color:rgba(69,217,142,.34);letter-spacing:-.05em;font-variant-numeric:tabular-nums;min-width:58px}
+.ghead-main{flex:1;min-width:0}
+.ghead-name{font-family:var(--serif);font-size:19px;color:var(--hi);letter-spacing:.07em;line-height:1.2}
+.ghead-sub{font-size:11.5px;color:var(--dim);margin-top:6px;letter-spacing:.05em}
+.ghead-kv{display:flex;gap:20px;flex-shrink:0;padding-top:2px}
+.ghead-kv span{display:flex;flex-direction:column;align-items:flex-end;gap:3px}
+.ghead-kv i{font-style:normal;font-size:9.5px;color:var(--faint);letter-spacing:.18em}
+.ghead-kv b{font-family:var(--mono);font-size:17px;color:var(--grn);font-weight:400;font-variant-numeric:tabular-nums;line-height:1}
+.ghead-live{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--grn);margin-right:7px;vertical-align:2px;animation:gh-pulse 1.9s ease-in-out infinite}
+.ghead-done{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--amb);margin-right:7px;vertical-align:2px}
+/* 数据条：游戏底部的一排细指标 */
+.nx-meter{display:flex;gap:22px;justify-content:center;flex-wrap:wrap;margin-top:14px;padding-top:10px;border-top:1px solid var(--line)}
+.nx-meter span{display:flex;flex-direction:column;align-items:center;gap:3px}
+.nx-meter i{font-style:normal;font-size:9.5px;color:var(--faint);letter-spacing:.16em}
+.nx-meter b{font-family:var(--mono);font-size:13px;color:var(--ink);font-weight:400;font-variant-numeric:tabular-nums}
+
+/* ===== r40 大厅层：无信号态 / 标题动势 / 赛程行反馈 ===== */
+/* 直播墙空舞台：不再是一片死灰，而是明确的「无信号」——斜纹 + 呼吸的 NO SIGNAL */
+.ministage{position:relative}
+.nosignal{position:absolute;inset:0;display:grid;place-items:center;gap:8px;align-content:center;
+  background-image:repeating-linear-gradient(45deg,rgba(255,255,255,.022) 0 1px,transparent 1px 9px);
+  font-family:var(--mono);font-size:10px;letter-spacing:.42em;color:rgba(217,177,63,.42)}
+.nosignal i{display:block;width:6px;height:6px;border-radius:50%;background:rgba(217,177,63,.5);animation:gh-pulse 2.6s ease-in-out infinite}
+.ministage:empty::after{content:"NO SIGNAL";position:absolute;inset:0;display:grid;place-items:center;
+  font-family:var(--mono);font-size:10px;letter-spacing:.42em;color:rgba(217,177,63,.4);
+  animation:gh-pulse 2.8s ease-in-out infinite}
+/* 品牌标题：衬线大字 + 字距，右侧加一条呼吸的实时指示 */
+.brand{font-family:var(--serif);letter-spacing:.04em}
+h1 .brand,h1 span.brand{font-size:26px}
+/* 赛程行：hover 时左侧亮一条绿线，给密集列表一个落点反馈 */
+.srow:not(.head){position:relative;transition:background .15s}
+.srow:not(.head)::before{content:"";position:absolute;left:-10px;top:0;bottom:0;width:2px;background:var(--grn);opacity:0;transition:opacity .15s}
+.srow:not(.head):hover{background:rgba(69,217,142,.035)}
+.srow:not(.head):hover::before{opacity:1}
+/* 赛区条目：局数用等宽数字右对齐，hover 有位移 */
+.zone{transition:transform .15s,color .15s}
+.zone:hover{transform:translateX(3px)}
 </style>
 </head>
 <body>
@@ -1297,7 +1346,7 @@ function refreshMinistage(mid, prev) {
   if (!v) return;
   const stage = card.querySelector(".ministage");
   if (stage) {
-    stage.innerHTML = miniStageInner(m, v);
+    stage.innerHTML = miniStageInner(m, v) || '<div class="nosignal"><i></i>NO SIGNAL</div>';
     stage.classList.remove("flash"); void stage.offsetWidth; stage.classList.add("flash");
   }
   const s = viewStats(m, v);
@@ -2400,6 +2449,115 @@ function renderBanqi(v, box, interactive) {
   } else box.innerHTML = html;
 }
 
+/* r40：15 款游戏的元信息。序号 / 名称 / 副标题 / 两个关键指标——**全部从视角现取**，
+   不写死任何数值（否则视图一变就骗人）。缺字段一律落到 "—"，不抛错。 */
+const GAME_META = {
+  liars_dice: {
+    idx: "01", name: "吹牛骰",
+    sub: (v) => `第 ${v.public.round ?? "?"} 轮 · ${(v.public.players ?? []).length} 席 · 暗骰`,
+    kv: (v) => [["当前叫价", v.public.current_bid ? `${v.public.current_bid.qty} 个 ${v.public.current_bid.face}` : "未开叫"], ["我的骰", `${(v.private?.my_dice ?? []).length} 枚`]],
+  },
+  othello: {
+    idx: "02", name: "黑白棋",
+    sub: (v) => `8×8 · ${v.phase === "finished" ? "终局" : "对弈中"}`,
+    kv: (v) => [["黑", v.public.counts?.black ?? "—"], ["白", v.public.counts?.white ?? "—"]],
+  },
+  werewolf_lite: {
+    idx: "03", name: "狼人杀·简化",
+    sub: (v) => `第 ${v.public.round ?? "?"} 天 · ${v.public.phase ?? "?"} · ${(v.public.alive_seats ?? v.public.alive ?? []).length || "?"} 席存活`,
+    kv: (v) => [["存活", `${(v.public.alive_seats ?? v.public.alive ?? []).length || "?"}/${(v.public.seats ?? []).length || "?"}`], ["阶段", v.public.phase ?? "—"]],
+  },
+  holdem_lite: {
+    idx: "04", name: "德州扑克·简化",
+    sub: (v) => `第 ${v.public.hand_no ?? "?"} 手 · ${v.public.street ?? "—"} · ${(v.public.players ?? []).length} 席`,
+    kv: (v) => [["底池", v.public.pot ?? "—"], ["需跟注", v.public.current_bet ?? "—"]],
+  },
+  dilemma: {
+    idx: "05", name: "囚徒困境·迭代",
+    sub: (v) => `第 ${v.public.round ?? "?"}/${v.public.total_rounds ?? "?"} 轮 · 同时选择`,
+    kv: (v) => {
+      const t = v.public.totals ?? {};
+      const [a, b] = Object.keys(t);
+      return [["1号总分", t[a] ?? "—"], ["2号总分", t[b] ?? "—"]];
+    },
+  },
+  undercover: {
+    idx: "06", name: "谁是卧底",
+    sub: (v) => `第 ${v.public.round ?? "?"}/${v.public.max_rounds ?? "?"} 轮 · ${v.public.phase === "describe" ? "描述" : "投票"}`,
+    kv: (v) => [["存活", `${(v.public.alive_seats ?? []).length} 席`], ["已放逐", `${(v.public.exiled_log ?? []).length} 人`]],
+  },
+  auction: {
+    idx: "07", name: "拍卖行·密封竞价",
+    sub: (v) => `第 ${v.public.round ?? "?"}/${v.public.total_rounds ?? "?"} 件 · ${v.public.lot ?? "—"}`,
+    kv: (v) => [["我的余额", v.private?.my_balance ?? "—"], ["我的净收", (v.private?.my_net ?? 0) >= 0 ? `+${v.private?.my_net ?? 0}` : v.private?.my_net]],
+  },
+  turtle_soup: {
+    idx: "08", name: "海龟汤",
+    sub: (v) => `主持人 ${v.public.host ?? "?"} 号 · 猜题者 ${v.public.guesser ?? "?"} 号`,
+    kv: (v) => [["提问", `${v.public.asks_used ?? 0}/${v.public.max_asks ?? "?"}`], ["猜测", `${v.public.guesses_used ?? 0}/${v.public.max_guesses ?? "?"}`]],
+  },
+  gomoku: {
+    idx: "09", name: "五子棋",
+    sub: (v) => `15×15 · 连五为胜 · 第 ${(v.public.moves ?? []).length} 手`,
+    kv: (v) => [["执黑", `${v.public.black ?? "?"} 号`], ["执白", `${v.public.white ?? "?"} 号`]],
+  },
+  jungle_chess: {
+    idx: "10", name: "斗兽棋",
+    sub: (v) => `7×9 · 河流 / 陷阱 / 兽穴 · 第 ${(v.public.moves ?? []).length} 手`,
+    kv: (v) => {
+      const b = v.public.board ?? [];
+      return [["实心", `${b.filter((x) => x && x.side === "solid").length} 子`], ["空心", `${b.filter((x) => x && x.side === "hollow").length} 子`]];
+    },
+  },
+  twenty_four: {
+    idx: "11", name: "24 点",
+    sub: (v) => `第 ${v.public.round ?? "?"}/${v.public.total_rounds ?? "?"} 局 · 四张牌各用一次`,
+    kv: (v) => [["我的得分", v.private?.my_score ?? "—"], ["牌面", (v.public.cards ?? []).join(" ")]],
+  },
+  blackjack: {
+    idx: "12", name: "21 点",
+    sub: (v) => `第 ${v.public.round ?? "?"}/${v.public.total_rounds ?? "?"} 局 · 庄家由平台扮演`,
+    kv: (v) => [["我的点数", v.private?.my_value ?? "—"], ["我的得分", v.private?.my_score ?? "—"]],
+  },
+  idiom_chain: {
+    idx: "13", name: "成语接龙",
+    sub: (v) => `第 ${(v.public.chain ?? []).length} 环 · 要接「${v.public.current ?? "?"}」· 词库 ${v.public.library_size ?? "?"} 条`,
+    kv: (v) => [["可用", `${v.public.remaining ?? "?"} 条`], ["存活", `${(v.public.alive_seats ?? []).length} 席`]],
+  },
+  feihualing: {
+    idx: "14", name: "飞花令",
+    sub: (v) => `令字「${v.public.rhyme ?? "?"}」· 已念 ${(v.public.said ?? []).length} 句`,
+    kv: (v) => [["可用", `${v.public.remaining ?? "?"} 句`], ["存活", `${(v.public.alive_seats ?? []).length} 席`]],
+  },
+  banqi: {
+    idx: "15", name: "军棋·翻棋",
+    sub: (v) => `8×4 · 32 枚暗棋 · 第 ${v.public.ply ?? "?"}/${v.public.max_ply ?? "?"} 步`,
+    kv: (v) => {
+      const b = v.public.board ?? [];
+      const up = b.filter((x) => x && x.faceUp).length;
+      return [["已翻开", `${up}/32`], ["暗棋", `${32 - up} 枚`]];
+    },
+  },
+};
+
+function gameHeadHTML(v) {
+  const m = GAME_META[v.game];
+  if (!m) return "";
+  const live = v.phase !== "finished";
+  let kv = [];
+  try { kv = (m.kv ? m.kv(v) : []).slice(0, 2); } catch { kv = []; }
+  let sub = "";
+  try { sub = m.sub ? m.sub(v) : ""; } catch { sub = ""; }
+  return `<div class="ghead">
+    <div class="ghead-idx">${m.idx}</div>
+    <div class="ghead-main">
+      <div class="ghead-name"><span class="${live ? "ghead-live" : "ghead-done"}"></span>${m.name}</div>
+      <div class="ghead-sub">${esc(sub)}</div>
+    </div>
+    <div class="ghead-kv">${kv.map(([k, val]) => `<span><i>${esc(String(k))}</i><b>${esc(String(val ?? "—"))}</b></span>`).join("")}</div>
+  </div>`;
+}
+
 function renderGame(v, box, interactive) {
   if (v.game === "othello") renderOthello(v, box, interactive);
   else if (v.game === "werewolf_lite") renderWolf(v, box, interactive);
@@ -2416,6 +2574,9 @@ function renderGame(v, box, interactive) {
   else if (v.game === "feihualing") renderFeihualing(v, box, interactive);
   else if (v.game === "banqi") renderBanqi(v, box, interactive);
   else renderDice(v, box, interactive);
+  // 统一头部：在所有渲染器写完之后「插到最前面」——用 insertAdjacentHTML 而不是
+  // 重排 innerHTML，这样 input/textarea 的当前值与已绑定的事件都不会被打断。
+  box.insertAdjacentHTML("afterbegin", gameHeadHTML(v));
 }
 
 /* r16 具象演武场（草案 A 选定）：骰面点阵 / 扑克牌面 / 昼夜相位——观战视角只画暗骰背面（信息差可视化） */
