@@ -1,7 +1,7 @@
 /**
  * 斗兽棋（jungle_chess）—— 中文国民棋类 · 第十款游戏（r37 新增）
  *
- * 棋盘 7 列 × 9 行（x: 0-6, y: 0-8）。蓝方在上（y=0-1），红方在下（y=7-8）。
+ * 棋盘 7 列 × 9 行（x: 0-6, y: 0-8）。空心方在上（y=0-1），实心方在下（y=7-8）。
  *
  * 八种棋子与等级：象 8 > 狮 7 > 虎 6 > 豹 5 > 狼 4 > 狗 3 > 猫 2 > 鼠 1
  *   - 等级严格大于才能吃；同级不能互吃
@@ -10,9 +10,9 @@
  * 地形三件套（这款游戏的全部策略深度都在这里）：
  *   1. **河流** x∈{1,2,4,5} × y∈{3,4,5}：只有鼠能进；水中的棋子不能吃岸上的、也不能被岸上的吃
  *      （鼠鼠除外）。鼠不能从水里吃象。
- *   2. **陷阱** 蓝方 (2,0)/(4,0)/(3,1)，红方 (2,8)/(4,8)/(3,7)：进入**对方**陷阱的棋子
+ *   2. **陷阱** 空心方 (2,0)/(4,0)/(3,1)，实心方 (2,8)/(4,8)/(3,7)：进入**对方**陷阱的棋子
  *      战斗力归 0，任何棋子都能吃它。自己领地的陷阱对自己人无效。
- *   3. **兽穴** 蓝方 (3,0)，红方 (3,8)：进入**对方**兽穴即获胜；自己的棋子不能进自己的兽穴。
+ *   3. **兽穴** 空心方 (3,0)，实心方 (3,8)：进入**对方**兽穴即获胜；自己的棋子不能进自己的兽穴。
  *
  * 狮/虎额外能力：可以纵向跳过整段河流（落点必须是河对岸的陆地），**若河中有鼠阻挡则不能跳**。
  *
@@ -42,7 +42,7 @@ export const RANK_LABEL: Record<Rank, string> = {
   rat: "鼠", cat: "猫", dog: "狗", wolf: "狼", leopard: "豹", tiger: "虎", lion: "狮", elephant: "象",
 };
 
-export type Side = "red" | "blue";
+export type Side = "solid" | "hollow";
 interface Piece {
   seat: SeatId;
   side: Side;
@@ -73,13 +73,13 @@ export function isRiver(x: number, y: number): boolean {
   return y >= 3 && y <= 5 && x >= 1 && x <= 5 && x !== 3;
 }
 
-const BLUE_DEN = idx(3, 0);
-const RED_DEN = idx(3, 8);
-const BLUE_TRAPS = new Set([idx(2, 0), idx(4, 0), idx(3, 1)]);
-const RED_TRAPS = new Set([idx(2, 8), idx(4, 8), idx(3, 7)]);
+const HOLLOW_DEN = idx(3, 0);
+const SOLID_DEN = idx(3, 8);
+const HOLLOW_TRAPS = new Set([idx(2, 0), idx(4, 0), idx(3, 1)]);
+const SOLID_TRAPS = new Set([idx(2, 8), idx(4, 8), idx(3, 7)]);
 
-const denOf = (side: Side): number => (side === "blue" ? BLUE_DEN : RED_DEN);
-const trapsOf = (side: Side): Set<number> => (side === "blue" ? BLUE_TRAPS : RED_TRAPS);
+const denOf = (side: Side): number => (side === "hollow" ? HOLLOW_DEN : SOLID_DEN);
+const trapsOf = (side: Side): Set<number> => (side === "hollow" ? HOLLOW_TRAPS : SOLID_TRAPS);
 
 /** 初始布局：底线 6 子（兽穴居中不占位），次底线 2 子（象与鼠——最特殊的两个放二线） */
 function initialBoard(seats: SeatId[], sideOf: Map<SeatId, Side>): (Piece | null)[] {
@@ -87,17 +87,17 @@ function initialBoard(seats: SeatId[], sideOf: Map<SeatId, Side>): (Piece | null
   const place = (seat: SeatId, kind: Rank, x: number, y: number): void => {
     board[idx(x, y)] = { seat, side: sideOf.get(seat)!, kind };
   };
-  const blue = seats.find((s) => sideOf.get(s) === "blue")!;
-  const red = seats.find((s) => sideOf.get(s) === "red")!;
+  const hollow = seats.find((s) => sideOf.get(s) === "hollow")!;
+  const solid = seats.find((s) => sideOf.get(s) === "solid")!;
   const LINE: Rank[] = ["lion", "tiger", "leopard", "wolf", "dog", "cat"];
-  // 蓝方（上方）：兽穴 (3,0) 空着，两侧各三子
-  LINE.forEach((k, i) => place(blue, k, [0, 1, 2, 4, 5, 6][i]!, 0));
-  place(blue, "elephant", 2, 1);
-  place(blue, "rat", 4, 1);
-  // 红方（下方）镜像
-  LINE.forEach((k, i) => place(red, k, [0, 1, 2, 4, 5, 6][i]!, 8));
-  place(red, "elephant", 2, 7);
-  place(red, "rat", 4, 7);
+  // 空心方（上方）：兽穴 (3,0) 空着，两侧各三子
+  LINE.forEach((k, i) => place(hollow, k, [0, 1, 2, 4, 5, 6][i]!, 0));
+  place(hollow, "elephant", 2, 1);
+  place(hollow, "rat", 4, 1);
+  // 实心方（下方）镜像
+  LINE.forEach((k, i) => place(solid, k, [0, 1, 2, 4, 5, 6][i]!, 8));
+  place(solid, "elephant", 2, 7);
+  place(solid, "rat", 4, 7);
   return board;
 }
 
@@ -114,7 +114,7 @@ function canCapture(attacker: Piece, defender: Piece, toIdx: number): boolean {
 
 /** 该格是否在「defSide 的对手」的陷阱里（即：defSide 的棋子站上去会失去战斗力） */
 function inOpponentTrap(defSide: Side, i: number): boolean {
-  return defSide === "blue" ? RED_TRAPS.has(i) : BLUE_TRAPS.has(i);
+  return defSide === "hollow" ? SOLID_TRAPS.has(i) : HOLLOW_TRAPS.has(i);
 }
 
 export function createJungleChess(): GameModule<State> {
@@ -124,17 +124,17 @@ export function createJungleChess(): GameModule<State> {
     init(seats: SeatId[], rng: Rng): State {
       if (seats.length !== 2) throw new Error("jungle_chess 需要 2 席");
       // 先手（红/下方）由 seed 随机：固定座位执红会让 Elo 混入与实力无关的变量
-      const redFirst = rng() < 0.5;
+      const solidFirst = rng() < 0.5;
       const sideOf = new Map<SeatId, Side>([
-        [seats[0]!, redFirst ? "red" : "blue"],
-        [seats[1]!, redFirst ? "blue" : "red"],
+        [seats[0]!, solidFirst ? "solid" : "hollow"],
+        [seats[1]!, solidFirst ? "hollow" : "solid"],
       ]);
-      const red = seats.find((s) => sideOf.get(s) === "red")!;
+      const solid = seats.find((s) => sideOf.get(s) === "solid")!;
       const s: State = {
         seats: [...seats],
         sideOf,
         board: initialBoard(seats, sideOf),
-        turn: red, // 红先
+        turn: solid, // 红先
         moves: [],
         quietPlies: 0,
         phase: "playing",
@@ -143,8 +143,8 @@ export function createJungleChess(): GameModule<State> {
           {
             type: "sides_assigned",
             data: {
-              red: red,
-              blue: seats.find((t) => sideOf.get(t) === "blue")!,
+              solid: solid,
+              hollow: seats.find((t) => sideOf.get(t) === "hollow")!,
               width: JUNGLE_W,
               height: JUNGLE_H,
             },
@@ -227,7 +227,7 @@ export function createJungleChess(): GameModule<State> {
       });
 
       // 进入对方兽穴即胜
-      const enemy = p.side === "blue" ? "red" : "blue";
+      const enemy = p.side === "hollow" ? "solid" : "hollow";
       if (to === denOf(enemy)) {
         return finish(s, events, seat, `${RANK_LABEL[p.kind]}闯入对方兽穴`);
       }
@@ -257,14 +257,14 @@ export function createJungleChess(): GameModule<State> {
         height: JUNGLE_H,
         phase: s.phase,
         turn: s.phase === "playing" ? s.turn : null,
-        red: s.seats.find((t) => s.sideOf.get(t) === "red") ?? null,
-        blue: s.seats.find((t) => s.sideOf.get(t) === "blue") ?? null,
+        solid: s.seats.find((t) => s.sideOf.get(t) === "solid") ?? null,
+        hollow: s.seats.find((t) => s.sideOf.get(t) === "hollow") ?? null,
         board: s.board.map((p) => (p ? { seat: p.seat, side: p.side, kind: p.kind } : null)),
         last_move: s.moves.length ? s.moves[s.moves.length - 1] : null,
         // 地形静态信息交给前端：河流 / 陷阱 / 兽穴（不会变，但每次给比让客户端自己算更稳）
         rivers: Array.from({ length: JUNGLE_W * JUNGLE_H }, (_, i) => isRiver(xOf(i), yOf(i))),
-        dens: { blue: BLUE_DEN, red: RED_DEN },
-        traps: { blue: [...BLUE_TRAPS], red: [...RED_TRAPS] },
+        dens: { hollow: HOLLOW_DEN, solid: SOLID_DEN },
+        traps: { hollow: [...HOLLOW_TRAPS], solid: [...SOLID_TRAPS] },
         quiet_plies: s.quietPlies,
         max_moves: MAX_MOVES,
         quiet_limit: QUIET_PLIES_LIMIT,
@@ -300,7 +300,7 @@ export function createJungleChess(): GameModule<State> {
     placements(s) {
       if (s.winner === null || s.winner === "draw") return s.seats.map((seat) => ({ seat, rank: 1 }));
       return [
-        { seat: s.winner, rank: 1, note: s.sideOf.get(s.winner) === "red" ? "红方" : "蓝方" },
+        { seat: s.winner, rank: 1, note: s.sideOf.get(s.winner) === "solid" ? "实心方" : "空心方" },
         { seat: s.seats.find((t) => t !== s.winner)!, rank: 2 },
       ];
     },

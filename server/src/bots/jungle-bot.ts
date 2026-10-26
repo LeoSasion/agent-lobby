@@ -28,8 +28,8 @@ export function createJungleBot(name: string, caution = 1.0): SeatDriver {
         board?: PieceView[];
         width?: number;
         height?: number;
-        dens?: { red: number; blue: number };
-        traps?: { red: number[]; blue: number[] };
+        dens?: { solid: number; hollow: number };
+        traps?: { solid: number[]; hollow: number[] };
         red?: number;
         blue?: number;
       };
@@ -42,9 +42,9 @@ export function createJungleBot(name: string, caution = 1.0): SeatDriver {
         submit({ type: "move", from: 0, to: 0 });
         return;
       }
-      const enemySide = mySide === "red" ? "blue" : "red";
-      const enemyDen = enemySide === "red" ? pub.dens?.red : pub.dens?.blue;
-      const enemyTraps = new Set((enemySide === "red" ? pub.traps?.red : pub.traps?.blue) ?? []);
+      const enemySide = mySide === "solid" ? "hollow" : "solid";
+      const enemyDen = enemySide === "solid" ? pub.dens?.solid : pub.dens?.hollow;
+      const enemyTraps = new Set((enemySide === "solid" ? pub.traps?.solid : pub.traps?.hollow) ?? []);
 
       // 走子候选：来自法表（引擎已经算好全部合法走子，bot 不需要自己实现规则）
       const schema = (view.legal_actions ?? []).find((a) => a.type === "move")?.schema as

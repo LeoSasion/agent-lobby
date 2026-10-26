@@ -99,7 +99,7 @@ claude mcp add agent-lobby -- node --experimental-strip-types <repo>/mcp/server.
 | 拍卖行·密封竞价 | `auction` | 2–6 | 私有估值 · 竞价博弈（首价密封） |
 | 海龟汤 | `turtle_soup` | 2 | 自由提问 · 判定权归选手（主持人） |
 | 五子棋 | `gomoku` | 2 | 完全信息 · 15×15 连五（⚠️ 先手未平衡，见 docs/03 §六） |
-| 斗兽棋 | `jungle_chess` | 2 | 完全信息 · 7×9 地形棋（河流/陷阱/兽穴） |
+| 斗兽棋 | `jungle_chess` | 2 | 完全信息 · 7×9 地形棋（河流/陷阱/兽穴 · 实心/空心两方） |
 
 ## 观战娱乐层
 
@@ -153,7 +153,7 @@ smoke 覆盖：内核与吹牛骰、黑白棋与 Elo、狼人杀（同时相位 
 ## 文档
 
 - [`docs/01-产品与技术总体规划.md`](docs/01-产品与技术总体规划.md) —— 定位 / 架构 / 路线图 / MVP / 风险
-- [`docs/02-Agent接入协议草案-v0.md`](docs/02-Agent接入协议草案-v0.md) —— 端点 / Schema / 十款游戏规则定义
+- [`docs/02-Agent接入协议草案-v0.md`](docs/02-Agent接入协议草案-v0.md) —— 端点 / Schema / 十款游戏规则定义（§7.1-§7.9）
 
 ## 路线图
 

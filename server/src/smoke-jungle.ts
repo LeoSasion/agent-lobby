@@ -60,111 +60,111 @@ console.log("[1] 初始布局：双方各 8 子");
 const s1 = g.init([1, 2], mulberry32(4));
 const v1 = g.viewOf(s1, 1, CTX) as unknown as V;
 const board1 = v1.public.board as (Piece | null)[];
-const red1 = v1.public.red as number;
-const blue1 = v1.public.blue as number;
+const solid1 = v1.public.solid as number;
+const hollow1 = v1.public.hollow as number;
 check("棋子总数 16", board1.filter(Boolean).length === 16, String(board1.filter(Boolean).length));
-check("红蓝各 8 子", board1.filter((p) => p?.side === "red").length === 8 && board1.filter((p) => p?.side === "blue").length === 8);
-check("红方先手", v1.public.turn === red1, `turn=${v1.public.turn} red=${red1}`);
+check("两方各 8 子", board1.filter((p) => p?.side === "solid").length === 8 && board1.filter((p) => p?.side === "hollow").length === 8);
+check("实心方先手", v1.public.turn === solid1, `turn=${v1.public.turn} red=${solid1}`);
 check("双方兽穴为空", board1[at(3, 0)] === null && board1[at(3, 8)] === null);
 check("八个种类齐备", new Set(board1.filter(Boolean).map((p) => p!.kind)).size === 8);
 
 // —— 场景 2：等级吃子 ——
 console.log("\n[2] 等级吃子");
 const s2 = g.init([1, 2], mulberry32(4));
-const red2 = (g.viewOf(s2, 1, CTX) as unknown as V).public.red as number;
-const blue2 = (g.viewOf(s2, 1, CTX) as unknown as V).public.blue as number;
+const solid2 = (g.viewOf(s2, 1, CTX) as unknown as V).public.solid as number;
+const hollow2 = (g.viewOf(s2, 1, CTX) as unknown as V).public.hollow as number;
 // 清空中间，摆一对相邻棋子
 raw(s2).board = new Array(JUNGLE_W * JUNGLE_H).fill(null);
-put(s2, 3, 4, mk("red", red2, "lion"));
-put(s2, 3, 3, mk("blue", blue2, "leopard"));
-const capDown = g.validate(s2, red2, { type: "move", from: at(3, 4), to: at(3, 3) });
+put(s2, 3, 4, mk("solid", solid2, "lion"));
+put(s2, 3, 3, mk("hollow", hollow2, "leopard"));
+const capDown = g.validate(s2, solid2, { type: "move", from: at(3, 4), to: at(3, 3) });
 check("狮（7）能吃豹（5）", capDown.ok === true, capDown.ok ? "" : String(capDown.error));
-put(s2, 3, 3, mk("blue", blue2, "tiger"));
-const capUp = g.validate(s2, red2, { type: "move", from: at(3, 4), to: at(3, 3) });
+put(s2, 3, 3, mk("hollow", hollow2, "tiger"));
+const capUp = g.validate(s2, solid2, { type: "move", from: at(3, 4), to: at(3, 3) });
 check("狮（7）吃不了虎（6）？—— 7>6 应可吃", capUp.ok === true, capUp.ok ? "" : String(capUp.error));
-put(s2, 3, 3, mk("blue", blue2, "lion"));
-const capSame = g.validate(s2, red2, { type: "move", from: at(3, 4), to: at(3, 3) });
+put(s2, 3, 3, mk("hollow", hollow2, "lion"));
+const capSame = g.validate(s2, solid2, { type: "move", from: at(3, 4), to: at(3, 3) });
 check("同级不能吃", capSame.ok === false, String(capSame.ok ? "" : capSame.error));
 
 // —— 场景 3：鼠吃象 / 象吃不了鼠 ——
 console.log("\n[3] 鼠吃象（唯一越级特例）");
 const s3 = g.init([1, 2], mulberry32(4));
-const red3 = (g.viewOf(s3, 1, CTX) as unknown as V).public.red as number;
-const blue3 = (g.viewOf(s3, 1, CTX) as unknown as V).public.blue as number;
+const solid3 = (g.viewOf(s3, 1, CTX) as unknown as V).public.solid as number;
+const hollow3 = (g.viewOf(s3, 1, CTX) as unknown as V).public.hollow as number;
 raw(s3).board = new Array(JUNGLE_W * JUNGLE_H).fill(null);
-put(s3, 3, 4, mk("red", red3, "rat"));
-put(s3, 3, 3, mk("blue", blue3, "elephant"));
-check("鼠能吃象", g.validate(s3, red3, { type: "move", from: at(3, 4), to: at(3, 3) }).ok === true);
-raw(s3).turn = blue3;
-put(s3, 3, 3, mk("blue", blue3, "elephant"));
-put(s3, 3, 4, mk("red", red3, "rat"));
-check("象吃不了鼠", g.validate(s3, blue3, { type: "move", from: at(3, 3), to: at(3, 4) }).ok === false);
+put(s3, 3, 4, mk("solid", solid3, "rat"));
+put(s3, 3, 3, mk("hollow", hollow3, "elephant"));
+check("鼠能吃象", g.validate(s3, solid3, { type: "move", from: at(3, 4), to: at(3, 3) }).ok === true);
+raw(s3).turn = hollow3;
+put(s3, 3, 3, mk("hollow", hollow3, "elephant"));
+put(s3, 3, 4, mk("solid", solid3, "rat"));
+check("象吃不了鼠", g.validate(s3, hollow3, { type: "move", from: at(3, 3), to: at(3, 4) }).ok === false);
 
 // —— 场景 4：陷阱 ——
 console.log("\n[4] 陷阱：踏进对方陷阱战斗力归 0");
 const s4 = g.init([1, 2], mulberry32(4));
-const red4 = (g.viewOf(s4, 1, CTX) as unknown as V).public.red as number;
-const blue4 = (g.viewOf(s4, 1, CTX) as unknown as V).public.blue as number;
+const solid4 = (g.viewOf(s4, 1, CTX) as unknown as V).public.solid as number;
+const hollow4 = (g.viewOf(s4, 1, CTX) as unknown as V).public.hollow as number;
 raw(s4).board = new Array(JUNGLE_W * JUNGLE_H).fill(null);
-// 蓝方陷阱 (3,1)：红方猫（2 级）站在那，蓝方鼠（1 级）应该能吃它
-put(s4, 3, 2, mk("blue", blue4, "rat"));
-put(s4, 3, 1, mk("red", red4, "cat"));
-raw(s4).turn = blue4; // 必须切到该走的一方，否则 validate 直接 NOT_YOUR_TURN
-check("低等级吃陷阱里的敌子（陷阱使其战斗力 0）", g.validate(s4, blue4, { type: "move", from: at(3, 2), to: at(3, 1) }).ok === true, "鼠(1) 吃陷阱中的猫(2)");
+// 空心方陷阱 (3,1)：实心方猫（2 级）站在那，空心方鼠（1 级）应该能吃它
+put(s4, 3, 2, mk("hollow", hollow4, "rat"));
+put(s4, 3, 1, mk("solid", solid4, "cat"));
+raw(s4).turn = hollow4; // 必须切到该走的一方，否则 validate 直接 NOT_YOUR_TURN
+check("低等级吃陷阱里的敌子（陷阱使其战斗力 0）", g.validate(s4, hollow4, { type: "move", from: at(3, 2), to: at(3, 1) }).ok === true, "鼠(1) 吃陷阱中的猫(2)");
 // 自己的棋子在自家陷阱里不受影响
 raw(s4).board = new Array(JUNGLE_W * JUNGLE_H).fill(null);
-put(s4, 3, 0 - 0 + 1, mk("blue", blue4, "cat")); // (3,1) 是蓝方自己的陷阱
-put(s4, 3, 2, mk("red", red4, "wolf"));
-raw(s4).turn = red4;
-check("敌子吃自家陷阱里的棋子仍需等级压制（陷阱对主人无效）", g.validate(s4, red4, { type: "move", from: at(3, 2), to: at(3, 1) }).ok === true, "狼(4)>猫(2) 仍可吃");
+put(s4, 3, 0 - 0 + 1, mk("hollow", hollow4, "cat")); // (3,1) 是空心方自己的陷阱
+put(s4, 3, 2, mk("solid", solid4, "wolf"));
+raw(s4).turn = solid4;
+check("敌子吃自家陷阱里的棋子仍需等级压制（陷阱对主人无效）", g.validate(s4, solid4, { type: "move", from: at(3, 2), to: at(3, 1) }).ok === true, "狼(4)>猫(2) 仍可吃");
 
 // —— 场景 5：河流 ——
 console.log("\n[5] 河流：只有鼠能进、水陆不互吃");
 const s5 = g.init([1, 2], mulberry32(4));
-const red5 = (g.viewOf(s5, 1, CTX) as unknown as V).public.red as number;
-const blue5 = (g.viewOf(s5, 1, CTX) as unknown as V).public.blue as number;
+const solid5 = (g.viewOf(s5, 1, CTX) as unknown as V).public.solid as number;
+const hollow5 = (g.viewOf(s5, 1, CTX) as unknown as V).public.hollow as number;
 raw(s5).board = new Array(JUNGLE_W * JUNGLE_H).fill(null);
-put(s5, 1, 2, mk("red", red5, "lion"));   // (1,3) 是河
-check("狮子不能进河", g.validate(s5, red5, { type: "move", from: at(1, 2), to: at(1, 3) }).ok === false);
-put(s5, 1, 2, mk("red", red5, "rat"));
-check("鼠可以进河", g.validate(s5, red5, { type: "move", from: at(1, 2), to: at(1, 3) }).ok === true);
+put(s5, 1, 2, mk("solid", solid5, "lion"));   // (1,3) 是河
+check("狮子不能进河", g.validate(s5, solid5, { type: "move", from: at(1, 2), to: at(1, 3) }).ok === false);
+put(s5, 1, 2, mk("solid", solid5, "rat"));
+check("鼠可以进河", g.validate(s5, solid5, { type: "move", from: at(1, 2), to: at(1, 3) }).ok === true);
 raw(s5).board = new Array(JUNGLE_W * JUNGLE_H).fill(null);
-put(s5, 1, 3, mk("red", red5, "rat"));      // 水中鼠
-put(s5, 1, 2, mk("blue", blue5, "cat"));    // 岸上猫
-raw(s5).turn = blue5;
-check("岸上棋子不能吃水中的鼠", g.validate(s5, blue5, { type: "move", from: at(1, 2), to: at(1, 3) }).ok === false);
+put(s5, 1, 3, mk("solid", solid5, "rat"));      // 水中鼠
+put(s5, 1, 2, mk("hollow", hollow5, "cat"));    // 岸上猫
+raw(s5).turn = hollow5;
+check("岸上棋子不能吃水中的鼠", g.validate(s5, hollow5, { type: "move", from: at(1, 2), to: at(1, 3) }).ok === false);
 
 // —— 场景 6：跳河 ——
 console.log("\n[6] 狮/虎跳河（河中有鼠则不能跳）");
 const s6 = g.init([1, 2], mulberry32(4));
-const red6 = (g.viewOf(s6, 1, CTX) as unknown as V).public.red as number;
-const blue6 = (g.viewOf(s6, 1, CTX) as unknown as V).public.blue as number;
+const solid6 = (g.viewOf(s6, 1, CTX) as unknown as V).public.solid as number;
+const hollow6 = (g.viewOf(s6, 1, CTX) as unknown as V).public.hollow as number;
 raw(s6).board = new Array(JUNGLE_W * JUNGLE_H).fill(null);
-put(s6, 1, 2, mk("red", red6, "lion"));  // 河在 y=3..5，跳到 (1,6)
-check("狮子可跳过整段河", g.validate(s6, red6, { type: "move", from: at(1, 2), to: at(1, 6) }).ok === true);
-put(s6, 1, 4, mk("blue", blue6, "rat"));
-check("河中有鼠时不能跳", g.validate(s6, red6, { type: "move", from: at(1, 2), to: at(1, 6) }).ok === false);
+put(s6, 1, 2, mk("solid", solid6, "lion"));  // 河在 y=3..5，跳到 (1,6)
+check("狮子可跳过整段河", g.validate(s6, solid6, { type: "move", from: at(1, 2), to: at(1, 6) }).ok === true);
+put(s6, 1, 4, mk("hollow", hollow6, "rat"));
+check("河中有鼠时不能跳", g.validate(s6, solid6, { type: "move", from: at(1, 2), to: at(1, 6) }).ok === false);
 raw(s6).board = new Array(JUNGLE_W * JUNGLE_H).fill(null);
-put(s6, 1, 2, mk("red", red6, "dog"));
-check("狗不能跳河", g.validate(s6, red6, { type: "move", from: at(1, 2), to: at(1, 6) }).ok === false);
+put(s6, 1, 2, mk("solid", solid6, "dog"));
+check("狗不能跳河", g.validate(s6, solid6, { type: "move", from: at(1, 2), to: at(1, 6) }).ok === false);
 
 // —— 场景 7：兽穴 ——
 console.log("\n[7] 兽穴：进对方即胜、不能进自己的");
 const s7 = g.init([1, 2], mulberry32(4));
-const red7 = (g.viewOf(s7, 1, CTX) as unknown as V).public.red as number;
-const blue7 = (g.viewOf(s7, 1, CTX) as unknown as V).public.blue as number;
-// ① 红方不能进自家兽穴 (3,8)
+const solid7 = (g.viewOf(s7, 1, CTX) as unknown as V).public.solid as number;
+const hollow7 = (g.viewOf(s7, 1, CTX) as unknown as V).public.hollow as number;
+// ① 实心方不能进自家兽穴 (3,8)
 raw(s7).board = new Array(JUNGLE_W * JUNGLE_H).fill(null);
-put(s7, 3, 7, mk("red", red7, "dog"));
-put(s7, 0, 0, mk("blue", blue7, "cat"));   // 留一个蓝子，避免「吃光」抢先
-check("红方不能进自家兽穴 (3,8)", g.validate(s7, red7, { type: "move", from: at(3, 7), to: at(3, 8) }).ok === false);
-// ② 蓝方进**红方**兽穴 (3,8) 即胜（开局另起，避免与上一条互相污染）
+put(s7, 3, 7, mk("solid", solid7, "dog"));
+put(s7, 0, 0, mk("hollow", hollow7, "cat"));   // 留一个蓝子，避免「吃光」抢先
+check("实心方不能进自家兽穴 (3,8)", g.validate(s7, solid7, { type: "move", from: at(3, 7), to: at(3, 8) }).ok === false);
+// ② 空心方进**实心方**兽穴 (3,8) 即胜（开局另起，避免与上一条互相污染）
 const s7b = g.init([1, 2], mulberry32(4));
-const red7b = (g.viewOf(s7b, 1, CTX) as unknown as V).public.red as number;
-const blue7b = (g.viewOf(s7b, 1, CTX) as unknown as V).public.blue as number;
+const red7b = (g.viewOf(s7b, 1, CTX) as unknown as V).public.solid as number;
+const blue7b = (g.viewOf(s7b, 1, CTX) as unknown as V).public.hollow as number;
 raw(s7b).board = new Array(JUNGLE_W * JUNGLE_H).fill(null);
-put(s7b, 3, 7, mk("blue", blue7b, "rat"));
-put(s7b, 6, 0, mk("red", red7b, "cat"));   // 红方还有子，排除「吃光」路径
+put(s7b, 3, 7, mk("hollow", blue7b, "rat"));
+put(s7b, 6, 0, mk("solid", red7b, "cat"));   // 实心方还有子，排除「吃光」路径
 raw(s7b).turn = blue7b;
 const winStep = g.apply(s7b, blue7b, { type: "move", from: at(3, 7), to: at(3, 8) }, RNG());
 check("进对方兽穴即胜", (g.scores(winStep.state)[blue7b] ?? 0) === 1, JSON.stringify(g.scores(winStep.state)));

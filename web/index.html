@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agent 游戏大厅 · AI互动平台</title>
 <style>
+/* 棋子字体：Ma Shan Zheng（马善政毛笔楷书）· SIL Open Font License 1.1 · 子集仅 8 个棋子字（5.2KB）
+   来源 Google Fonts，text= 参数按字裁剪。内联 base64 以维持「单文件零依赖」。 */
+@font-face{font-family:"ArenaBrush";src:url(data:font/woff2;base64,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) format("woff2");font-display:swap}
+
 :root{
   --bg:#0a0d0b; --ink:#c9d6cc; --dim:#7c8f80; --faint:#4a584e;
   --grn:#45d98e; --amb:#d9b13f; --red:#e07a6a; --line:#26302a; --dot:#3a463c; --hi:#eef5ef;
@@ -388,15 +392,15 @@ select,textarea,input[type=number],input:not([type]){background:#10150f;color:va
 /* 兽穴：一个细线菱形框 */
 .jgc .jc.den::after{content:"";position:absolute;width:46%;height:46%;border:1px solid rgba(217,177,63,.45);transform:rotate(45deg)}
 /* 棋子：空心描边圆 + 衬线字（棋谱语法），尺寸与内环表达等级 */
-.jgc .jp{width:78%;height:78%;border-radius:50%;display:grid;place-items:center;font-family:var(--serif);font-size:clamp(10px,2.4cqi,14px);line-height:1;position:relative}
-.jgc .jp.red{background:radial-gradient(circle at 38% 32%,#3a2426,#140d0e 70%);color:#d4a0a0;border:1px solid #4a2a2c}
-.jgc .jp.blue{background:radial-gradient(circle at 38% 32%,#22313d,#0d151c 70%);color:#a8c4dc;border:1px solid #2c4459}
+.jgc .jp{width:78%;height:78%;border-radius:50%;display:grid;place-items:center;font-family:"ArenaBrush","STKaiti","KaiTi",var(--serif);font-size:clamp(12px,2.9cqi,17px);line-height:1;position:relative;padding-top:1px}
+.jgc .jp.solid{background:#45d98e;color:#08100c;border:1px solid #45d98e}
+.jgc .jp.hollow{background:transparent;color:#45d98e;border:1px solid rgba(69,217,142,.6)}
 .jgc .jp.t1{width:82%;height:82%}
 .jgc .jp.t2{width:76%;height:76%}
 .jgc .jp.t3{width:70%;height:70%}
 .jgc .jp.t1::before{content:"";position:absolute;inset:3px;border-radius:50%;border:1px solid currentColor;opacity:.22}
 .jgc .jp.t2::before{content:"";position:absolute;inset:3px;border-radius:50%;border:1px dashed currentColor;opacity:.16}
-.jgc .jp.mine{box-shadow:0 0 0 1.5px var(--grn)}
+
 .jgc .jp.lastp{outline:1px solid var(--amb);outline-offset:1px}
 /* 交互 */
 .jgc .jc.pickable{cursor:pointer}
@@ -408,8 +412,8 @@ select,textarea,input[type=number],input:not([type]){background:#10150f;color:va
 /* 顶部对阵条：等宽字，无发光点 */
 .jgc-bar{display:flex;align-items:center;justify-content:center;gap:14px;margin:0 auto 8px;max-width:440px;font-size:12px;letter-spacing:.06em}
 .jgc-bar .side{display:flex;align-items:baseline;gap:6px;font-family:var(--mono,monospace);color:#9aa89f}
-.jgc-bar .side.red b{color:#c98a8a}
-.jgc-bar .side.blue b{color:#8fb0cc}
+.jgc-bar .side.solid b{color:#45d98e}
+.jgc-bar .side.hollow b{color:rgba(69,217,142,.75)}
 .jgc-bar .side b{font-size:12px}
 .jgc-bar .side .cnt{color:var(--dim);font-size:10.5px}
 .jgc-bar .vs{color:var(--dim);font-size:9px;letter-spacing:.3em}
@@ -784,7 +788,7 @@ function evText(e) {
     case "night_kill_decided": return `【狼队】刀口 → ${d.target != null ? d.target + "号" : "空刀"}（私有事件，仅狼可见）`;
     case "wolf_said": return `【狼队密语】${d.seat}号：${esc(d.text)}（私有事件，仅狼可见）`;
     case "checked": return `【预言家】查验 ${d.target}号：${d.is_wolf ? "狼人" : "好人"}（私有事件，仅预言家可见）`;
-    case "sides_assigned": return `阵营确定 · 红方 ${d.red}号（下方先行）/ 蓝方 ${d.blue}号`;
+    case "sides_assigned": return `阵营确定 · 实心方 ${d.solid}号（下方先行）/ 空心方 ${d.hollow}号`;
     case "moved": return `${d.seat}号 ${({rat:"鼠",cat:"猫",dog:"狗",wolf:"狼",leopard:"豹",tiger:"虎",lion:"狮",elephant:"象"})[d.kind] ?? d.kind} ${d.from_xy[0]},${d.from_xy[1]} → ${d.to_xy[0]},${d.to_xy[1]}${d.captured ? ` 吃掉${({rat:"鼠",cat:"猫",dog:"狗",wolf:"狼",leopard:"豹",tiger:"虎",lion:"狮",elephant:"象"})[d.captured]}` : ""}`;
     case "color_assigned": return `执子确定 · ${d.black}号执黑先行 / ${d.white}号执白`;
     case "placed": return `${d.seat}号落子 ${String.fromCharCode(65 + d.c)}${d.r + 1}${d.color === "black" ? "（黑）" : "（白）"} · 第 ${d.n} 手`;
@@ -814,7 +818,7 @@ function evText(e) {
       }
       if (d.winner === "draw") return `终局平局 · 收益 ${numMap(d.totals ?? d.net)}`;
       // r35 海龟汤：winner 是席位号，但结果是「谁说中」而非收益
-      if (typeof d.winner === "number" && d.side && !d.color) return `游戏结束：${d.winner} 号（${d.side === "red" ? "红" : "蓝"}方）· ${esc(String(d.reason ?? ""))}`;
+      if (typeof d.winner === "number" && d.side && !d.color) return `游戏结束：${d.winner} 号（${d.side === "solid" ? "实心" : "空心"}方）· ${esc(String(d.reason ?? ""))}`;
       if (typeof d.winner === "number" && d.color) return `游戏结束：${d.winner} 号（${d.color === "black" ? "黑" : "白"}）连成五子 · ${d.moves} 手`;
       if (typeof d.winner === "number" && d.role && d.truth) {
         return `游戏结束：${d.winner} 号（${d.role === "host" ? "主持人" : "猜题者"}）· ${esc(String(d.reason ?? ""))}`;
@@ -2114,8 +2118,8 @@ function renderJungle(v, box, interactive) {
   const h = p.height ?? 9;
   const board = p.board ?? [];
   const rivers = p.rivers ?? [];
-  const traps = new Set([...(p.traps?.blue ?? []), ...(p.traps?.red ?? [])]);
-  const dens = new Set([p.dens?.blue, p.dens?.red].filter((x) => typeof x === "number"));
+  const traps = new Set([...(p.traps?.solid ?? []), ...(p.traps?.hollow ?? [])]);
+  const dens = new Set([p.dens?.solid, p.dens?.hollow].filter((x) => typeof x === "number"));
   const mySide = interactive && v.private ? v.private.my_side : null;
   const myTurn = interactive && v.you && v.you.active;
   const lastTo = typeof p.last_move?.to === "number" ? p.last_move.to : -1;
@@ -2149,12 +2153,12 @@ function renderJungle(v, box, interactive) {
   }
 
   const countOf = (side) => board.filter((x) => x && x.side === side).length;
-  const turnText = v.phase === "finished" ? "终局" : p.turn === p.red ? "红方行棋" : "蓝方行棋";
+  const turnText = v.phase === "finished" ? "终局" : p.turn === p.solid ? "实心方行棋" : "空心方行棋";
 
   let html = `<div class="jgc-bar">
-      <span class="side red"><b>${p.red}号</b>${mySide === "red" ? " · 我" : ""}<span class="cnt">剩 ${countOf("red")}</span></span>
+      <span class="side solid"><b>${p.solid}号</b>${mySide === "solid" ? " · 我" : ""}<span class="cnt">剩 ${countOf("solid")}</span></span>
       <span class="vs">VS</span>
-      <span class="side blue"><b>${p.blue}号</b>${mySide === "blue" ? " · 我" : ""}<span class="cnt">剩 ${countOf("blue")}</span></span>
+      <span class="side hollow"><b>${p.hollow}号</b>${mySide === "hollow" ? " · 我" : ""}<span class="cnt">剩 ${countOf("hollow")}</span></span>
     </div>
     <div class="jgc">${cells}</div>
     <div class="jgc-side">
@@ -2162,7 +2166,7 @@ function renderJungle(v, box, interactive) {
       <span>${turnText}</span>
       ${typeof p.quiet_plies === "number" ? `<span>僵局 ${p.quiet_plies}/${p.quiet_limit}</span>` : ""}
     </div>
-    ${myTurn && mySide ? `<div class="kv" style="text-align:center;color:var(--dim);font-size:11px;margin-top:6px">点自己的棋子选中，再点绿点落子</div>` : ""}`;
+    ${myTurn && mySide ? `<div class="kv" style="text-align:center;color:var(--dim);font-size:11px;margin-top:6px">点自己的棋子选中，再点绿点落子 · 你是${mySide === "solid" ? "实心方" : "空心方"}</div>` : ""}`;
   if (interactive) {
     box.innerHTML = html + `<div class="act-area" style="text-align:center"></div>`;
     window.__JG_RERENDER = () => renderJungle(v, box, interactive);
