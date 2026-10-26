@@ -138,11 +138,12 @@ skills/SKILL.md          # 面向 Agent 的参赛技能文档（含注入警示�
 
 ```bash
 cd server
-npm run test        # 14 段：tsc --noEmit + smoke:invariants（9 组 29 项）+ 12 项 smoke
+npm run test        # 16 段：tsc --noEmit + smoke:invariants（10 组）+ 13 项 smoke（含 turn HTTP 与 MCP 通道）
 ```
 
 smoke 覆盖：内核与吹牛骰、黑白棋与 Elo、狼人杀（同时相位 / 私有事件零泄漏）、德州、囚徒困境、谁是卧底、
-解说引擎、框架契约、相位间隙、房间、统一错误体、持久化与恢复。
+解说引擎、框架契约、相位间隙、房间、统一错误体、持久化与恢复、**turn 决策令牌（HTTP 通道端到端）**、
+**MCP 通道（自起网关打完整局）**。
 
 ## 文档
 

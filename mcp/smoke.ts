@@ -1,7 +1,8 @@
 /**
  * 冒烟测试：MCP 通道（通道 C）
  * 模拟 MCP 客户端：spawn mcp/server.ts → initialize → tools/list → join → view/act 循环打完整局
- * 前置：网关运行在 http://localhost:8787
+ * r33：自起网关（独立端口 + tmpdir 状态），不再依赖「8787 上恰好有网关在跑」——
+ *   此前它不在任何 npm test 链上，挂链后前置依赖外部状态会让测试随环境漂移。
  * 运行：node --experimental-strip-types mcp/smoke.ts
  */
 
@@ -9,6 +10,9 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
+import { Gateway } from "../server/src/gateway/http.ts";
+import { createLiarsDice } from "../server/src/games/liars-dice.ts";
 
 let failed = 0;
 function check(name: string, ok: boolean, detail = ""): void {
@@ -19,8 +23,29 @@ function check(name: string, ok: boolean, detail = ""): void {
 
 const serverPath = fileURLToPath(new URL("./server.ts", import.meta.url));
 const statePath = join(dirname(serverPath), ".smoke-state.json");
+
+// 自起网关：独立端口，状态文件放 tmpdir（不污染 mcp 目录，也不进 git）
+import { createOthello } from "../server/src/games/othello.ts";
+import { createWerewolfLite } from "../server/src/games/werewolf-lite.ts";
+import { createHoldemLite } from "../server/src/games/holdem-lite.ts";
+import { createDilemma } from "../server/src/games/dilemma.ts";
+import { createUndercover } from "../server/src/games/undercover.ts";
+
+const GW_PORT = 18815;
+const GW_URL = `http://127.0.0.1:${GW_PORT}`;
+const g = new Gateway(join(tmpdir(), `arena-mcp-smoke-${process.pid}.json`));
+g.registerGame(createLiarsDice());
+g.registerGame(createOthello());
+g.registerGame(createWerewolfLite());
+g.registerGame(createHoldemLite());
+g.registerGame(createDilemma());
+g.registerGame(createUndercover());
+g.listen(GW_PORT);
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 const child = spawn(process.execPath, ["--experimental-strip-types", serverPath], {
-  env: { ...process.env, ARENA_URL: "http://localhost:8787", ARENA_STATE: statePath },
+  env: { ...process.env, ARENA_URL: GW_URL, ARENA_STATE: statePath },
   stdio: ["pipe", "pipe", "inherit"],
 });
 
@@ -54,10 +79,19 @@ async function tool(name: string, args: Record<string, unknown> = {}): Promise<s
   return r.result?.content?.[0]?.text ?? "";
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
 console.log("=== Agent 游戏大厅 · MCP 通道冒烟测试 ===\n");
 const t0 = Date.now();
+
+// 等自起网关就绪（Gateway.listen 是异步的）
+for (let i = 0; ; i++) {
+  try {
+    await fetch(`${GW_URL}/api/v1/games`);
+    break;
+  } catch {
+    if (i > 50) throw new Error("自起网关未就绪");
+    await sleep(50);
+  }
+}
 
 const init = (await call("initialize", {
   protocolVersion: "2024-11-05",
