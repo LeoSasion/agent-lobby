@@ -374,20 +374,56 @@ select,textarea,input[type=number],input:not([type]){background:#10150f;color:va
 .gmk-side{display:flex;gap:18px;justify-content:center;font-size:12px;color:var(--dim);margin-top:10px}
 .gmk-side b{color:#dfe9e2}
 .gmk-side .cur{color:var(--grn)}
-/* r37 斗兽棋：7×9 棋盘 + 河流/陷阱/兽穴三类地形（唯一点两步交互的棋类：先选子再选目标） */
-.jgc{display:grid;grid-template-columns:repeat(7,1fr);width:min(84%,400px);aspect-ratio:7/9;margin:10px auto;border:1px solid #26302b;background:#0c110e}
-.jgc .jc{position:relative;display:grid;place-items:center;border-right:1px solid rgba(255,255,255,.05);border-bottom:1px solid rgba(255,255,255,.05)}
-.jgc .jc.river{background:rgba(58,118,180,.13)}
-.jgc .jc.trap::after{content:"阱";position:absolute;bottom:1px;right:2px;font-size:8px;color:rgba(217,177,63,.5)}
-.jgc .jc.den::after{content:"穴";position:absolute;inset:0;display:grid;place-items:center;font-family:var(--serif);font-size:13px;color:rgba(217,177,63,.55)}
-.jgc .jc.sel{box-shadow:inset 0 0 0 2px var(--grn)}
-.jgc .jc.dest{cursor:pointer;box-shadow:inset 0 0 0 2px rgba(69,217,142,.5)}
-.jgc .jc.dest::before{content:"";width:26%;height:26%;border-radius:50%;background:rgba(69,217,142,.3);position:absolute}
-.jgc .jp{width:74%;height:74%;border-radius:50%;display:grid;place-items:center;font-family:var(--serif);font-size:12px;z-index:1}
-.jgc .jp.red{background:#31191a;color:#e8b0b0;border:1px solid #8a4646}
-.jgc .jp.blue{background:#16222c;color:#a6c2db;border:1px solid #456a8a}
-.jgc .jp.mine{box-shadow:0 0 0 1.5px rgba(69,217,142,.55)}
-.jgc-side{display:flex;gap:16px;justify-content:center;font-size:12px;color:var(--dim);margin-top:8px;flex-wrap:wrap}
+/* r37 斗兽棋：7×9 丛林棋盘。三类地形各自有质感（水有波纹、陷阱凹陷、兽穴是洞口），
+   棋子做成石质圆牌并用**环数表达等级**——象狮虎双环 / 豹狼狗虚环 / 猫鼠无环，
+   这样不看字也能一眼分辨斤两。 */
+.jgc{display:grid;grid-template-columns:repeat(7,1fr);width:min(88%,440px);aspect-ratio:7/9;margin:0 auto;
+  background:radial-gradient(ellipse at 50% -12%,rgba(69,217,142,.06),transparent 55%),#0a0f0c;
+  border:1px solid #2b3a33;
+  box-shadow:0 0 0 1px #060907,0 10px 30px rgba(0,0,0,.55),inset 0 0 44px rgba(0,0,0,.45);
+  outline:1px solid rgba(217,177,63,.13);outline-offset:3px}
+.jgc .jc{position:relative;display:grid;place-items:center;border-right:1px solid rgba(120,160,140,.13);border-bottom:1px solid rgba(120,160,140,.13)}
+.jgc .jc:nth-child(7n){border-right:none}
+.jgc .jc:nth-child(n+57){border-bottom:none}
+/* 河流：横向波纹 + 内凹阴影（不是一块淡蓝，是「水」） */
+.jgc .jc.river{background:repeating-linear-gradient(0deg,rgba(96,158,196,.065) 0 1px,transparent 1px 9px),radial-gradient(ellipse at 30% 20%,rgba(40,110,160,.16),transparent 60%),linear-gradient(180deg,#061019,#0b1a24);box-shadow:inset 0 0 14px rgba(28,80,120,.45)}
+.jgc .jc.river::after{content:"";position:absolute;inset:0;background:radial-gradient(ellipse at 50% 118%,rgba(80,160,210,.12),transparent 70%)}
+/* 陷阱：凹陷 + 琥珀色叉 */
+.jgc .jc.trap{background:radial-gradient(circle at 50% 60%,#191310,#0b0f0c 72%);box-shadow:inset 0 2px 6px rgba(0,0,0,.6)}
+.jgc .jc.trap::after{content:"×";position:absolute;font-family:var(--serif);font-size:15px;line-height:1;color:rgba(217,177,63,.34)}
+/* 兽穴：拱形洞口 + 琥珀微光 */
+.jgc .jc.den{background:radial-gradient(circle at 50% 78%,#221a0a,#0a0f0c 72%)}
+.jgc .jc.den::after{content:"";position:absolute;bottom:16%;width:54%;height:62%;border:1px solid rgba(217,177,63,.55);border-bottom:none;border-radius:50% 50% 0 0/70% 70% 0 0;background:linear-gradient(180deg,rgba(217,177,63,.20),rgba(217,177,63,.02));box-shadow:0 0 12px rgba(217,177,63,.22),inset 0 -6px 10px rgba(217,177,63,.10)}
+/* 棋子：石质圆牌（径向高光 + 落地阴影） */
+.jgc .jp{width:78%;height:78%;border-radius:50%;display:grid;place-items:center;font-family:var(--serif);font-size:clamp(10px,2.4cqi,14px);line-height:1;position:relative;z-index:1;box-shadow:0 1px 3px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.07)}
+.jgc .jp.red{background:radial-gradient(circle at 34% 26%,#4d2325,#281012 72%);color:#ecb8b8;border:1px solid #7d3a3a}
+.jgc .jp.blue{background:radial-gradient(circle at 34% 26%,#203242,#0f1922 72%);color:#b6d2e8;border:1px solid #3e6688}
+/* 尺寸也表达等级：象狮虎最大、猫鼠最小（格子小时靠这个一眼分辨） */
+.jgc .jp.t1{width:84%;height:84%}
+.jgc .jp.t2{width:77%;height:77%}
+.jgc .jp.t3{width:69%;height:69%}
+.jgc .jp.t1::before{content:"";position:absolute;inset:2px;border-radius:50%;border:1px solid currentColor;opacity:.30}
+.jgc .jp.t2::before{content:"";position:absolute;inset:3px;border-radius:50%;border:1px dashed currentColor;opacity:.22}
+.jgc .jp.mine{box-shadow:0 0 0 1.5px rgba(69,217,142,.65),0 1px 3px rgba(0,0,0,.55)}
+.jgc .jp.lastp{outline:1.5px solid var(--amb);outline-offset:1px}
+/* 交互：可选棋子轻微放大，选中格描边，可落点画呼吸点 */
+.jgc .jc.pickable{cursor:pointer}
+.jgc .jc.pickable:hover .jp{transform:scale(1.07)}
+.jgc .jc.sel{background:rgba(69,217,142,.10);box-shadow:inset 0 0 0 1.5px rgba(69,217,142,.55)}
+.jgc .jc.dest{cursor:pointer}
+.jgc .jc.dest::before{content:"";position:absolute;width:30%;height:30%;border-radius:50%;background:rgba(69,217,142,.28);box-shadow:0 0 8px rgba(69,217,142,.25);z-index:0}
+.jgc .jc.dest:hover::before{background:rgba(69,217,142,.5)}
+/* 顶部对阵条 */
+.jgc-bar{display:flex;align-items:center;justify-content:center;gap:12px;font-size:12px;margin:0 auto 9px;max-width:440px}
+.jgc-bar .side{display:flex;align-items:center;gap:6px;font-family:var(--serif);color:#b9c8bf}
+.jgc-bar .side .dot{width:9px;height:9px;border-radius:50%}
+.jgc-bar .side.red .dot{background:#8a3a3a;box-shadow:0 0 6px rgba(180,70,70,.55)}
+.jgc-bar .side.blue .dot{background:#3e6688;box-shadow:0 0 6px rgba(70,130,180,.55)}
+.jgc-bar .side b{font-size:13px;color:#e2ece6}
+.jgc-bar .side .cnt{font-family:var(--mono,monospace);color:var(--dim);font-size:11px}
+.jgc-bar .vs{color:#3d4a43;font-size:9px;letter-spacing:.3em}
+.jgc-side{display:flex;gap:14px;justify-content:center;font-size:11px;color:var(--dim);margin-top:9px;flex-wrap:wrap;letter-spacing:.06em}
+.jgc-side b{color:#dfe9e2}
 .jgc-side b{color:#dfe9e2}
 .goban .cellc.legal:hover{background:#1c2a20}
 .goban .disc{position:absolute;inset:15%;border-radius:50%}
@@ -2077,6 +2113,8 @@ window.jgMove = function (to) {
 };
 
 const RANK_CN = { rat: "鼠", cat: "猫", dog: "狗", wolf: "狼", leopard: "豹", tiger: "虎", lion: "狮", elephant: "象" };
+/* 等级分档：决定棋子上的环——象狮虎双环、豹狼狗虚环、猫鼠无环 */
+const RANK_TIER = { elephant: "t1", lion: "t1", tiger: "t1", leopard: "t2", wolf: "t2", dog: "t2", cat: "t3", rat: "t3" };
 
 function renderJungle(v, box, interactive) {
   const p = v.public;
@@ -2088,6 +2126,7 @@ function renderJungle(v, box, interactive) {
   const dens = new Set([p.dens?.blue, p.dens?.red].filter((x) => typeof x === "number"));
   const mySide = interactive && v.private ? v.private.my_side : null;
   const myTurn = interactive && v.you && v.you.active;
+  const lastTo = typeof p.last_move?.to === "number" ? p.last_move.to : -1;
 
   // 合法走子来自法表（引擎已算好卡点：吃子/跳河/陷阱/兽穴），前端只做展示与选择
   let dests = new Set();
@@ -2100,6 +2139,7 @@ function renderJungle(v, box, interactive) {
   let cells = "";
   for (let i = 0; i < w * h; i++) {
     const piece = board[i];
+    const mine = !!(piece && piece.seat === v.you?.seat);
     const cls = [
       "jc",
       rivers[i] ? "river" : "",
@@ -2107,27 +2147,30 @@ function renderJungle(v, box, interactive) {
       dens.has(i) ? "den" : "",
       i === JG_SEL ? "sel" : "",
       dests.has(i) ? "dest" : "",
+      myTurn && (mine || dests.has(i)) ? "pickable" : "",
     ].filter(Boolean).join(" ");
-    const clickable = myTurn && ((piece && piece.seat === v.you?.seat) || dests.has(i));
-    const handler = clickable
-      ? dests.has(i) ? ` onclick="jgMove(${i})"` : ` onclick="jgPick(${i})"`
-      : "";
+    const handler = dests.has(i) ? ` onclick="jgMove(${i})"` : mine && myTurn ? ` onclick="jgPick(${i})"` : "";
     const stone = piece
-      ? `<span class="jp ${piece.side} ${piece.seat === v.you?.seat ? "mine" : ""}">${RANK_CN[piece.kind] ?? "?"}</span>`
+      ? `<span class="jp ${piece.side} ${RANK_TIER[piece.kind] ?? "t3"} ${mine ? "mine" : ""} ${i === lastTo ? "lastp" : ""}">${RANK_CN[piece.kind] ?? "?"}</span>`
       : "";
     cells += `<div class="${cls}"${handler}>${stone}</div>`;
   }
 
-  const sideName = (s) => (s === "red" ? "红" : "蓝");
-  let html = `<div class="jgc">${cells}</div>
-    <div class="jgc-side">
-      <span>红 <b>${p.red}号</b>${mySide === "red" ? " · 我" : ""}</span>
-      <span>蓝 <b>${p.blue}号</b>${mySide === "blue" ? " · 我" : ""}</span>
-      <span>第 <b>${(p.moves ?? []).length}</b> 手</span>
-      <span>${v.phase === "finished" ? `<b style="color:var(--grn)">终局</b>` : p.turn === p.red ? "红方行棋" : "蓝方行棋"}</span>
-      ${typeof p.quiet_plies === "number" ? `<span>僵局计数 ${p.quiet_plies}/${p.quiet_limit}</span>` : ""}
+  const countOf = (side) => board.filter((x) => x && x.side === side).length;
+  const turnText = v.phase === "finished" ? "终局" : p.turn === p.red ? "红方行棋" : "蓝方行棋";
+
+  let html = `<div class="jgc-bar">
+      <span class="side red"><span class="dot"></span>${p.red}号${mySide === "red" ? " · 我" : ""}<span class="cnt">剩 ${countOf("red")}</span></span>
+      <span class="vs">VS</span>
+      <span class="side blue"><span class="dot"></span>${p.blue}号${mySide === "blue" ? " · 我" : ""}<span class="cnt">剩 ${countOf("blue")}</span></span>
     </div>
-    ${myTurn && mySide ? `<div class="kv" style="text-align:center;color:var(--dim);font-size:11px;margin-top:6px">点自己的棋子选中，再点高亮的格子落子——${sideName(mySide)}方走</div>` : ""}`;
+    <div class="jgc">${cells}</div>
+    <div class="jgc-side">
+      <span>第 <b>${(p.moves ?? []).length}</b> 手</span>
+      <span>${turnText}</span>
+      ${typeof p.quiet_plies === "number" ? `<span>僵局 ${p.quiet_plies}/${p.quiet_limit}</span>` : ""}
+    </div>
+    ${myTurn && mySide ? `<div class="kv" style="text-align:center;color:var(--dim);font-size:11px;margin-top:6px">点自己的棋子选中，再点绿点落子</div>` : ""}`;
   if (interactive) {
     box.innerHTML = html + `<div class="act-area" style="text-align:center"></div>`;
     window.__JG_RERENDER = () => renderJungle(v, box, interactive);
