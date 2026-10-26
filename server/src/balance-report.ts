@@ -14,6 +14,7 @@ import { createHoldemLite } from "./games/holdem-lite.ts";
 import { createDilemma } from "./games/dilemma.ts";
 import { createUndercover } from "./games/undercover.ts";
 import { createAuction } from "./games/auction.ts";
+import { createTurtleSoup } from "./games/turtle-soup.ts";
 import { createMatch } from "./arena/lobby.ts";
 import { createRuleBot, createHangingBot } from "./bots/rule-bot.ts";
 import { createOthelloBot } from "./bots/othello-bot.ts";
@@ -22,6 +23,7 @@ import { createHoldemBot } from "./bots/holdem-bot.ts";
 import { createDilemmaBot } from "./bots/dilemma-bot.ts";
 import { createUndercoverBot } from "./bots/undercover-bot.ts";
 import { createAuctionBot } from "./bots/auction-bot.ts";
+import { createTurtleBot } from "./bots/turtle-bot.ts";
 import type { GameModule } from "./games/types.ts";
 import type { SeatDriver } from "./arena/match.ts";
 import type { MatchEvent } from "./protocol.ts";
@@ -283,6 +285,37 @@ else if (aggressiveShare > 0.85) console.log("  ⚠️ 激进派几乎通吃（>
 else console.log("  ✓ 得标分布合理（激进派更容易抢到，符合首价密封直觉）");
 const auctionWr = Math.max(...Object.values(auctionWins)) / AUCTION_GAMES;
 if (auctionWr > 0.6) console.log("  ⚠️ 单一风格胜率过高（>60%）");
+
+// —— 海龟汤：主持人 vs 猜题者 ——
+// 判读要点：**规则 bot 当主持人只能做关键词字面匹配，猜题者 bot 又不会语义推理**，
+// 所以 bot 局里主持人胜率天然偏高——这是 bot 能力的上限，不是游戏失衡。
+// 真正的对局质量依赖 LLM agent 或真人（双方都要能理解自然语言）。
+// 本段的价值不在「调平衡」，而在**确认零和性与流程正确**：角色随机分配后，
+// 两个角色各自的总胜场应当接近一半（否则说明角色分配有座位偏向）。
+console.log("\n[海龟汤] 2 席 bot 对 bot（30 局）");
+const TURTLE_GAMES = 30;
+const turtleEvents = await runBatch("总计", createTurtleSoup(), () =>
+  [createTurtleBot("甲", 0), createTurtleBot("乙", 1)],
+  TURTLE_GAMES,
+);
+let soupHostWin = 0;
+let soupGuesserWin = 0;
+let soupAsks = 0;
+let soupGuesses = 0;
+for (const { events: evs } of turtleEvents) {
+  const won = evs.find((e) => e.type === "game_won");
+  if (!won) continue;
+  const role = (won.data as { role?: string }).role;
+  if (role === "host") soupHostWin++;
+  else if (role === "guesser") soupGuesserWin++;
+  soupAsks += evs.filter((e) => e.type === "asked").length;
+  soupGuesses += evs.filter((e) => e.type === "guessed").length;
+}
+console.log(`  主持人胜 ${soupHostWin} · 猜题者胜 ${soupGuesserWin}`);
+console.log(`  平均提问 ${(soupAsks / TURTLE_GAMES).toFixed(1)} 次 · 平均猜测 ${(soupGuesses / TURTLE_GAMES).toFixed(1)} 次`);
+if (soupHostWin + soupGuesserWin < TURTLE_GAMES) console.log(`  ⚠️ ${TURTLE_GAMES - soupHostWin - soupGuesserWin} 局未走到终局`);
+else if (soupHostWin === TURTLE_GAMES) console.log("  ⚠️ 主持人全胜——规则 bot 无法语义推理，属预期；真人对局会显著不同");
+else console.log("  ✓ 流程正确（bot 局主持人偏强属能力上限，非失衡）");
 
 // —— 框架不变量抽检 ——
 console.log("\n[框架不变量抽检] 全超时 + 确定性");

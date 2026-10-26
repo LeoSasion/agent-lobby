@@ -26,6 +26,7 @@ import { createUndercover } from "./games/undercover.ts";
 import { createWerewolfLite } from "./games/werewolf-lite.ts";
 import { createDilemma } from "./games/dilemma.ts";
 import { createAuction } from "./games/auction.ts";
+import { createTurtleSoup } from "./games/turtle-soup.ts";
 import { HttpSeatDriver } from "./gateway/http.ts";
 import { Gateway, reasoningRate } from "./gateway/http.ts";
 import { RatingStore } from "./arena/rating.ts";
@@ -286,7 +287,7 @@ console.log("\n[8] House Bot 契约：全游戏多 seed 零拒绝、零超时");
 const BOT_SEEDS = [11, 12, 13];
 const BOT_GAMES = [
   createLiarsDice(), createOthello(), createDilemma(),
-  createUndercover(), createWerewolfLite(), createHoldemLite(), createAuction(),
+  createUndercover(), createWerewolfLite(), createHoldemLite(), createAuction(), createTurtleSoup(),
 ] as unknown as GameModule<unknown>[];
 for (const game of BOT_GAMES) {
   const rejections: string[] = [];

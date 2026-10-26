@@ -403,6 +403,27 @@ select,textarea,input[type=number],input:not([type]){background:#10150f;color:va
 .au-hist .au-h{display:flex;gap:12px;align-items:center;font-size:11px;color:var(--dim);padding:5px 0;border-bottom:1px dashed rgba(255,255,255,.06)}
 .au-hist .au-h .lot{flex:1;color:#b9c8bf}
 .au-hist .au-h .pr{font-family:var(--mono,monospace);color:var(--amb)}
+/* r35 海龟汤：谜面台 + 问答对话流（唯一一款以「文本对话」为主界面的游戏） */
+.ts-stage{padding:6px 0;max-width:660px;margin:0 auto}
+.ts-surface{border-left:2px solid var(--amb);padding:10px 14px;margin-bottom:16px;background:rgba(217,177,63,.04)}
+.ts-surface .ts-text{font-family:var(--serif);font-size:15px;line-height:1.75;color:#e6efe9;margin:6px 0 8px}
+.ts-surface .ts-meta{font-size:11px;color:var(--dim);letter-spacing:.06em}
+.ts-chat{display:flex;flex-direction:column;gap:7px}
+.ts-line{font-size:13px;line-height:1.6;display:flex;gap:8px;align-items:baseline}
+.ts-line .who{font-size:10.5px;color:var(--dim);letter-spacing:.14em;min-width:34px;flex:none}
+.ts-line.ask .q{color:#dbe7df}
+.ts-line.ans{padding-left:42px}
+.ts-line.ans .verdict{font-family:var(--serif);font-size:14px;letter-spacing:.1em}
+.ts-line.ans.yes .verdict{color:var(--grn)}
+.ts-line.ans.no .verdict{color:#8a9a91}
+.ts-line.ans.close .verdict{color:var(--amb)}
+.ts-line.ans.irrelevant .verdict{color:#5d6b63}
+.ts-line.guess .q{color:var(--amb);font-style:italic}
+.ts-line.judge{padding-left:42px;font-size:12px}
+.ts-line.judge.ok{color:var(--grn)}
+.ts-line.judge.bad{color:#8a9a91}
+.ts-truth{margin-top:16px;padding:10px 12px;border-left:2px solid var(--grn);background:rgba(69,217,142,.04);font-size:12px;color:#cfded5}
+.ts-truth b{color:var(--grn)}
 .dm-track{display:flex;gap:10px;overflow-x:auto;padding:10px 2px 12px;border-top:1px solid var(--line);margin-top:8px}
 .dm-track.empty{color:var(--dim);font-size:11.5px;border-top:none;justify-content:center;padding:16px 0}
 .dm-r{min-width:56px;text-align:center}
@@ -621,7 +642,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<
 const api = async (p, o) => (await fetch("/api/v1" + p, o)).json();
 // r30：内置兜底名——GAME_NAMES 由 /games 响应覆盖，但首屏/离线/接口慢时事件文案会裸吐
 // werewolf_lite 这类 id（解说与公报在 fetch 未回前就已渲染）。静态种子保证任何时刻都有人话。
-const GAME_NAMES = { liars_dice:"吹牛骰", othello:"黑白棋", werewolf_lite:"狼人杀·简化", holdem_lite:"德州扑克·简化", dilemma:"囚徒困境·迭代赛", undercover:"谁是卧底", auction:"拍卖行·密封竞价" };
+const GAME_NAMES = { liars_dice:"吹牛骰", othello:"黑白棋", werewolf_lite:"狼人杀·简化", holdem_lite:"德州扑克·简化", dilemma:"囚徒困境·迭代赛", undercover:"谁是卧底", auction:"拍卖行·密封竞价", turtle_soup:"海龟汤" };
 const GAME_DESC = { liars_dice:"欺骗博弈 · 隐藏信息", othello:"完全信息 · 经典棋类", werewolf_lite:"社交推理 · 旗舰", holdem_lite:"筹码博弈 · 经典牌类", dilemma:"博弈论经典 · 闪电快局", undercover:"词语推理 · 国民游戏" };
 const SEATS_DEFAULT = { werewolf_lite:6, othello:2, liars_dice:3, holdem_lite:3, dilemma:2, undercover:6 };
 const PHASES = { bid:"叫价", night:"夜晚", day_discuss:"白天·讨论", day_vote:"白天·投票", move:"对弈", preflop:"翻牌前", flop:"翻牌圈", turn:"转牌圈", river:"河牌圈", playing:"回合对决", describe:"描述轮", vote:"放逐投票", finished:"已结束" };
@@ -707,6 +728,11 @@ function evText(e) {
     case "night_kill_decided": return `【狼队】刀口 → ${d.target != null ? d.target + "号" : "空刀"}（私有事件，仅狼可见）`;
     case "wolf_said": return `【狼队密语】${d.seat}号：${esc(d.text)}（私有事件，仅狼可见）`;
     case "checked": return `【预言家】查验 ${d.target}号：${d.is_wolf ? "狼人" : "好人"}（私有事件，仅预言家可见）`;
+    case "soup_served": return `上汤 · 谜面已公开 · 主持人 ${d.host}号 / 猜题者 ${d.guesser}号`;
+    case "asked": return `${d.seat}号问：${esc(d.text)}`;
+    case "answered": return `　→ ${({yes:"是",no:"否",irrelevant:"无关",close:"接近了"})[d.verdict] ?? esc(String(d.verdict))}`;
+    case "guessed": return `${d.seat}号提交解答：${esc(d.text)}`;
+    case "judged": return d.correct ? `　→ ✔ 说中真相` : `　→ ✘ 并不是`;
     case "timed_out": return `${d.seat}号超时 → 执行默认动作`;
     case "round_resolved": {
       // r34：拍卖行与囚徒困境共用事件名，data 结构不同（bids/winner/price vs choices/payoff）
@@ -727,6 +753,10 @@ function evText(e) {
         return `游戏结束：${d.winner === "civilians" ? "平民阵营" : "卧底"}胜 · 词对「${esc(wp.civilian ?? "?")} / ${esc(wp.undercover ?? "?")}」`;
       }
       if (d.winner === "draw") return `终局平局 · 收益 ${numMap(d.totals ?? d.net)}`;
+      // r35 海龟汤：winner 是席位号，但结果是「谁说中」而非收益
+      if (typeof d.winner === "number" && d.role && d.truth) {
+        return `游戏结束：${d.winner} 号（${d.role === "host" ? "主持人" : "猜题者"}）· ${esc(String(d.reason ?? ""))}`;
+      }
       if (typeof d.winner === "number") return `游戏结束：${d.winner} 号胜 · 收益 ${numMap(d.totals ?? d.net)}`;
       return `游戏结束：${esc(String(d.winner))}`;
     }
@@ -1899,6 +1929,56 @@ function renderAuction(v, box, interactive) {
   }
 }
 
+function renderTurtle(v, box, interactive) {
+  /* r35 海龟汤：谜面台 + 问答对话流。这是唯一一款以「文本对话」为主界面的游戏，
+     所以渲染重点是**流水可读性**，而不是棋盘/牌桌那种空间布局。
+     信息隔离：真相只在主持人 private 里——观众与猜题者都看不到（否则观战即剧透）；
+     终局后 game_won 会公开 truth，那时才在对话流底部展示。 */
+  const p = v.public;
+  const names = seatNames(interactive ? PEVS : MEVS);
+  const trans = p.transcript ?? [];
+  const VERDICT = { yes: "是", no: "否", irrelevant: "无关", close: "接近了" };
+  const myRole = interactive && v.private ? v.private.role : null;
+  const truth = interactive && v.private && typeof v.private.truth === "string" ? v.private.truth : null;
+
+  const lines = trans.map((t) => {
+    if (t.kind === "ask") {
+      return `<div class="ts-line ask"><span class="who">${t.seat}号</span><span class="q">${esc(t.text)}</span></div>`;
+    }
+    if (t.kind === "answer") {
+      return `<div class="ts-line ans ${esc(t.verdict)}"><span class="who">${t.seat}号</span><span class="verdict">${VERDICT[t.verdict] ?? esc(t.verdict)}</span></div>`;
+    }
+    if (t.kind === "guess") {
+      return `<div class="ts-line guess"><span class="who">${t.seat}号</span><span class="q">［猜］${esc(t.text)}</span></div>`;
+    }
+    if (t.kind === "judge") {
+      return `<div class="ts-line judge ${t.correct ? "ok" : "bad"}"><span class="who">裁定</span>${t.correct ? "✔ 说中了真相" : "✘ 并不是"}</div>`;
+    }
+    return "";
+  }).join("");
+
+  const done = v.phase === "finished";
+  const finalTruth = done ? (p.truth ?? null) : null;
+
+  let html = `<div class="ts-stage">
+    <div class="ts-surface">
+      <div class="eyebrow" style="font-size:9px;letter-spacing:.32em;color:var(--dim)">谜 面</div>
+      <div class="ts-text">${esc(p.surface ?? "")}</div>
+      <div class="ts-meta">主持人 ${p.host}号 ${esc(names[p.host] ?? "")} · 猜题者 ${p.guesser}号 ${esc(names[p.guesser] ?? "")} · 提问 ${p.asks_used ?? 0}/${p.max_asks ?? "?"} · 猜测 ${p.guesses_used ?? 0}/${p.max_guesses ?? "?"}</div>
+    </div>
+    <div class="ts-chat">${lines || '<div class="kv" style="color:var(--dim);font-size:12px">猜题者还没有开口——他正在读谜面。</div>'}</div>
+    ${truth ? `<div class="ts-truth">主持人视角 · 真相：<b>${esc(truth)}</b></div>` : ""}
+    ${finalTruth && !truth ? `<div class="ts-truth">真相：<b>${esc(finalTruth)}</b></div>` : ""}
+    ${myRole === "guesser" ? `<div class="kv" style="color:var(--dim);font-size:12px;margin-top:12px">你是猜题者。用「是/否」问题把可能性收窄，再提交解答——猜错也消耗一次。</div>` : ""}
+  </div>`;
+  if (interactive) {
+    box.innerHTML = html + `<div class="act-area"></div>`;
+    renderActions(v, box.querySelector(".act-area"));
+  } else {
+    box.innerHTML = html;
+  }
+}
+
 function renderGame(v, box, interactive) {
   if (v.game === "othello") renderOthello(v, box, interactive);
   else if (v.game === "werewolf_lite") renderWolf(v, box, interactive);
@@ -1906,6 +1986,7 @@ function renderGame(v, box, interactive) {
   else if (v.game === "holdem_lite") renderHoldem(v, box, interactive);
   else if (v.game === "dilemma") renderDilemma(v, box, interactive);
   else if (v.game === "auction") renderAuction(v, box, interactive);
+  else if (v.game === "turtle_soup") renderTurtle(v, box, interactive);
   else renderDice(v, box, interactive);
 }
 
