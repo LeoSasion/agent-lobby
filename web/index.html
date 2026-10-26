@@ -698,6 +698,12 @@ h1 .brand,h1 span.brand{font-size:26px}
 .stack i:first-child{margin-left:0}
 .stack i:nth-child(even){background:#16201c}
 .stack.pot i{background:#241c10;border-color:rgba(217,177,63,.55)}
+
+/* r43 黑白棋最后一手翻转入场 + 狼/卧底席位的形状标记 */
+@keyframes oth-flip{0%{transform:rotateY(85deg);opacity:.25}100%{transform:rotateY(0);opacity:1}}
+.goban .cellc.last .disc{animation:oth-flip .36s cubic-bezier(.2,.7,.3,1)}
+/* 已知狼/卧底：圆点变菱形（尖角），不用文字也能一眼区分 */
+.wseat.wolf-known .dot{border-radius:2px;transform:rotate(45deg)}
 </style>
 </head>
 <body>
@@ -835,7 +841,7 @@ const api = async (p, o) => (await fetch("/api/v1" + p, o)).json();
 const GAME_NAMES = { liars_dice:"吹牛骰", othello:"黑白棋", werewolf_lite:"狼人杀·简化", holdem_lite:"德州扑克·简化", dilemma:"囚徒困境·迭代赛", undercover:"谁是卧底", auction:"拍卖行·密封竞价", turtle_soup:"海龟汤", gomoku:"五子棋", jungle_chess:"斗兽棋", twenty_four:"24 点", blackjack:"21 点", idiom_chain:"成语接龙", feihualing:"飞花令", banqi:"军棋·翻棋" };
 const GAME_DESC = { liars_dice:"欺骗博弈 · 隐藏信息", othello:"完全信息 · 经典棋类", werewolf_lite:"社交推理 · 旗舰", holdem_lite:"筹码博弈 · 经典牌类", dilemma:"博弈论经典 · 闪电快局", undercover:"词语推理 · 国民游戏" };
 const SEATS_DEFAULT = { werewolf_lite:6, othello:2, liars_dice:3, holdem_lite:3, dilemma:2, undercover:6 };
-const PHASES = { bid:"叫价", night:"夜晚", day_discuss:"白天·讨论", day_vote:"白天·投票", move:"对弈", preflop:"翻牌前", flop:"翻牌圈", turn:"转牌圈", river:"河牌圈", playing:"回合对决", describe:"描述轮", vote:"放逐投票", finished:"已结束" };
+const PHASES = { bid:"叫价", bidding:"密封出价", solving:"限时演算", night:"夜晚", day_discuss:"白天·讨论", day_vote:"白天·投票", move:"对弈", preflop:"翻牌前", flop:"翻牌圈", turn:"转牌圈", river:"河牌圈", playing:"回合对决", describe:"描述轮", vote:"放逐投票", finished:"已结束" };
 const phaseName = (p) => PHASES[p] ?? p;
 
 const LB = { game:null, all:{} };
@@ -882,7 +888,11 @@ function evText(e) {
     }
     /* r28：holdem 专属事件此前全落默认分支吐原始 JSON（跨桌聚合的脉搏带尤其刺眼） */
     case "hand_started": return `第 ${d.hand_no} 手开局 · 庄家 ${d.button} 号（盲注 ${d.small_blind}/${d.big_blind}）`;
-    case "cards_dealt": return `${d.seat}号拿到底牌（私有事件，仅本人可见）`;
+    case "cards_dealt":
+      // holdem 的私有底牌带 seat；blackjack 的公开发牌带 round/cards。同名事件按数据结构分流。
+      return typeof d.seat === "number"
+        ? `${d.seat}号拿到底牌（私有事件，仅本人可见）`
+        : `第 ${d.round} 局发牌：${(d.cards ?? []).join(" ")}`;
     case "blind_posted": return `${d.seat}号下${d.blind === "big" ? "大" : "小"}盲 ${d.amount}`;
     case "street_dealt": return `发牌 · ${phaseName(d.street)} → ${(d.cards ?? []).map(cardTxt).join(" ")}`;
     case "showdown": return `摊牌 · ${(d.reveals ?? []).map((r) => `${r.seat}号 ${(r.cards ?? []).map(cardTxt).join(" ")}`).join(" · ")}`;
@@ -904,7 +914,11 @@ function evText(e) {
     case "challenge_resolved": return `开牌！实际 ${d.actual_count} 个 → 叫价${d.bid_was_true ? "成立，" : "不实，"}${d.loser}号输一骰`;
     case "round_started": return `—— 第 ${d.round} 轮 ——`;
     case "player_eliminated": return `${d.seat}号淘汰`;
-    case "placed": return `${d.seat}号落子 ${cellName(d.cell)}（翻 ${d.flipped.length} 子）`;
+    case "placed":
+      // othello 用 cell/flipped；gomoku 用 r/c/n。同名事件按数据结构分流。
+      return typeof d.cell === "number"
+        ? `${d.seat}号落子 ${cellName(d.cell)}（翻 ${d.flipped.length} 子）`
+        : `${d.seat}号落子 ${String.fromCharCode(65 + d.c)}${d.r + 1}${d.color === "black" ? "（黑）" : "（白）"} · 第 ${d.n} 手`;
     case "passed": return `${d.seat}号虚着`;
     case "board_full": return `棋盘下满 ${d.black} : ${d.white}`;
     case "said": return `${d.seat}号：${esc(d.text)}`;
@@ -921,8 +935,6 @@ function evText(e) {
     case "sides_assigned": return `阵营确定 · 实心方 ${d.solid}号（下方先行）/ 空心方 ${d.hollow}号`;
     case "moved": return `${d.seat}号 ${({rat:"鼠",cat:"猫",dog:"狗",wolf:"狼",leopard:"豹",tiger:"虎",lion:"狮",elephant:"象"})[d.kind] ?? d.kind} ${d.from_xy[0]},${d.from_xy[1]} → ${d.to_xy[0]},${d.to_xy[1]}${d.captured ? ` 吃掉${({rat:"鼠",cat:"猫",dog:"狗",wolf:"狼",leopard:"豹",tiger:"虎",lion:"狮",elephant:"象"})[d.captured]}` : ""}`;
     case "color_assigned": return `执子确定 · ${d.black}号执黑先行 / ${d.white}号执白`;
-    case "placed": return `${d.seat}号落子 ${String.fromCharCode(65 + d.c)}${d.r + 1}${d.color === "black" ? "（黑）" : "（白）"} · 第 ${d.n} 手`;
-    case "cards_dealt": return `第 ${d.round} 局发牌：${(d.cards ?? []).join(" ")}`;
     case "hand_dealt": return `第 ${d.round} 局 · 庄家明牌 ${d.dealer_up}`;
     case "hit_drawn": return `${d.seat}号要牌 ${d.card} → ${d.value} 点`;
     case "stood": return `${d.seat}号停牌（${d.value} 点）`;
@@ -1563,10 +1575,11 @@ function renderReport() {
 }
 
 let mSSE = null;
+let mFinalEvents = null;
 
 window.gotoMatch = function (id) {
   if (!id) return;
-  M.id = id; MEVS = []; MSINCE = -1; M.replay = false;
+  M.id = id; MEVS = []; MSINCE = -1; M.replay = false; mFinalEvents = null;
   M.pendLb = true; // r28：本局游戏已知后，把右栏「战绩榜」同步切到该游戏（见 refreshMatchView）
   CM.evs = []; CM.mid = id; renderCommentary(); // r23：解说席随对局重置
   $("#m-id").value = id;
@@ -1605,6 +1618,24 @@ function startSSE() {
   };
 }
 
+/* 终局直达时 view 常比 SSE 首包先返回。先把事件经 HTTP 补齐，再允许关闭 SSE/初始化回放；
+   同一局只补一次，SSE 与 done 回调并发到达时共享同一个 Promise。 */
+function ensureFinalEvents(mid) {
+  if (!mFinalEvents) {
+    mFinalEvents = (async () => {
+      const j = await api(`/matches/${mid}/events?since=${MSINCE}`);
+      if (j.error) throw new Error(j.message || j.error);
+      if (M.id !== mid) return;
+      for (const ev of j.events ?? []) {
+        if (ev.seq > MSINCE) { MEVS.push(ev); MSINCE = ev.seq; pushCommentary(ev, false); }
+      }
+      renderCommentary();
+      if (!M.replay) renderLog($("#m-log"), MEVS);
+    })();
+  }
+  return mFinalEvents;
+}
+
 async function refreshMatchView() {
   if (!M.id) return;
   try {
@@ -1616,6 +1647,9 @@ async function refreshMatchView() {
       $("#m-ttl").textContent = "恢复壳对局（进程重启前在飞）——事件回放与解说可用，实时视图降级";
       $("#m-game").innerHTML = "";
       if (v.phase === "finished") {
+        const mid = M.id;
+        await ensureFinalEvents(mid);
+        if (M.id !== mid) return;
         clearInterval(mtimer);
         if (mSSE) { mSSE.close(); mSSE = null; }
         R = { playing: false, pos: MSINCE, seat: "spectator", timer: null, total: MSINCE };
@@ -1639,12 +1673,22 @@ async function refreshMatchView() {
       if (rm) rm.innerHTML = railHtml();
       renderRailLb();
     }
-    renderGame(v, $("#m-game"), false);
+    try {
+      renderGame(v, $("#m-game"), false);
+    } catch (e) {
+      // 渲染缺陷与网络/对局 404 不是一回事：保留轮询与事件流，给出可诊断的真实堆栈。
+      console.error("renderGame failed", v.game, e);
+      $("#m-ttl").textContent = `${GAME_NAMES[v.game] ?? v.game} — 界面渲染失败，请刷新重试`;
+      return;
+    }
     // r21 修复（r17 遗留竞态，r21 竞猜 fetch 放大暴露）：回放模式下实时刷新只更新舞台，
     // 不覆盖 #m-log 的回放渲染（seek 中/后，SSE 事件与轮询到达曾把日志跳回实时尾）
     if (!M.replay) renderLog($("#m-log"), MEVS);
     refreshGuess(v); // r21：竞猜层随观战视图刷新（3s 轮询 + SSE 双驱动；终局 reveal 同步揭底）
     if (v.phase === "finished") {
+      const mid = M.id;
+      await ensureFinalEvents(mid);
+      if (M.id !== mid) return;
       clearInterval(mtimer);
       if (mSSE) { mSSE.close(); mSSE = null; }
       R = { playing: false, pos: MSINCE, seat: "spectator", timer: null, total: MSINCE };
@@ -2843,7 +2887,7 @@ function renderUndercover(v, box, interactive) {
   }
   if (p.pk_candidates) sayHtml += `<div class="voteline">平票 PK${p.pk_round === 2 ? " 第 2 轮（再平无人出局）" : ""} · 候选 ${(p.pk_candidates ?? []).join("、")} 号</div>`;
   sayHtml += `</div>`;
-  let html = `<div class="wolf-stage ${isNight ? "is-night" : "is-day"}">
+  let html = `<div class="wolf-stage is-day">
     <div class="round-table"><div class="table-disc"></div>${seats}
       <div class="phase-core"><div class="glyph day"><div class="sun"></div></div>
       <div class="ph">${phaseName(v.phase)}</div><div class="dy">第 ${v.round}/${p.max_rounds ?? 3} 轮 · 存活 ${p.alive_seats.length} / ${N}</div></div></div>
@@ -2988,7 +3032,7 @@ showView("lobby");
 /* r34：观战直达链接 ?match=<match_id>（可分享）。不带参数则留在大厅。 */
 {
   const qm = new URLSearchParams(location.search).get("match");
-  if (qm) setTimeout(() => gotoMatch(qm), 900);
+  if (qm) gotoMatch(qm);
 }
 /* r20 测试钩子：E2E 可达（仅测试消费，无业务影响） */
 window.__r20 = { miniStageInner, renderWall, ingestEvent, refreshMinistage, WALL, TK };

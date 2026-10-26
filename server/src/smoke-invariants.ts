@@ -11,6 +11,7 @@
  *   8. House Bot 契约：6 个游戏多 seed 零拒绝零超时（拒绝是静默的，必须拦 submit 回调才看得见）
  *   9. 决策令牌：view.turn 可回传，陈旧提交拒为 STALE_VIEW 且不入账
  *  10. 决策方式记分：acted 的 reasoning 正确累计；持久化导入兼容无该字段的旧数据
+ *  11. 单文件页面：内联脚本必须整体可解析（重复声明等语法错误会让大厅全灭）
  * 运行：node --experimental-strip-types src/smoke-invariants.ts
  */
 
@@ -41,6 +42,7 @@ import { houseBotsFor } from "./bots/registry.ts";
 import { mulberry32 } from "./rng.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readFileSync } from "node:fs";
 
 let failed = 0;
 function check(name: string, ok: boolean, detail = ""): void {
@@ -391,6 +393,67 @@ const legacy = rs10b.record("dilemma", "legacy");
 check("持久化导入兼容旧数据（actions/reasoned 兜底 0）", legacy.actions === 0 && legacy.reasoned === 0, `legacy actions=${legacy.actions} reasoned=${legacy.reasoned}`);
 check("从未行动 rate 为 null（不显示成 0%）", reasoningRate({ rating: 1200, games: 0, wins: 0, draws: 0, losses: 0 }) === null, "");
 check("rate 计算正确", reasoningRate(ra10) === 1, String(reasoningRate(ra10)));
+
+console.log("\n[11] 单文件页面：内联脚本整体可解析");
+const html11 = readFileSync(join(import.meta.dirname, "..", "..", "web", "index.html"), "utf8");
+const scripts11 = [...html11.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)].map((m) => m[1]);
+let syntax11 = "";
+try {
+  for (const source of scripts11) new Function(source);
+} catch (e) {
+  syntax11 = e instanceof Error ? e.message : String(e);
+}
+check("页面至少包含一段业务脚本", scripts11.length > 0, `${scripts11.length} 段`);
+check("全部内联脚本零语法错误", syntax11 === "", syntax11 || `${scripts11.length} 段通过解析`);
+// 语法解析抓不到「未定义变量」。抽出真实卧底渲染器执行一次，锁住 r43 实测发现的 isNight 回归。
+const ucStart11 = html11.indexOf("function renderUndercover");
+const ucEnd11 = html11.indexOf("\nfunction renderWolf", ucStart11);
+let ucRenderError11 = "";
+try {
+  if (ucStart11 < 0 || ucEnd11 < 0) throw new Error("renderUndercover 抽取边界缺失");
+  const makeRenderer = new Function(
+    "seatNames", "revealedRoles", "esc", "phaseName", "MEVS", "renderActions",
+    `${html11.slice(ucStart11, ucEnd11)}; return renderUndercover;`,
+  );
+  const renderUndercover = makeRenderer(() => ({}), () => null, String, String, [], () => {}) as (
+    view: unknown, box: { innerHTML: string }, interactive: boolean,
+  ) => void;
+  const box11 = { innerHTML: "" };
+  renderUndercover({
+    game: "undercover", phase: "describe", round: 1,
+    public: { seats: [1, 2], alive_seats: [1, 2], exiled_log: [], today_describes: [], max_rounds: 3 },
+    private: {},
+  }, box11, false);
+  if (!box11.innerHTML.includes("wolf-stage is-day")) throw new Error("卧底圆桌未使用固定昼相");
+} catch (e) {
+  ucRenderError11 = e instanceof Error ? e.message : String(e);
+}
+check("卧底渲染器可执行且不依赖狼人杀局部变量", ucRenderError11 === "", ucRenderError11 || "真实函数执行通过");
+const evStart11 = html11.indexOf("function evText");
+const evEnd11 = html11.indexOf("\nfunction evClass", evStart11);
+const evSource11 = html11.slice(evStart11, evEnd11);
+const caseLabels11 = [...evSource11.matchAll(/case\s+"([^"]+)"/g)].map((m) => m[1]);
+const duplicateCases11 = [...new Set(caseLabels11.filter((x, i) => caseLabels11.indexOf(x) !== i))];
+check("事件文案 case 不重名（同名事件须在分支内分流）", duplicateCases11.length === 0, duplicateCases11.join(",") || `${caseLabels11.length} 个分支`);
+let evTextError11 = "";
+try {
+  const makeEvText = new Function(
+    "GAME_NAMES", "esc", "phaseName", "ACT_NAME", "HOLDEM_ACT", "cellName", "cardTxt", "numMap",
+    `${evSource11}; return evText;`,
+  );
+  const evText = makeEvText({}, String, String, {}, {}, (c: number) => "ABCDEFGH"[c % 8] + (Math.floor(c / 8) + 1), String, String);
+  const samples = [
+    evText({ type: "cards_dealt", data: { seat: 2 } }),
+    evText({ type: "cards_dealt", data: { round: 2, cards: ["As", "9h"] } }),
+    evText({ type: "placed", data: { seat: 1, cell: 0, flipped: [1] } }),
+    evText({ type: "placed", data: { seat: 1, r: 0, c: 0, n: 1, color: "black" } }),
+  ] as string[];
+  if (samples.some((x) => x.includes("undefined"))) throw new Error(samples.join(" | "));
+  if (!samples[2].includes("A1") || !samples[3].includes("A1")) throw new Error("落子坐标渲染错误");
+} catch (e) {
+  evTextError11 = e instanceof Error ? e.message : String(e);
+}
+check("德州/21 点发牌与黑白棋/五子棋落子文案各自正确", evTextError11 === "", evTextError11 || "4 个同名事件样本通过");
 
 console.log(`\n=== 结果：${failed === 0 ? "全部通过" : failed + " 项失败"} ===`);
 if (failed > 0) process.exitCode = 1;
