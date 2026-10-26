@@ -12,6 +12,7 @@
 import type { Action, LegalAction, SeatId, Viewer } from "../protocol.ts";
 import type { GameEvent, GameModule } from "./types.ts";
 import type { Rng } from "../rng.ts";
+import { rankByValue, winnerScores } from "./shared.ts";
 
 export type Choice = "cooperate" | "betray";
 
@@ -202,11 +203,7 @@ export function createDilemma(config: DilemmaConfig = {}): GameModule<State> {
     },
 
     scores(s) {
-      const out: Record<SeatId, number> = {};
-      for (const t of s.seats) {
-        out[t] = s.winner === null ? 0 : s.winner === "draw" ? 0.5 : t === s.winner ? 1 : 0;
-      }
-      return out;
+      return winnerScores(s.seats, s.winner);
     },
 
     /** 囚徒困境无出局机制：局中所有席位始终存活 */
@@ -216,15 +213,7 @@ export function createDilemma(config: DilemmaConfig = {}): GameModule<State> {
 
     /** r29：终局名次按累计收益降序（同分并列同名次，note 带总分） */
     placements(s) {
-      const rows = s.seats.map((seat) => ({ seat, total: s.totals.get(seat) ?? 0 }));
-      rows.sort((a, b) => b.total - a.total || a.seat - b.seat);
-      let rank = 0;
-      let prev: number | null = null;
-      return rows.map((r, i) => {
-        if (prev === null || r.total !== prev) rank = i + 1;
-        prev = r.total;
-        return { seat: r.seat, rank, note: `total=${r.total}` };
-      });
+      return rankByValue(s.seats, (seat) => s.totals.get(seat) ?? 0, (_seat, v) => "total=" + v);
     },
   };
 

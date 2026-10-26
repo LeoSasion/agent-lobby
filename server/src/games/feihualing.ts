@@ -15,6 +15,7 @@ import type { LegalAction, SeatId, Viewer } from "../protocol.ts";
 import type { GameEvent, GameModule } from "./types.ts";
 import type { Rng } from "../rng.ts";
 import { POEMS, RHYME_CHARS, countAvailable } from "./feihualing-data.ts";
+import { nextAliveAfter } from "./shared.ts";
 
 const POEM_SET = new Set(POEMS);
 
@@ -194,13 +195,7 @@ function advance(s: State, events: GameEvent[], justActed: SeatId): { state: Sta
     });
     return { state: s, events };
   }
-  const i = s.seats.indexOf(justActed);
-  for (let k = 1; k <= s.seats.length; k++) {
-    const t = s.seats[(i + k) % s.seats.length]!;
-    if (!s.eliminated.includes(t)) {
-      s.turnSeat = t;
-      break;
-    }
-  }
+  const nxt = nextAliveAfter(s.seats, s.eliminated, justActed);
+  if (nxt !== null) s.turnSeat = nxt;
   return { state: s, events };
 }

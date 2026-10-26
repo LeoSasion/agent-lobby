@@ -19,6 +19,7 @@
 import type { LegalAction, SeatId, Viewer } from "../protocol.ts";
 import type { GameEvent, GameModule } from "./types.ts";
 import type { Rng } from "../rng.ts";
+import { winnerScores, rankByValue } from "./shared.ts";
 
 export const BJ_DEFAULT_ROUNDS = 5;
 const DEALER_STAND = 17;
@@ -276,9 +277,7 @@ export function createBlackjack(config: { rounds?: number } = {}): GameModule<St
     },
 
     scores(s) {
-      const out: Record<SeatId, number> = {};
-      for (const t of s.seats) out[t] = s.winner === null ? 0 : s.winner === "draw" ? 0.5 : t === s.winner ? 1 : 0;
-      return out;
+      return winnerScores(s.seats, s.winner);
     },
 
     seatAlive() {
@@ -286,15 +285,7 @@ export function createBlackjack(config: { rounds?: number } = {}): GameModule<St
     },
 
     placements(s) {
-      const rows = s.seats.map((seat) => ({ seat, v: s.scores.get(seat) ?? 0 }));
-      rows.sort((a, b) => b.v - a.v || a.seat - b.seat);
-      let rank = 0;
-      let prev: number | null = null;
-      return rows.map((r, i) => {
-        if (prev === null || r.v !== prev) rank = i + 1;
-        prev = r.v;
-        return { seat: r.seat, rank, note: `score=${r.v}` };
-      });
+      return rankByValue(s.seats, (seat) => s.scores.get(seat) ?? 0, (_seat, v) => "score=" + v);
     },
   };
 

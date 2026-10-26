@@ -25,6 +25,7 @@
 import type { LegalAction, SeatId, Viewer } from "../protocol.ts";
 import type { GameEvent, GameModule } from "./types.ts";
 import type { Rng } from "../rng.ts";
+import { winnerScores } from "./shared.ts";
 
 export const BQ_W = 8;
 export const BQ_H = 4;
@@ -71,6 +72,18 @@ export function canCapture(attacker: Piece, defender: Piece): boolean {
   if (attacker.kind === "soldier" && defender.kind === "king") return true;
   if (attacker.kind === "king" && defender.kind === "soldier") return false;
   return RANK_VALUE[attacker.kind] > RANK_VALUE[defender.kind];
+}
+
+/** 该席位是否还有任何动作（翻暗棋 或 走自己的明棋）。导出仅供冒烟直接验证。 */
+export function hasAnyAction(s: State, seat: SeatId): boolean {
+  if (s.board.some((p) => p && !p.faceUp)) return true; // 还有暗棋可翻
+  const side = s.sideOf.get(seat);
+  for (let i = 0; i < s.board.length; i++) {
+    const p = s.board[i];
+    if (!p || !p.faceUp || p.side !== side) continue;
+    if (destinations(s, i).length > 0) return true;
+  }
+  return false;
 }
 
 /** 走法生成：不含翻子 */
@@ -294,7 +307,16 @@ export function createBanqi(): GameModule<State> {
         return { state: s, events };
       }
 
-      s.turn = s.seats.find((t) => t !== seat)!;
+      const nextSeat = s.seats.find((t) => t !== seat)!;
+      // 无子可动判负：没有暗棋可翻、自己的明棋也全被堵死时，对方一动作也没有。
+      // 不补这条的话，超时兜底会因找不到合法动作而非法，对局被当成「游戏模块缺陷」判失败。
+      if (!hasAnyAction(s, nextSeat)) {
+        s.phase = "finished";
+        s.winner = seat;
+        events.push({ type: "game_won", data: { winner: seat, ply: s.ply, reason: "对方无子可动" } });
+        return { state: s, events };
+      }
+      s.turn = nextSeat;
       return { state: s, events };
     },
 
@@ -319,15 +341,17 @@ export function createBanqi(): GameModule<State> {
     },
 
     timeoutAction(s, seat) {
-      // 超时：优先翻一张暗棋（比随便走子更少自毁）；没有暗棋就找第一个合法走子
+      // 优先翻一张暗棋（比随便走子更少自毁）
       for (let i = 0; i < s.board.length; i++) {
         const p = s.board[i];
         if (p && !p.faceUp) return { type: "flip", cell: i };
       }
-      const mine = s.board.findIndex((p) => p && p.faceUp && p.side === s.sideOf.get(seat));
-      if (mine >= 0) {
-        const dest = destinations(s, mine);
-        if (dest.length) return { type: "move", from: mine, to: dest[0]! };
+      // 没有暗棋：遍历**全部**自己的棋子找走法——只看第一个会在它被堵死时返回非法动作
+      for (let i = 0; i < s.board.length; i++) {
+        const p = s.board[i];
+        if (!p || !p.faceUp || p.side !== s.sideOf.get(seat)) continue;
+        const dest = destinations(s, i);
+        if (dest.length) return { type: "move", from: i, to: dest[0]! };
       }
       return { type: "flip", cell: 0 };
     },
@@ -337,9 +361,7 @@ export function createBanqi(): GameModule<State> {
     },
 
     scores(s) {
-      const out: Record<SeatId, number> = {};
-      for (const t of s.seats) out[t] = s.winner === null ? 0 : s.winner === "draw" ? 0.5 : t === s.winner ? 1 : 0;
-      return out;
+      return winnerScores(s.seats, s.winner);
     },
 
     seatAlive() {

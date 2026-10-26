@@ -11,7 +11,7 @@
  */
 
 import { createMatch } from "./arena/lobby.ts";
-import { createBanqi, BQ_W, BQ_H, BQ_MAX_PLY, RANK_VALUE, type Piece } from "./games/banqi.ts";
+import { createBanqi, hasAnyAction, BQ_W, BQ_H, BQ_MAX_PLY, RANK_VALUE, type Piece } from "./games/banqi.ts";
 import { createBanqiBot } from "./bots/banqi-bot.ts";
 import { mulberry32 } from "./rng.ts";
 import type { SeatDriver } from "./arena/match.ts";
@@ -115,10 +115,24 @@ const sCannon2 = mkState({
 });
 check("炮可直走到空格（无遮挡）", g.validate(sCannon2, (g.viewOf(sCannon2, 1, CTX) as unknown as V).public.turn as number, { type: "move", from: idx(0, 0), to: idx(3, 0) }).ok === true);
 
-// —— 场景 5：闸门 ——
-console.log("\n[5] 200 步上限");
+// —— 场景 5：闸门与无子可动 ——
+console.log("\n[5] 200 步上限与无子可动");
 check("上限已定义", BQ_MAX_PLY === 200, String(BQ_MAX_PLY));
 check("视图暴露 max_ply", (v1.public.max_ply as number) === BQ_MAX_PLY, "");
+
+const sB = g.init([1, 2], mulberry32(8));
+const solidB = g.viewOf(sB, 1, CTX) && (g.viewOf(sB, 1, CTX) as unknown as V).public.solid as number;
+const rawB = sB as unknown as { board: (Piece | null)[]; turn: number };
+rawB.board = new Array(BQ_W * BQ_H).fill(null);
+// 全部明棋（无暗棋可翻）+ 实心兵卡在角上、唯一出口被炮堵死 → 一个动作都没有
+rawB.board[idx(0, 0)] = { kind: "soldier", side: "solid", faceUp: true };
+rawB.board[idx(1, 0)] = { kind: "cannon", side: "hollow", faceUp: true };
+check("无暗棋且唯一棋子被堵 → 该席位无动作", hasAnyAction(sB as never, solidB) === false);
+check("有暗棋时一定还有动作（翻子即动作）", (() => {
+  const s2 = g.init([1, 2], mulberry32(8));
+  const sd = (g.viewOf(s2, 1, CTX) as unknown as V).public.solid as number;
+  return hasAnyAction(s2 as never, sd) === true;
+})(), "开局 32 张暗棋");
 
 // —— 场景 6：bot ——
 console.log("\n[6] House bot 零拒绝 + 确定性");

@@ -26,6 +26,7 @@
 import type { LegalAction, SeatId, Viewer } from "../protocol.ts";
 import type { GameEvent, GameModule } from "./types.ts";
 import type { Rng } from "../rng.ts";
+import { winnerScores } from "./shared.ts";
 
 export const JUNGLE_W = 7;
 export const JUNGLE_H = 9;
@@ -79,7 +80,6 @@ const HOLLOW_TRAPS = new Set([idx(2, 0), idx(4, 0), idx(3, 1)]);
 const SOLID_TRAPS = new Set([idx(2, 8), idx(4, 8), idx(3, 7)]);
 
 const denOf = (side: Side): number => (side === "hollow" ? HOLLOW_DEN : SOLID_DEN);
-const trapsOf = (side: Side): Set<number> => (side === "hollow" ? HOLLOW_TRAPS : SOLID_TRAPS);
 
 /** 初始布局：底线 6 子（兽穴居中不占位），次底线 2 子（象与鼠——最特殊的两个放二线） */
 function initialBoard(seats: SeatId[], sideOf: Map<SeatId, Side>): (Piece | null)[] {
@@ -247,7 +247,13 @@ export function createJungleChess(): GameModule<State> {
         return endDraw(s, events, `连续 ${QUIET_PLIES_LIMIT} 手无吃子`);
       }
 
-      s.turn = s.seats.find((t) => t !== seat)!;
+      const nextSeat = s.seats.find((t) => t !== seat)!;
+      // 无子可动判负：棋盘可能被堵死（尤其残局只剩兵），此时对方一动作也没有。
+      // 不补这条的话，超时兜底会因找不到合法动作而非法，对局被当成「游戏模块缺陷」判失败。
+      if (!hasAnyMove(s, nextSeat)) {
+        return finish(s, events, seat, "对方无子可动");
+      }
+      s.turn = nextSeat;
       return { state: s, events };
     },
 
@@ -276,11 +282,16 @@ export function createJungleChess(): GameModule<State> {
     },
 
     timeoutAction(s, seat) {
-      // 兜底：走第一个合法走子（确定性，且保证合法——同五子棋的教训：兜底不能是常量）
-      const mine = s.board.findIndex((p) => p && p.seat === seat);
-      if (mine < 0) return { type: "move", from: 0, to: 0 };
-      const dest = destinations(s, mine, s.board[mine]!);
-      return { type: "move", from: mine, to: dest[0] ?? mine };
+      // 兜底必须是**合法**动作（同五子棋的教训：确定性 ≠ 常量）。
+      // 注意不能只看「第一个自己的棋子」——它可能被堵死（尤其兵在角上），
+      // 那时 dest[0] ?? mine 会返回 from===to，validate 直接拒，对局卡死。
+      for (let i = 0; i < s.board.length; i++) {
+        const p = s.board[i];
+        if (!p || p.seat !== seat) continue;
+        const dest = destinations(s, i, p);
+        if (dest.length) return { type: "move", from: i, to: dest[0]! };
+      }
+      return { type: "move", from: 0, to: 0 };
     },
 
     isTerminal(s) {
@@ -288,9 +299,7 @@ export function createJungleChess(): GameModule<State> {
     },
 
     scores(s) {
-      const out: Record<SeatId, number> = {};
-      for (const t of s.seats) out[t] = s.winner === null ? 0 : s.winner === "draw" ? 0.5 : t === s.winner ? 1 : 0;
-      return out;
+      return winnerScores(s.seats, s.winner);
     },
 
     seatAlive() {
@@ -322,6 +331,16 @@ export function createJungleChess(): GameModule<State> {
   }
 
   return game;
+}
+
+/** 某席位任一棋子是否还有合法动作（用于「无子可动判负」）。导出仅供冒烟直接验证。 */
+export function hasAnyMove(s: State, seat: SeatId): boolean {
+  for (let i = 0; i < s.board.length; i++) {
+    const p = s.board[i];
+    if (!p || p.seat !== seat) continue;
+    if (destinations(s, i, p).length > 0) return true;
+  }
+  return false;
 }
 
 /** 某棋子的全部合法落点（含吃子、跳河、陷阱判定） */

@@ -17,6 +17,7 @@
 import type { LegalAction, SeatId, Viewer } from "../protocol.ts";
 import type { GameEvent, GameModule } from "./types.ts";
 import type { Rng } from "../rng.ts";
+import { winnerScores } from "./shared.ts";
 
 export const BOARD_SIZE = 15;
 export const WIN_LEN = 5;
@@ -219,11 +220,7 @@ export function createGomoku(config: { size?: number } = {}): GameModule<State> 
     },
 
     scores(s) {
-      const out: Record<SeatId, number> = {};
-      for (const t of s.seats) {
-        out[t] = s.winner === null ? 0 : s.winner === "draw" ? 0.5 : t === s.winner ? 1 : 0;
-      }
-      return out;
+      return winnerScores(s.seats, s.winner);
     },
 
     seatAlive() {

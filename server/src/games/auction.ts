@@ -27,6 +27,7 @@
 import type { LegalAction, SeatId, Viewer } from "../protocol.ts";
 import type { GameEvent, GameModule } from "./types.ts";
 import type { Rng } from "../rng.ts";
+import { rankByValue } from "./shared.ts";
 
 /** 每席初始资金 */
 export const START_BALANCE = 100;
@@ -306,15 +307,11 @@ export function createAuction(config: { lots?: number } = {}): GameModule<State>
 
     /** 名次按累计净收益降序（同分并列，note 带净收益与余额） */
     placements(s) {
-      const rows = s.seats.map((seat) => ({ seat, net: s.net.get(seat) ?? 0, bal: s.balance.get(seat) ?? 0 }));
-      rows.sort((a, b) => b.net - a.net || a.seat - b.seat);
-      let rank = 0;
-      let prev: number | null = null;
-      return rows.map((r, i) => {
-        if (prev === null || r.net !== prev) rank = i + 1;
-        prev = r.net;
-        return { seat: r.seat, rank, note: `net=${r.net} · balance=${r.bal}` };
-      });
+      return rankByValue(
+        s.seats,
+        (seat) => s.net.get(seat) ?? 0,
+        (seat, net) => `net=${net} · balance=${s.balance.get(seat) ?? 0}`,
+      );
     },
   };
 

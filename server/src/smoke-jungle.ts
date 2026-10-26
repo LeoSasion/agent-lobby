@@ -15,7 +15,7 @@
 
 import { createMatch } from "./arena/lobby.ts";
 import {
-  createJungleChess, JUNGLE_W, JUNGLE_H, MAX_MOVES, QUIET_PLIES_LIMIT,
+  createJungleChess, hasAnyMove, JUNGLE_W, JUNGLE_H, MAX_MOVES, QUIET_PLIES_LIMIT,
   type Rank, type Side,
 } from "./games/jungle-chess.ts";
 import { createJungleBot } from "./bots/jungle-bot.ts";
@@ -177,8 +177,21 @@ const s8 = g.init([1, 2], mulberry32(9));
 const v8 = g.viewOf(s8, 1, CTX) as unknown as V;
 check("视图暴露 quiet_plies 与上限", typeof v8.public.quiet_plies === "number" && v8.public.max_moves === MAX_MOVES && v8.public.quiet_limit === QUIET_PLIES_LIMIT, "");
 
-// —— 场景 9：bot 全流程 + 确定性 ——
-console.log("\n[9] House bot 零拒绝 + 同 seed 确定性");
+// —— 场景 8.5：无子可动（防御性规则，但必须可验证）——
+console.log("\n[8.5] 无子可动判定");
+const s8b = g.init([1, 2], mulberry32(4));
+const solid8 = (g.viewOf(s8b, 1, CTX) as unknown as V).public.solid as number;
+const hollow8 = (g.viewOf(s8b, 1, CTX) as unknown as V).public.hollow as number;
+raw(s8b).board = new Array(JUNGLE_W * JUNGLE_H).fill(null);
+// 实心兵卡在角上：前方与左侧越界，右侧被高档敌子堵死 → 一步都走不了
+put(s8b, 0, 0, mk("solid", solid8, "rat"));
+put(s8b, 1, 0, mk("hollow", hollow8, "dog")); // 右堵：鼠吃不了狗（鼠只克象）
+put(s8b, 0, 1, mk("hollow", hollow8, "dog")); // 下堵：斗兽棋四方向走一格，不是只能前进
+put(s8b, 6, 8, mk("hollow", hollow8, "cat"));
+check("被堵死的鼠（三面越界一面被堵）：该席位无任何合法动作", hasAnyMove(raw(s8b) as never, solid8) === false);
+check("对手仍有动作", hasAnyMove(raw(s8b) as never, hollow8) === true);
+
+// —— 场景 9：bot 全流程 + 确定性 ——console.log("\n[9] House bot 零拒绝 + 同 seed 确定性");
 let rejects = 0;
 const guarded = (caution: number, tag: string): SeatDriver => {
   const bot = createJungleBot(tag, caution);
