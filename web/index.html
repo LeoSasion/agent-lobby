@@ -679,6 +679,25 @@ h1 .brand,h1 span.brand{font-size:26px}
 .dice-ladder .step.latest i{background:rgba(217,177,63,.4);border-top-color:rgba(217,177,63,.7)}
 .dice-ladder .step .q{position:absolute;bottom:100%;left:0;right:0;text-align:center;font-family:var(--mono);font-size:9px;color:var(--dim);line-height:1.1;margin-bottom:3px}
 .dice-ladder .step .f{position:absolute;top:100%;left:0;right:0;text-align:center;font-family:var(--mono);font-size:9px;color:var(--faint);line-height:1.1;margin-top:3px}
+
+/* r42 狼人杀昼夜过渡：圆桌在夜晚压暗、白天提亮；狼队在夜间保持可见 */
+.wolf-stage .table-disc{transition:background .6s,border-color .6s}
+.wolf-stage.is-night .table-disc{background:radial-gradient(circle,#05080b 0%,#070c10 75%);border-color:#1a2430}
+.wolf-stage.is-day .table-disc{background:radial-gradient(circle,#0d1510 0%,#0a0d0b 75%);border-color:var(--line2)}
+.wolf-stage .wseat .dot{transition:opacity .5s}
+.wolf-stage.is-night .wseat .dot{opacity:.42}
+.wolf-stage.is-day .wseat .dot{opacity:1}
+.wolf-stage.is-night .wseat.wolf-known .dot{opacity:1}
+/* 中心相位符：夜晚给月亮，白天给太阳（沿用原 glyph，只调明暗不发光） */
+.wolf-stage.is-night .phase-core .glyph{opacity:.95}
+.wolf-stage.is-day .phase-core .glyph{opacity:.7}
+
+/* r42 德州筹码堆叠：圆片错位叠放，底池用琥珀色（此前 <i> 无任何样式，根本不可见） */
+.stack{display:inline-flex;align-items:flex-end;vertical-align:-3px;margin-right:6px;height:16px}
+.stack i{display:block;width:13px;height:13px;border-radius:50%;background:#1b2320;border:1px solid #6f8279;margin-left:-5px;box-shadow:0 1px 0 rgba(0,0,0,.35)}
+.stack i:first-child{margin-left:0}
+.stack i:nth-child(even){background:#16201c}
+.stack.pot i{background:#241c10;border-color:rgba(217,177,63,.55)}
 </style>
 </head>
 <body>
@@ -2703,7 +2722,7 @@ function renderHoldem(v, box, interactive) {
   const board = [0, 1, 2, 3, 4].map((i) => cardHTML(p.community[i])).join("");
   let html = `<div class="oval"><div class="felt"></div>${seats}
     <div class="pub-board">${board}</div>
-    <div class="pot"><div class="lab">底池</div><div class="v">${p.total_pot ?? p.pot}<small> / 本街注 ${p.current_bet}</small></div></div></div>` +
+    <div class="pot"><div class="lab">底池</div><div class="v"><span class="stack pot" aria-hidden="true"><i></i><i></i><i></i><i></i></span>${p.total_pot ?? p.pot}<small> / 本街注 ${p.current_bet}</small></div></div></div>` +
     `<div class="kv" style="text-align:center;margin-top:10px;color:var(--dim);font-size:11px">第 ${p.hand_no}/${p.max_hands} 手 · ${phaseName(v.phase)}${v.phase !== "finished" ? ` · 轮到 ${p.to_act}号` : ""} · 盲注 ${p.small_blind}/${p.big_blind}</div>`;
   if (v.private && v.private.hole_cards) html += `<div class="hole"><span class="lab">我的底牌</span><span class="cards">${v.private.hole_cards.map(cardHTML).join("")}</span><span class="kv" style="color:var(--dim)">我 ${v.private.my_chips} 筹${v.private.my_bet ? ` · 已下 ${v.private.my_bet}` : ""}${v.private.eliminated ? " · 已出局" : ""}</span></div>`;
   if (interactive) {
@@ -2824,7 +2843,7 @@ function renderUndercover(v, box, interactive) {
   }
   if (p.pk_candidates) sayHtml += `<div class="voteline">平票 PK${p.pk_round === 2 ? " 第 2 轮（再平无人出局）" : ""} · 候选 ${(p.pk_candidates ?? []).join("、")} 号</div>`;
   sayHtml += `</div>`;
-  let html = `<div class="wolf-stage">
+  let html = `<div class="wolf-stage ${isNight ? "is-night" : "is-day"}">
     <div class="round-table"><div class="table-disc"></div>${seats}
       <div class="phase-core"><div class="glyph day"><div class="sun"></div></div>
       <div class="ph">${phaseName(v.phase)}</div><div class="dy">第 ${v.round}/${p.max_rounds ?? 3} 轮 · 存活 ${p.alive_seats.length} / ${N}</div></div></div>
@@ -2870,7 +2889,7 @@ function renderWolf(v, box, interactive) {
     sayHtml += `<div class="voteline">放逐投票${p.pending_voters ? ` · 待投 ${p.pending_voters.length} 人` : ""}<span class="ticks">${Array.from({ length: total }, (_, i) => `<i class="${i < got ? "on" : ""}"></i>`).join("")}</span></div>`;
   }
   sayHtml += `</div>`;
-  let html = `<div class="wolf-stage">
+  let html = `<div class="wolf-stage ${isNight ? "is-night" : "is-day"}">
     <div class="round-table"><div class="table-disc"></div>${seats}
       <div class="phase-core"><div class="glyph ${isNight ? "night" : "day"}">${isNight ? '<div class="moon"></div>' : '<div class="sun"></div>'}</div>
       <div class="ph">${phaseName(v.phase)}</div><div class="dy">第 ${v.round} 天 · 存活 ${p.alive_seats.length} / ${N}</div></div></div>
