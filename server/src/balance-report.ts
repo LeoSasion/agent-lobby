@@ -15,6 +15,7 @@ import { createDilemma } from "./games/dilemma.ts";
 import { createUndercover } from "./games/undercover.ts";
 import { createAuction } from "./games/auction.ts";
 import { createTurtleSoup } from "./games/turtle-soup.ts";
+import { createGomoku } from "./games/gomoku.ts";
 import { createMatch } from "./arena/lobby.ts";
 import { createRuleBot, createHangingBot } from "./bots/rule-bot.ts";
 import { createOthelloBot } from "./bots/othello-bot.ts";
@@ -24,6 +25,7 @@ import { createDilemmaBot } from "./bots/dilemma-bot.ts";
 import { createUndercoverBot } from "./bots/undercover-bot.ts";
 import { createAuctionBot } from "./bots/auction-bot.ts";
 import { createTurtleBot } from "./bots/turtle-bot.ts";
+import { createGomokuBot } from "./bots/gomoku-bot.ts";
 import type { GameModule } from "./games/types.ts";
 import type { SeatDriver } from "./arena/match.ts";
 import type { MatchEvent } from "./protocol.ts";
@@ -316,6 +318,37 @@ console.log(`  平均提问 ${(soupAsks / TURTLE_GAMES).toFixed(1)} 次 · 平�
 if (soupHostWin + soupGuesserWin < TURTLE_GAMES) console.log(`  ⚠️ ${TURTLE_GAMES - soupHostWin - soupGuesserWin} 局未走到终局`);
 else if (soupHostWin === TURTLE_GAMES) console.log("  ⚠️ 主持人全胜——规则 bot 无法语义推理，属预期；真人对局会显著不同");
 else console.log("  ✓ 流程正确（bot 局主持人偏强属能力上限，非失衡）");
+
+// —— 五子棋：先手（黑）优势与对局长度 ——
+// 判读要点：五子棋黑棋理论上有先手优势（专业规则要靠禁手/交换来平衡）。
+// 我们只做基础规则，所以黑胜率高于 50% 是**预期**；超过 70% 才说明先手碾压，
+// 那时才需要考虑交换开局（swap）之类的平衡机制。
+console.log("\n[五子棋] 2 席 bot 对 bot（20 局）");
+const GOMOKU_GAMES = 20;
+const gomokuEvents = await runBatch("总计", createGomoku(), () =>
+  [createGomokuBot("沉稳", 0.7), createGomokuBot("进攻", 1.0)],
+  GOMOKU_GAMES,
+);
+let gmBlack = 0;
+let gmWhite = 0;
+let gmDraw = 0;
+let gmMoves = 0;
+for (const { events: evs } of gomokuEvents) {
+  const won = evs.find((e) => e.type === "game_won");
+  if (!won) continue;
+  const d = won.data as { winner?: unknown; color?: string; moves?: number };
+  if (d.winner === "draw") gmDraw++;
+  else if (d.color === "black") gmBlack++;
+  else if (d.color === "white") gmWhite++;
+  gmMoves += d.moves ?? 0;
+}
+const gmTotal = gmBlack + gmWhite + gmDraw;
+console.log(`  黑胜 ${gmBlack} · 白胜 ${gmWhite} · 平 ${gmDraw}`);
+console.log(`  黑胜率: ${pct(gmBlack, gmTotal)}（基础规则下 >50% 属预期）· 平均 ${(gmMoves / Math.max(1, gmTotal)).toFixed(1)} 手`);
+const gmBlackRate = gmTotal > 0 ? gmBlack / gmTotal : 0;
+if (gmBlackRate > 0.7) console.log("  ⚠️ 黑棋碾压（>70%）——需要交换开局等平衡机制");
+else if (gmTotal < GOMOKU_GAMES) console.log(`  ⚠️ ${GOMOKU_GAMES - gmTotal} 局未走到终局`);
+else console.log("  ✓ 先手优势在可接受范围");
 
 // —— 框架不变量抽检 ——
 console.log("\n[框架不变量抽检] 全超时 + 确定性");

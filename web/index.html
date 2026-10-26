@@ -361,6 +361,19 @@ select,textarea,input[type=number],input:not([type]){background:#10150f;color:va
 .goban .coord{display:grid;place-items:center;color:var(--dim);font-size:9.5px}
 .goban .cellc{border:1px solid var(--line);margin:-.5px;position:relative;background:#0c110e}
 .goban .cellc.legal{border:1px dashed var(--grn);cursor:pointer}
+/* r36 五子棋：15×15 密棋盘（不显示坐标——格子太密会让坐标读数比棋盘还抢眼） */
+.gmk{display:grid;grid-template-columns:repeat(15,1fr);width:min(88%,480px);aspect-ratio:1;margin:10px auto;border:1px solid var(--line2,#26302b);background:#0c110e}
+.gmk .gc{position:relative;display:grid;place-items:center;border-right:1px solid rgba(255,255,255,.055);border-bottom:1px solid rgba(255,255,255,.055)}
+.gmk .gc.legal{cursor:pointer}
+.gmk .gc.legal:hover::after{content:"";width:40%;height:40%;border-radius:50%;background:rgba(69,217,142,.22)}
+.gmk .gc .stone{width:80%;height:80%;border-radius:50%;z-index:1}
+.gmk .gc .stone.b{background:#141a17;border:1px solid #46534c}
+.gmk .gc .stone.w{background:#e2ece6;border:1px solid #b9c8bf}
+.gmk .gc.last::before{content:"";position:absolute;width:18%;height:18%;border-radius:50%;background:var(--amb);z-index:2}
+.gmk .gc.win .stone{box-shadow:0 0 0 2px var(--amb)}
+.gmk-side{display:flex;gap:18px;justify-content:center;font-size:12px;color:var(--dim);margin-top:10px}
+.gmk-side b{color:#dfe9e2}
+.gmk-side .cur{color:var(--grn)}
 .goban .cellc.legal:hover{background:#1c2a20}
 .goban .disc{position:absolute;inset:15%;border-radius:50%}
 .goban .disc.b{background:radial-gradient(circle at 38% 32%,#3a4741,#121815 70%);border:1px solid #2a3830}
@@ -642,7 +655,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<
 const api = async (p, o) => (await fetch("/api/v1" + p, o)).json();
 // r30：内置兜底名——GAME_NAMES 由 /games 响应覆盖，但首屏/离线/接口慢时事件文案会裸吐
 // werewolf_lite 这类 id（解说与公报在 fetch 未回前就已渲染）。静态种子保证任何时刻都有人话。
-const GAME_NAMES = { liars_dice:"吹牛骰", othello:"黑白棋", werewolf_lite:"狼人杀·简化", holdem_lite:"德州扑克·简化", dilemma:"囚徒困境·迭代赛", undercover:"谁是卧底", auction:"拍卖行·密封竞价", turtle_soup:"海龟汤" };
+const GAME_NAMES = { liars_dice:"吹牛骰", othello:"黑白棋", werewolf_lite:"狼人杀·简化", holdem_lite:"德州扑克·简化", dilemma:"囚徒困境·迭代赛", undercover:"谁是卧底", auction:"拍卖行·密封竞价", turtle_soup:"海龟汤", gomoku:"五子棋" };
 const GAME_DESC = { liars_dice:"欺骗博弈 · 隐藏信息", othello:"完全信息 · 经典棋类", werewolf_lite:"社交推理 · 旗舰", holdem_lite:"筹码博弈 · 经典牌类", dilemma:"博弈论经典 · 闪电快局", undercover:"词语推理 · 国民游戏" };
 const SEATS_DEFAULT = { werewolf_lite:6, othello:2, liars_dice:3, holdem_lite:3, dilemma:2, undercover:6 };
 const PHASES = { bid:"叫价", night:"夜晚", day_discuss:"白天·讨论", day_vote:"白天·投票", move:"对弈", preflop:"翻牌前", flop:"翻牌圈", turn:"转牌圈", river:"河牌圈", playing:"回合对决", describe:"描述轮", vote:"放逐投票", finished:"已结束" };
@@ -728,6 +741,8 @@ function evText(e) {
     case "night_kill_decided": return `【狼队】刀口 → ${d.target != null ? d.target + "号" : "空刀"}（私有事件，仅狼可见）`;
     case "wolf_said": return `【狼队密语】${d.seat}号：${esc(d.text)}（私有事件，仅狼可见）`;
     case "checked": return `【预言家】查验 ${d.target}号：${d.is_wolf ? "狼人" : "好人"}（私有事件，仅预言家可见）`;
+    case "color_assigned": return `执子确定 · ${d.black}号执黑先行 / ${d.white}号执白`;
+    case "placed": return `${d.seat}号落子 ${String.fromCharCode(65 + d.c)}${d.r + 1}${d.color === "black" ? "（黑）" : "（白）"} · 第 ${d.n} 手`;
     case "soup_served": return `上汤 · 谜面已公开 · 主持人 ${d.host}号 / 猜题者 ${d.guesser}号`;
     case "asked": return `${d.seat}号问：${esc(d.text)}`;
     case "answered": return `　→ ${({yes:"是",no:"否",irrelevant:"无关",close:"接近了"})[d.verdict] ?? esc(String(d.verdict))}`;
@@ -754,6 +769,7 @@ function evText(e) {
       }
       if (d.winner === "draw") return `终局平局 · 收益 ${numMap(d.totals ?? d.net)}`;
       // r35 海龟汤：winner 是席位号，但结果是「谁说中」而非收益
+      if (typeof d.winner === "number" && d.color) return `游戏结束：${d.winner} 号（${d.color === "black" ? "黑" : "白"}）连成五子 · ${d.moves} 手`;
       if (typeof d.winner === "number" && d.role && d.truth) {
         return `游戏结束：${d.winner} 号（${d.role === "host" ? "主持人" : "猜题者"}）· ${esc(String(d.reason ?? ""))}`;
       }
@@ -1979,6 +1995,56 @@ function renderTurtle(v, box, interactive) {
   }
 }
 
+function renderGomoku(v, box, interactive) {
+  /* r36 五子棋：15×15 密棋盘。与黑白棋的两处差异：
+     ① 不显示坐标——15×15 的坐标读数会比棋盘本身更抢眼；
+     ② 法表不枚举落点（224 个空点），所以不能靠 legal_actions.values 高亮，
+        改为「空点即可下」+ 悬停预览，靠 validate 兜底。 */
+  const p = v.public;
+  const size = p.size ?? 15;
+  const board = p.board ?? [];
+  const winSet = new Set(p.win_line ?? []);
+  const last = p.last_move;
+  const myTurn = interactive && v.you && v.you.active;
+  const me = interactive && v.you ? v.you.seat : null;
+  const myColor = me !== null && me === p.black ? "b" : me !== null ? "w" : null;
+
+  let cells = "";
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      const i = r * size + c;
+      const cell = board[i];
+      const isLast = last && last.r === r && last.c === c;
+      const isWin = winSet.has(i);
+      const canPlay = myTurn && (cell === null || cell === undefined);
+      cells += `<div class="gc ${canPlay ? "legal" : ""} ${isLast ? "last" : ""} ${isWin ? "win" : ""}"${canPlay ? ` onclick="act({type:'place',r:${r},c:${c}})"` : ""}>${
+        typeof cell === "number" ? `<span class="stone ${cell === p.black ? "b" : "w"}"></span>` : ""
+      }</div>`;
+    }
+  }
+
+  const over = v.phase === "finished";
+  const resultText = over
+    ? p.win_line && p.win_line.length
+      ? `${p.win_line.includes(last ? last.r * size + last.c : -1) ? "最后一手成五" : "连成五子"}`
+      : "棋盘下满，和棋"
+    : "";
+
+  let html = `<div class="gmk">${cells}</div>
+    <div class="gmk-side">
+      <span class="${!over && p.turn === p.black ? "cur" : ""}"><span class="stone b" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#141a17;border:1px solid #46534c;vertical-align:-1px"></span> 黑 ${p.black}号${myColor === "b" ? " · 我" : ""}</span>
+      <span class="${!over && p.turn === p.white ? "cur" : ""}"><span class="stone w" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#e2ece6;vertical-align:-1px"></span> 白 ${p.white}号${myColor === "w" ? " · 我" : ""}</span>
+      <span>第 <b>${(p.moves ?? []).length}</b> 手</span>
+      ${over ? `<span style="color:var(--grn)">${resultText}</span>` : ""}
+    </div>`;
+  if (interactive) {
+    box.innerHTML = html + `<div class="act-area" style="text-align:center"></div>`;
+    renderActions(v, box.querySelector(".act-area"));
+  } else {
+    box.innerHTML = html;
+  }
+}
+
 function renderGame(v, box, interactive) {
   if (v.game === "othello") renderOthello(v, box, interactive);
   else if (v.game === "werewolf_lite") renderWolf(v, box, interactive);
@@ -1987,6 +2053,7 @@ function renderGame(v, box, interactive) {
   else if (v.game === "dilemma") renderDilemma(v, box, interactive);
   else if (v.game === "auction") renderAuction(v, box, interactive);
   else if (v.game === "turtle_soup") renderTurtle(v, box, interactive);
+  else if (v.game === "gomoku") renderGomoku(v, box, interactive);
   else renderDice(v, box, interactive);
 }
 
