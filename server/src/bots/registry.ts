@@ -12,6 +12,7 @@ import { createUndercoverBot } from "./undercover-bot.ts";
 import { createAuctionBot } from "./auction-bot.ts";
 import { createTurtleBot } from "./turtle-bot.ts";
 import { createGomokuBot } from "./gomoku-bot.ts";
+import { createJungleBot } from "./jungle-bot.ts";
 import type { SeatDriver } from "../arena/match.ts";
 
 export interface HouseBot {
@@ -34,6 +35,8 @@ const AUCTION_RATIOS = [0.5, 0.75, 0.92, 1.0, 0.65, 0.85];
 const TURTLE_NAMES = ["冷静", "好奇", "固执", "跳脱", "细致", "急躁"];
 const GOMOKU_NAMES = ["沉稳", "进攻", "均衡"];
 const GOMOKU_AGGRESSION = [0.7, 1.0, 0.9];
+const JUNGLE_NAMES = ["稳健", "凶狠", "保守"];
+const JUNGLE_CAUTION = [1.0, 0.6, 1.4];
 
 export function houseBotsFor(gameId: string, count: number): HouseBot[] {
   const out: HouseBot[] = [];
@@ -55,6 +58,9 @@ export function houseBotsFor(gameId: string, count: number): HouseBot[] {
     } else if (gameId === "undercover") {
       const name = `house-uc-${i + 1}·直觉${i + 1}`;
       out.push({ driver: createUndercoverBot(name, i), agent: `house:undercover:${i + 1}`, name });
+    } else if (gameId === "jungle_chess") {
+      const name = `house-jungle-${i + 1}·${JUNGLE_NAMES[i % 3]}`;
+      out.push({ driver: createJungleBot(name, JUNGLE_CAUTION[i % 3]), agent: `house:jungle_chess:${i + 1}`, name });
     } else if (gameId === "gomoku") {
       const name = `house-gomoku-${i + 1}·${GOMOKU_NAMES[i % 3]}`;
       out.push({ driver: createGomokuBot(name, GOMOKU_AGGRESSION[i % 3]), agent: `house:gomoku:${i + 1}`, name });

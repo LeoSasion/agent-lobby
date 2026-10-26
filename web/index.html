@@ -374,6 +374,21 @@ select,textarea,input[type=number],input:not([type]){background:#10150f;color:va
 .gmk-side{display:flex;gap:18px;justify-content:center;font-size:12px;color:var(--dim);margin-top:10px}
 .gmk-side b{color:#dfe9e2}
 .gmk-side .cur{color:var(--grn)}
+/* r37 斗兽棋：7×9 棋盘 + 河流/陷阱/兽穴三类地形（唯一点两步交互的棋类：先选子再选目标） */
+.jgc{display:grid;grid-template-columns:repeat(7,1fr);width:min(84%,400px);aspect-ratio:7/9;margin:10px auto;border:1px solid #26302b;background:#0c110e}
+.jgc .jc{position:relative;display:grid;place-items:center;border-right:1px solid rgba(255,255,255,.05);border-bottom:1px solid rgba(255,255,255,.05)}
+.jgc .jc.river{background:rgba(58,118,180,.13)}
+.jgc .jc.trap::after{content:"阱";position:absolute;bottom:1px;right:2px;font-size:8px;color:rgba(217,177,63,.5)}
+.jgc .jc.den::after{content:"穴";position:absolute;inset:0;display:grid;place-items:center;font-family:var(--serif);font-size:13px;color:rgba(217,177,63,.55)}
+.jgc .jc.sel{box-shadow:inset 0 0 0 2px var(--grn)}
+.jgc .jc.dest{cursor:pointer;box-shadow:inset 0 0 0 2px rgba(69,217,142,.5)}
+.jgc .jc.dest::before{content:"";width:26%;height:26%;border-radius:50%;background:rgba(69,217,142,.3);position:absolute}
+.jgc .jp{width:74%;height:74%;border-radius:50%;display:grid;place-items:center;font-family:var(--serif);font-size:12px;z-index:1}
+.jgc .jp.red{background:#31191a;color:#e8b0b0;border:1px solid #8a4646}
+.jgc .jp.blue{background:#16222c;color:#a6c2db;border:1px solid #456a8a}
+.jgc .jp.mine{box-shadow:0 0 0 1.5px rgba(69,217,142,.55)}
+.jgc-side{display:flex;gap:16px;justify-content:center;font-size:12px;color:var(--dim);margin-top:8px;flex-wrap:wrap}
+.jgc-side b{color:#dfe9e2}
 .goban .cellc.legal:hover{background:#1c2a20}
 .goban .disc{position:absolute;inset:15%;border-radius:50%}
 .goban .disc.b{background:radial-gradient(circle at 38% 32%,#3a4741,#121815 70%);border:1px solid #2a3830}
@@ -655,7 +670,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<
 const api = async (p, o) => (await fetch("/api/v1" + p, o)).json();
 // r30：内置兜底名——GAME_NAMES 由 /games 响应覆盖，但首屏/离线/接口慢时事件文案会裸吐
 // werewolf_lite 这类 id（解说与公报在 fetch 未回前就已渲染）。静态种子保证任何时刻都有人话。
-const GAME_NAMES = { liars_dice:"吹牛骰", othello:"黑白棋", werewolf_lite:"狼人杀·简化", holdem_lite:"德州扑克·简化", dilemma:"囚徒困境·迭代赛", undercover:"谁是卧底", auction:"拍卖行·密封竞价", turtle_soup:"海龟汤", gomoku:"五子棋" };
+const GAME_NAMES = { liars_dice:"吹牛骰", othello:"黑白棋", werewolf_lite:"狼人杀·简化", holdem_lite:"德州扑克·简化", dilemma:"囚徒困境·迭代赛", undercover:"谁是卧底", auction:"拍卖行·密封竞价", turtle_soup:"海龟汤", gomoku:"五子棋", jungle_chess:"斗兽棋" };
 const GAME_DESC = { liars_dice:"欺骗博弈 · 隐藏信息", othello:"完全信息 · 经典棋类", werewolf_lite:"社交推理 · 旗舰", holdem_lite:"筹码博弈 · 经典牌类", dilemma:"博弈论经典 · 闪电快局", undercover:"词语推理 · 国民游戏" };
 const SEATS_DEFAULT = { werewolf_lite:6, othello:2, liars_dice:3, holdem_lite:3, dilemma:2, undercover:6 };
 const PHASES = { bid:"叫价", night:"夜晚", day_discuss:"白天·讨论", day_vote:"白天·投票", move:"对弈", preflop:"翻牌前", flop:"翻牌圈", turn:"转牌圈", river:"河牌圈", playing:"回合对决", describe:"描述轮", vote:"放逐投票", finished:"已结束" };
@@ -741,6 +756,8 @@ function evText(e) {
     case "night_kill_decided": return `【狼队】刀口 → ${d.target != null ? d.target + "号" : "空刀"}（私有事件，仅狼可见）`;
     case "wolf_said": return `【狼队密语】${d.seat}号：${esc(d.text)}（私有事件，仅狼可见）`;
     case "checked": return `【预言家】查验 ${d.target}号：${d.is_wolf ? "狼人" : "好人"}（私有事件，仅预言家可见）`;
+    case "sides_assigned": return `阵营确定 · 红方 ${d.red}号（下方先行）/ 蓝方 ${d.blue}号`;
+    case "moved": return `${d.seat}号 ${({rat:"鼠",cat:"猫",dog:"狗",wolf:"狼",leopard:"豹",tiger:"虎",lion:"狮",elephant:"象"})[d.kind] ?? d.kind} ${d.from_xy[0]},${d.from_xy[1]} → ${d.to_xy[0]},${d.to_xy[1]}${d.captured ? ` 吃掉${({rat:"鼠",cat:"猫",dog:"狗",wolf:"狼",leopard:"豹",tiger:"虎",lion:"狮",elephant:"象"})[d.captured]}` : ""}`;
     case "color_assigned": return `执子确定 · ${d.black}号执黑先行 / ${d.white}号执白`;
     case "placed": return `${d.seat}号落子 ${String.fromCharCode(65 + d.c)}${d.r + 1}${d.color === "black" ? "（黑）" : "（白）"} · 第 ${d.n} 手`;
     case "soup_served": return `上汤 · 谜面已公开 · 主持人 ${d.host}号 / 猜题者 ${d.guesser}号`;
@@ -769,6 +786,7 @@ function evText(e) {
       }
       if (d.winner === "draw") return `终局平局 · 收益 ${numMap(d.totals ?? d.net)}`;
       // r35 海龟汤：winner 是席位号，但结果是「谁说中」而非收益
+      if (typeof d.winner === "number" && d.side && !d.color) return `游戏结束：${d.winner} 号（${d.side === "red" ? "红" : "蓝"}方）· ${esc(String(d.reason ?? ""))}`;
       if (typeof d.winner === "number" && d.color) return `游戏结束：${d.winner} 号（${d.color === "black" ? "黑" : "白"}）连成五子 · ${d.moves} 手`;
       if (typeof d.winner === "number" && d.role && d.truth) {
         return `游戏结束：${d.winner} 号（${d.role === "host" ? "主持人" : "猜题者"}）· ${esc(String(d.reason ?? ""))}`;
@@ -2045,6 +2063,80 @@ function renderGomoku(v, box, interactive) {
   }
 }
 
+/* r37 斗兽棋：唯一需要「先选子、再选目标」的棋类——点一下就把子扔出去不适合 7×9 的走子空间 */
+let JG_SEL = null;
+window.jgPick = function (from) {
+  JG_SEL = JG_SEL === from ? null : from;
+  if (window.__JG_RERENDER) window.__JG_RERENDER();
+};
+window.jgMove = function (to) {
+  if (JG_SEL === null) return;
+  const from = JG_SEL;
+  JG_SEL = null;
+  act({ type: "move", from, to });
+};
+
+const RANK_CN = { rat: "鼠", cat: "猫", dog: "狗", wolf: "狼", leopard: "豹", tiger: "虎", lion: "狮", elephant: "象" };
+
+function renderJungle(v, box, interactive) {
+  const p = v.public;
+  const w = p.width ?? 7;
+  const h = p.height ?? 9;
+  const board = p.board ?? [];
+  const rivers = p.rivers ?? [];
+  const traps = new Set([...(p.traps?.blue ?? []), ...(p.traps?.red ?? [])]);
+  const dens = new Set([p.dens?.blue, p.dens?.red].filter((x) => typeof x === "number"));
+  const mySide = interactive && v.private ? v.private.my_side : null;
+  const myTurn = interactive && v.you && v.you.active;
+
+  // 合法走子来自法表（引擎已算好卡点：吃子/跳河/陷阱/兽穴），前端只做展示与选择
+  let dests = new Set();
+  if (myTurn && JG_SEL !== null) {
+    const schema = (v.legal_actions ?? []).find((a) => a.type === "move")?.schema;
+    const vals = Array.isArray(schema?.values) ? schema.values : [];
+    dests = new Set(vals.filter((enc) => Math.floor(enc / 100) === JG_SEL).map((enc) => enc % 100));
+  }
+
+  let cells = "";
+  for (let i = 0; i < w * h; i++) {
+    const piece = board[i];
+    const cls = [
+      "jc",
+      rivers[i] ? "river" : "",
+      traps.has(i) ? "trap" : "",
+      dens.has(i) ? "den" : "",
+      i === JG_SEL ? "sel" : "",
+      dests.has(i) ? "dest" : "",
+    ].filter(Boolean).join(" ");
+    const clickable = myTurn && ((piece && piece.seat === v.you?.seat) || dests.has(i));
+    const handler = clickable
+      ? dests.has(i) ? ` onclick="jgMove(${i})"` : ` onclick="jgPick(${i})"`
+      : "";
+    const stone = piece
+      ? `<span class="jp ${piece.side} ${piece.seat === v.you?.seat ? "mine" : ""}">${RANK_CN[piece.kind] ?? "?"}</span>`
+      : "";
+    cells += `<div class="${cls}"${handler}>${stone}</div>`;
+  }
+
+  const sideName = (s) => (s === "red" ? "红" : "蓝");
+  let html = `<div class="jgc">${cells}</div>
+    <div class="jgc-side">
+      <span>红 <b>${p.red}号</b>${mySide === "red" ? " · 我" : ""}</span>
+      <span>蓝 <b>${p.blue}号</b>${mySide === "blue" ? " · 我" : ""}</span>
+      <span>第 <b>${(p.moves ?? []).length}</b> 手</span>
+      <span>${v.phase === "finished" ? `<b style="color:var(--grn)">终局</b>` : p.turn === p.red ? "红方行棋" : "蓝方行棋"}</span>
+      ${typeof p.quiet_plies === "number" ? `<span>僵局计数 ${p.quiet_plies}/${p.quiet_limit}</span>` : ""}
+    </div>
+    ${myTurn && mySide ? `<div class="kv" style="text-align:center;color:var(--dim);font-size:11px;margin-top:6px">点自己的棋子选中，再点高亮的格子落子——${sideName(mySide)}方走</div>` : ""}`;
+  if (interactive) {
+    box.innerHTML = html + `<div class="act-area" style="text-align:center"></div>`;
+    window.__JG_RERENDER = () => renderJungle(v, box, interactive);
+    renderActions(v, box.querySelector(".act-area"));
+  } else {
+    box.innerHTML = html;
+  }
+}
+
 function renderGame(v, box, interactive) {
   if (v.game === "othello") renderOthello(v, box, interactive);
   else if (v.game === "werewolf_lite") renderWolf(v, box, interactive);
@@ -2054,6 +2146,7 @@ function renderGame(v, box, interactive) {
   else if (v.game === "auction") renderAuction(v, box, interactive);
   else if (v.game === "turtle_soup") renderTurtle(v, box, interactive);
   else if (v.game === "gomoku") renderGomoku(v, box, interactive);
+  else if (v.game === "jungle_chess") renderJungle(v, box, interactive);
   else renderDice(v, box, interactive);
 }
 

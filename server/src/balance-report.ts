@@ -16,6 +16,7 @@ import { createUndercover } from "./games/undercover.ts";
 import { createAuction } from "./games/auction.ts";
 import { createTurtleSoup } from "./games/turtle-soup.ts";
 import { createGomoku } from "./games/gomoku.ts";
+import { createJungleChess } from "./games/jungle-chess.ts";
 import { createMatch } from "./arena/lobby.ts";
 import { createRuleBot, createHangingBot } from "./bots/rule-bot.ts";
 import { createOthelloBot } from "./bots/othello-bot.ts";
@@ -26,6 +27,7 @@ import { createUndercoverBot } from "./bots/undercover-bot.ts";
 import { createAuctionBot } from "./bots/auction-bot.ts";
 import { createTurtleBot } from "./bots/turtle-bot.ts";
 import { createGomokuBot } from "./bots/gomoku-bot.ts";
+import { createJungleBot } from "./bots/jungle-bot.ts";
 import type { GameModule } from "./games/types.ts";
 import type { SeatDriver } from "./arena/match.ts";
 import type { MatchEvent } from "./protocol.ts";
@@ -349,6 +351,35 @@ const gmBlackRate = gmTotal > 0 ? gmBlack / gmTotal : 0;
 if (gmBlackRate > 0.7) console.log("  ⚠️ 黑棋碾压（>70%）——需要交换开局等平衡机制");
 else if (gmTotal < GOMOKU_GAMES) console.log(`  ⚠️ ${GOMOKU_GAMES - gmTotal} 局未走到终局`);
 else console.log("  ✓ 先手优势在可接受范围");
+
+// —— 斗兽棋：和棋率与僵局 ——
+// 判读要点：**规则 bot 在斗兽棋里极易僵持**——双方都怕交换，又都不肯让出中央通道，
+// 于是象鼠顶牛直到「80 手无吃子」判和。这不是引擎问题（规则与闸门都已测过），
+// 是 bot 没有「绕道/弃子抢先」这类计划性思维。真人或 LLM 对局会和棋率低得多。
+console.log("\n[斗兽棋] 2 席 bot 对 bot（20 局）");
+const JUNGLE_GAMES = 20;
+const jungleEvents = await runBatch("总计", createJungleChess(), () =>
+  [createJungleBot("稳健", 1.0), createJungleBot("凶狠", 0.6)],
+  JUNGLE_GAMES,
+);
+let jgRed = 0;
+let jgBlue = 0;
+let jgDraw = 0;
+let jgMoves = 0;
+for (const { events: evs } of jungleEvents) {
+  const won = evs.find((e) => e.type === "game_won");
+  if (!won) continue;
+  const d = won.data as { winner?: unknown; side?: string; moves?: number };
+  if (d.winner === "draw") jgDraw++;
+  else if (d.side === "red") jgRed++;
+  else if (d.side === "blue") jgBlue++;
+  jgMoves += d.moves ?? 0;
+}
+const jgTotal = jgRed + jgBlue + jgDraw;
+console.log(`  红胜 ${jgRed} · 蓝胜 ${jgBlue} · 和棋 ${jgDraw}`);
+console.log(`  和棋率 ${pct(jgDraw, jgTotal)} · 平均 ${(jgMoves / Math.max(1, jgTotal)).toFixed(1)} 手 · 红方先手胜率 ${pct(jgRed, jgTotal)}`);
+if (jgDraw === jgTotal && jgTotal > 0) console.log("  ⚠️ 全部和棋——规则 bot 只会顶牛不会绕道，属能力上限；真人对局不会这样");
+else if (jgTotal < JUNGLE_GAMES) console.log(`  ⚠️ ${JUNGLE_GAMES - jgTotal} 局未走到终局`);
 
 // —— 框架不变量抽检 ——
 console.log("\n[框架不变量抽检] 全超时 + 确定性");

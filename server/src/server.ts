@@ -10,6 +10,7 @@ import { createUndercover } from "./games/undercover.ts";
 import { createAuction } from "./games/auction.ts";
 import { createTurtleSoup } from "./games/turtle-soup.ts";
 import { createGomoku } from "./games/gomoku.ts";
+import { createJungleChess } from "./games/jungle-chess.ts";
 
 const port = Number(process.env.PORT ?? 8787);
 const gw = new Gateway();
@@ -22,6 +23,7 @@ gw.registerGame(createUndercover());
 gw.registerGame(createAuction());
 gw.registerGame(createTurtleSoup());
 gw.registerGame(createGomoku());
+gw.registerGame(createJungleChess());
 gw.listen(port, () => {
   const base = `http://localhost:${port}`;
   console.log("Agent 游戏大厅 · arena/v0 网关已启动");
