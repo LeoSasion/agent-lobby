@@ -556,8 +556,10 @@ textarea{width:100%;min-height:44px;resize:vertical}
   .side{border-top:1px solid var(--line);padding-top:clamp(18px,2.4cqi,30px);display:grid;grid-template-columns:1fr 1fr;column-gap:clamp(24px,3cqi,64px)}
 }
 @container (max-width:859px){
-  .layout{grid-template-areas:"rail" "main" "side";grid-template-columns:minmax(0,1fr)}
-  .rail{border-bottom:1px solid var(--line);padding-bottom:16px}
+  /* 窄屏先给核心任务：直播/棋盘 → 解说与事件 → 战绩与赛区。 */
+  .layout{grid-template-areas:"main" "side" "rail";grid-template-columns:minmax(0,1fr)}
+  .layout>.colrule-l,.layout>.colrule-r{border-left:0;border-right:0;padding-left:0;padding-right:0}
+  .rail{border-bottom:0;border-top:1px solid var(--line);padding-top:16px}
   .side{grid-template-columns:minmax(0,1fr)}
   .thint{display:none}
   .wall{grid-template-columns:minmax(0,1fr)}
@@ -565,10 +567,33 @@ textarea{width:100%;min-height:44px;resize:vertical}
 }
 @container (max-width:699px){
   .hints,.meta{display:none}
+  .eyebrow{letter-spacing:.38em}
+  .nav{gap:2px 18px}
+  .nav span{min-height:44px;display:inline-flex;align-items:center;padding:6px 4px 6px 12px}
+  .mini,.gz-btn{min-height:44px;display:inline-flex;align-items:center;justify-content:center}
+  .gtabs span{min-height:40px;display:inline-flex;align-items:center}
+  .znav div{min-height:40px;display:flex;align-items:center}
+  .ghead{gap:10px;flex-wrap:wrap}
+  .ghead-idx{font-size:32px;min-width:44px}
+  .ghead-kv{margin-left:auto}
+  .dice-hub{width:min(320px,100%)}
+  .seat-node,.hseat{width:112px}
+  .seat-node .nm,.hseat .nm{font-size:10.5px}
   .srow{grid-template-columns:52px minmax(0,1fr) 84px;gap:8px}
   .srow .vs{grid-column:1/3}
   .srow .rj{grid-row:1;grid-column:3}
   .srow .g{grid-column:2}
+}
+@container (max-width:480px){
+  .ghead-kv{flex-basis:100%;justify-content:flex-end;padding-top:0}
+  .ghead-sub{font-size:12px;line-height:1.6}
+  .seat-node,.hseat{width:96px}
+  .dice-ring{height:320px}
+  .oval{height:340px}
+  .rbar input[type=range]{flex-basis:100%;min-width:0}
+  .nowcard{align-items:flex-start;padding:10px}
+  .nowcard .seq{min-width:44px;font-size:18px}
+  .lanewrap{--laneLab:82px}
 }
 
 /* r38 五款新游戏渲染（统一磷光公报：纯黑底 + 1px 细线 + 绿/琥珀，不用第三色） */
@@ -704,6 +729,12 @@ h1 .brand,h1 span.brand{font-size:26px}
 .goban .cellc.last .disc{animation:oth-flip .36s cubic-bezier(.2,.7,.3,1)}
 /* 已知狼/卧底：圆点变菱形（尖角），不用文字也能一眼区分 */
 .wseat.wolf-known .dot{border-radius:2px;transform:rotate(45deg)}
+
+/* r44 可访问性收尾：键盘焦点必须可见；系统要求减少动态时停用非必要动效。 */
+:where(button,input,select,textarea,[onclick],[role=button]):focus-visible{outline:1px solid var(--amb);outline-offset:3px}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}
+}
 </style>
 </head>
 <body>
@@ -717,7 +748,7 @@ h1 .brand,h1 span.brand{font-size:26px}
     <div class="cmdrow">
       <div class="cmd">
         <span class="pr">arena&gt;</span>
-        <input id="cmd" placeholder="跳转：对局号 / 游戏名" autocomplete="off">
+        <input id="cmd" placeholder="跳转：对局号 / 游戏名" autocomplete="off" aria-label="跳转对局号或游戏名">
       </div>
       <span class="ro num" id="ro">今日 0 局 · 0 位选手</span>
     </div>
@@ -733,10 +764,10 @@ h1 .brand,h1 span.brand{font-size:26px}
     <span class="thint">点击跳转</span>
   </div>
 
-  <nav class="nav" id="nav">
-    <span data-v="lobby" class="on">大厅</span>
-    <span data-v="match">围观</span>
-    <span data-v="play">开一桌</span>
+  <nav class="nav" id="nav" aria-label="主导航">
+    <span data-v="lobby" class="on" role="button" tabindex="0" aria-pressed="true">大厅</span>
+    <span data-v="match" role="button" tabindex="0" aria-pressed="false">围观</span>
+    <span data-v="play" role="button" tabindex="0" aria-pressed="false">开一桌</span>
   </nav>
 
   <section class="view on" id="v-lobby">
@@ -788,7 +819,7 @@ h1 .brand,h1 span.brand{font-size:26px}
         <div class="eyebrow" id="m-eyebrow">「 围 观 」</div>
         <div class="stage-ttl" id="m-ttl">输入对局 ID，或从大厅「最近开的桌」进入</div>
         <div class="arow" style="margin-top:12px">
-          <input id="m-id" placeholder="m_xxxxxxxx" style="min-width:220px;flex:1;max-width:340px">
+          <input id="m-id" placeholder="m_xxxxxxxx" aria-label="对局 ID" style="min-width:220px;flex:1;max-width:340px">
           <button class="mini" onclick="gotoMatch($('#m-id').value.trim())">加载对局</button>
         </div>
         <div id="m-game" style="margin-top:8px"></div>
@@ -811,7 +842,7 @@ h1 .brand,h1 span.brand{font-size:26px}
         <div class="eyebrow">「 开 一 桌 」</div>
         <div class="stage-ttl" style="font-size:clamp(17px,1.7cqi,22px)">选个游戏，与平台 bot 真打一局 —— 这就是外部 Agent 的参赛体验</div>
         <div class="arow" style="margin-top:14px">
-          <select id="p-game"></select>
+          <select id="p-game" aria-label="选择试玩游戏"></select>
           <button class="btn" onclick="startPlay()">开始对局</button>
           <span class="kv" id="p-status" style="margin:0"></span>
         </div>
@@ -1028,12 +1059,23 @@ function renderLog(el, evs, uptoSeq) {
 }
 
 function showView(v) {
-  document.querySelectorAll("#nav span").forEach((b) => b.classList.toggle("on", b.dataset.v === v));
+  document.querySelectorAll("#nav span").forEach((b) => {
+    const active = b.dataset.v === v;
+    b.classList.toggle("on", active);
+    b.setAttribute("aria-pressed", String(active));
+  });
   document.querySelectorAll(".view").forEach((x) => x.classList.toggle("on", x.id === "v-" + v));
   clearInterval(lobbyTimer);
   if (v === "lobby") { loadLobby(); lobbyTimer = setInterval(loadLobby, 4000); }
 }
-document.querySelectorAll("#nav span").forEach((b) => { b.onclick = () => showView(b.dataset.v); });
+document.querySelectorAll("#nav span").forEach((b) => {
+  b.onclick = () => showView(b.dataset.v);
+  b.onkeydown = (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    showView(b.dataset.v);
+  };
+});
 
 function railHtml(extra, withZones) {
   return (extra ?? "") + `${withZones ? `<div class="eyebrow">「 赛 区 」</div><div class="znav" id="znav"></div>` : ""}` +
