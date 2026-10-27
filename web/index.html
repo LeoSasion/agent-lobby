@@ -363,7 +363,7 @@ select,textarea,input[type=number],input:not([type]){background:#10150f;color:va
 .hole{border-top:1px dashed var(--line2);margin-top:16px;padding-top:12px;display:flex;gap:14px;align-items:center;justify-content:center;flex-wrap:wrap}
 .hole .lab{color:var(--amb);letter-spacing:.3em;font-size:11px}
 .hole .cards{display:flex;gap:6px}
-.goban{display:grid;grid-template-columns:18px repeat(8,clamp(30px,4.4cqi,44px)) 18px;grid-template-rows:18px repeat(8,clamp(30px,4.4cqi,44px)) 18px;width:max-content;max-width:100%;margin:10px auto}
+.goban{display:grid;grid-template-columns:18px repeat(8,clamp(30px,4.4cqi,44px)) 18px;grid-template-rows:repeat(8,clamp(30px,4.4cqi,44px)) 18px;width:max-content;max-width:100%;margin:10px auto}
 .goban .coord{display:grid;place-items:center;color:var(--dim);font-size:9.5px}
 .goban .cellc{border:1px solid var(--line);margin:-.5px;position:relative;background:#0c110e}
 .goban .cellc.legal{border:1px dashed var(--grn);cursor:pointer}
@@ -937,7 +937,9 @@ html{scrollbar-color:var(--dot) var(--bg)}
 
 /* 黑白棋：棋枰 + 盘面占比 */
 .oth-stage{gap:clamp(18px,2cqi,26px)}
-.goban{grid-template-columns:18px repeat(8,clamp(34px,4vw,48px)) 18px;grid-template-rows:18px repeat(8,clamp(34px,4vw,48px)) 18px;background:radial-gradient(circle at center,rgba(255,255,255,.018),transparent 70%)}
+/* 10 列 = 左侧行号 + 8 棋格 + 右侧空坐标；9 行 = 8 棋格 + 底部字母。
+   renderOthello 必须保持 90 个子项（10 × 9），首行才不会被坐标轨道压扁。 */
+.goban{grid-template-columns:18px repeat(8,clamp(34px,4vw,48px)) 18px;grid-template-rows:repeat(8,clamp(34px,4vw,48px)) 18px;background:radial-gradient(circle at center,rgba(255,255,255,.018),transparent 70%)}
 .goban .cellc{background:#0b100d}
 .goban .cellc:hover{background:#17241c}
 .oth-stage .oth-side{min-width:200px;padding-left:clamp(14px,1.6cqi,22px);border-left:1px solid var(--line)}
@@ -3735,6 +3737,8 @@ function renderOthello(v, box, interactive) {
   const legal = interactive && v.you.active ? (v.legal_actions.find((a) => a.type === "place")?.schema?.values ?? []) : [];
   const cols = "ABCDEFGH";
   let grid = "";
+  // 每行 10 个子项（行号 + 8 格 + 空坐标），共 8 行，再加底部 10 个字母格：
+  // 90 个子项对应 CSS 的 10 列 × 9 行——不要在这一层插入额外占位行。
   for (let r = 0; r < 8; r++) {
     grid += `<div class="coord">${r + 1}</div>`;
     for (let c = 0; c < 8; c++) {
