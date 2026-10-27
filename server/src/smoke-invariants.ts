@@ -11,7 +11,7 @@
  *   8. House Bot 契约：6 个游戏多 seed 零拒绝零超时（拒绝是静默的，必须拦 submit 回调才看得见）
  *   9. 决策令牌：view.turn 可回传，陈旧提交拒为 STALE_VIEW 且不入账
  *  10. 决策方式记分：acted 的 reasoning 正确累计；持久化导入兼容无该字段的旧数据
- *  11. 单文件页面：内联脚本必须整体可解析（重复声明等语法错误会让大厅全灭）
+ *  11. 单文件页面：脚本可解析、真实渲染器可执行、事件 case 不重名、同名/终局事件文案无 undefined
  * 运行：node --experimental-strip-types src/smoke-invariants.ts
  */
 
@@ -235,7 +235,11 @@ check(
 console.log("\n[6] HTTP 驱动：间隙缓冲不无限挂起 / reset 丢弃陈旧闭包");
 const ghost = new HttpSeatDriver("ghost", 60);
 const t0 = Date.now();
+// HttpSeatDriver 的缓冲计时器刻意 unref，避免残留定时器拖住进程；
+// 因此测试自身必须持有一个 ref 句柄，否则 Node 可能在 60ms 定时器触发前就退出（exit 13）。
+const keepAlive = setTimeout(() => {}, 250);
 const ghostRes = await ghost.handleAction({ type: "pass" });
+clearTimeout(keepAlive);
 const waited = Date.now() - t0;
 check(
   "间隙缓冲超时返回明确错误（不永久挂起）",
@@ -447,13 +451,18 @@ try {
     evText({ type: "cards_dealt", data: { round: 2, cards: ["As", "9h"] } }),
     evText({ type: "placed", data: { seat: 1, cell: 0, flipped: [1] } }),
     evText({ type: "placed", data: { seat: 1, r: 0, c: 0, n: 1, color: "black" } }),
+    evText({ type: "game_won", data: { winner: 2, lines: 11, rhyme: "月" } }),
+    evText({ type: "game_won", data: { winner: "draw", ply: 200 } }),
+    evText({ type: "round_resolved", data: { round: 1, lot: "瓷瓶", bids: { 1: 10, 2: 20 }, winner: 2, price: 20 } }),
   ] as string[];
   if (samples.some((x) => x.includes("undefined"))) throw new Error(samples.join(" | "));
   if (!samples[2].includes("A1") || !samples[3].includes("A1")) throw new Error("落子坐标渲染错误");
+  if (!samples[4].includes("共念 11 句")) throw new Error("飞花令终局文案丢失");
+  if (samples[6].includes("<b>")) throw new Error("事件流文案混入 HTML 标签");
 } catch (e) {
   evTextError11 = e instanceof Error ? e.message : String(e);
 }
-check("德州/21 点发牌与黑白棋/五子棋落子文案各自正确", evTextError11 === "", evTextError11 || "4 个同名事件样本通过");
+check("同名事件、棋类终局与拍卖文案各自正确", evTextError11 === "", evTextError11 || "7 个事件样本通过");
 
 console.log(`\n=== 结果：${failed === 0 ? "全部通过" : failed + " 项失败"} ===`);
 if (failed > 0) process.exitCode = 1;
