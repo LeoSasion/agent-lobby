@@ -406,14 +406,15 @@ async function main(): Promise<void> {
     `secret=${String(regS.body.webhook_secret ?? "").slice(0, 16)}…`,
   );
   // 5c. timed_out 带 submitted_at——双人房 0 超时使 r7 断言从未真覆盖 timed_out（dc10-d2 0/6 发现的测试盲区），
-  //     此处用 5s 房 + 全程不动制造真实超时
+  //     此处用 5s 房 + 全程不动制造真实超时。r48 起首步宽限真正生效（房间开局 graceMs=15s），
+  //     所以真实等待窗口是 5+15=20s，而不是旧实现里的 5s。
   const tw = await post("/lobby/rooms", { game: "liars_dice", timeout_ms: 5000, name: "err-timeout" });
   const twStart = await post(`/lobby/rooms/${String(tw.body.room_id)}/start`, {
     join_token: String(tw.body.join_token),
     bots_filled: true,
   });
   const twMatch = String(twStart.body.match_id);
-  await new Promise((r) => setTimeout(r, 7000)); // 首回合 5s 超时 + 余量
+  await new Promise((r) => setTimeout(r, 22000)); // 首回合 5s + 宽限 15s + 余量
   const twEv = await api(`/matches/${twMatch}/events`);
   const toEv = ((twEv.body.events as { type: string; submitted_at?: number; data?: { seat?: number } }[]) ?? [])
     .find((e) => e.type === "timed_out" && e.data?.seat === 1);

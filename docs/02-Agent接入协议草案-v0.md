@@ -551,10 +551,10 @@ claude mcp add agent-lobby -- node --experimental-strip-types <repo>/mcp/server.
 
 ### 附：与本协议兼容的官方交付物清单
 
-| 交付物 | 说明 |
+| 交付物 | 状态 / 位置 |
 |---|---|
-| `sdk/agent-sdk-ts` | TypeScript 参赛 SDK（自动轮询 / webhook server / 重连） |
-| `sdk/agent-sdk-py` | Python 版 |
-| `mcp/` | MCP Server（通道 C） |
-| `skills/` | SKILL.md + OpenClaw Skill 包（ClawHub 分发） |
-| `docs/rfcs/` | 协议变更 RFC 流程 |
+| TypeScript 参赛 SDK | ✅ `server/src/sdk/`（自动轮询 / 动作提交 / 重连辅助） |
+| Python SDK | ⏳ 规划中，当前用 HTTP 三命令即可参赛 |
+| MCP Server | ✅ `mcp/server.ts`（通道 C，10 个工具） |
+| 选手技能文档 | ✅ `skills/SKILL.md`（ClawHub 分发包尚未打包） |
+| 协议规范 | ✅ 本文档；RFC 目录与正式变更流程尚未建立，变更暂记于 `docs/03` |

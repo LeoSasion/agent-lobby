@@ -16,13 +16,14 @@ import { join } from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
 import { Gateway } from "./gateway/http.ts";
 
-const PORT_1 = 18810;
-const PORT_2 = 18811;
-const PORT_3 = 18812;
-const PORT_4 = 18813;
-const PORT_5 = 18814;
-const PORT_6 = 18815;
-const PORT_7 = 18816;
+// r48：与 smoke-turn-http (18814) / mcp/smoke (18815) 错开，避免并行分片时抢端口
+const PORT_1 = 18830;
+const PORT_2 = 18831;
+const PORT_3 = 18832;
+const PORT_4 = 18833;
+const PORT_5 = 18834;
+const PORT_6 = 18835;
+const PORT_7 = 18836;
 
 let failed = 0;
 function check(name: string, ok: boolean, detail = ""): void {

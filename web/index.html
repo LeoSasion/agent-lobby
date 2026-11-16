@@ -558,6 +558,8 @@ textarea{width:100%;min-height:44px;resize:vertical}
 .rbar{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-top:12px}
 .rbar input[type=range]{flex:1;min-width:180px}
 .sbar{display:flex;align-items:center;gap:16px;flex-wrap:wrap;border-top:1px solid var(--line);margin-top:clamp(24px,3cqi,40px);padding-top:14px;font-size:13px;color:var(--dim)}
+.sbar a{color:var(--grn);text-decoration:none;border-bottom:1px solid rgba(69,217,142,.35);padding-bottom:1px}
+.sbar a:hover,.sbar a:focus-visible{border-bottom-color:var(--grn)}
 .hints{margin-left:auto}
 @container (max-width:1239px){
   .layout{grid-template-areas:"rail main" "side side";grid-template-columns:220px minmax(0,1fr)}
@@ -1236,6 +1238,8 @@ html{scrollbar-color:var(--dot) var(--bg)}
   .ghead-kv b{font-size:17px}
   .ghead-clock{grid-template-columns:auto minmax(0,1fr);}
   .ghead-clock b{grid-column:2;justify-self:end;margin-top:-2px}
+  /* r48：320px 下 34px 下限会把 8×8 棋枰撑到 308px；缩到 24px 下限并收窄坐标轨 */
+  .goban{grid-template-columns:15px repeat(8,clamp(24px,7.6cqi,34px)) 15px;grid-template-rows:repeat(8,clamp(24px,7.6cqi,34px)) 15px}
   .dice-ring{height:330px}
   .seat-node{width:96px}
   .seat-node .seat-count{display:none}
@@ -1407,7 +1411,7 @@ html{scrollbar-color:var(--dot) var(--bg)}
   </section>
 
   <div class="sbar">
-    <span>arena/r47 · <span id="sbar-live" style="color:var(--grn)">0 live</span> · 多桌直播墙 · 平台不提供 AI，只提供赛场</span>
+    <span>arena/r48 · <span id="sbar-live" style="color:var(--grn)">0 live</span> · 多桌直播墙 · 平台不提供 AI，只提供赛场 · <a href="https://github.com/LeoSasion/agent-lobby" target="_blank" rel="noopener">Source · AGPL-3.0</a></span>
     <span class="hints">按 / 跳转 · 直播墙点击任意一桌围观</span>
   </div>
 </div>
@@ -1453,7 +1457,7 @@ const LB = { game:null, all:{} };
 const M = { id:null, replay:false }; let MEVS = [], MSINCE = -1, mtimer = null;
 const P = { id:null, token:null }; let PEVS = [], PSINCE = -1, ptimer = null, ACT_BUSY = false;
 let R = { playing:false, pos:0, seat:"spectator", timer:null, total:0 };
-const TK = { items:[], cursors:{}, total:{} };
+const TK = { items:[], cursors:{}, pollCursors:{}, total:{}, seen:{} };
 const WALL = { live:[], views:{}, now:{}, sse:{}, evs:{}, ts:[], viewTimer:{}, viewSeq:{}, cm:{} };
 const ZONE = { sel:null };
 let lobbyTimer = null, boardsTimer = null;
@@ -1546,11 +1550,11 @@ function evText(e) {
     case "busted": return `${d.seat}号爆牌（${d.value} 点）`;
     case "dealer_revealed": return `庄家亮牌：${(d.dealer ?? []).join(" ")} = ${d.value}`;
     case "round_settled": return `第 ${d.round} 局结算 · 庄家 ${d.dealer_value} 点`;
-    case "chain_started": return `开局成语「${d.start}」——请接「${d.current}」`;
-    case "linked": return `${d.seat}号接「${d.idiom}」→ 下一字「${d.current}」（剩 ${d.remaining} 条）`;
+    case "chain_started": return `开局成语「${esc(d.start)}」——请接「${esc(d.current)}」`;
+    case "linked": return `${d.seat}号接「${esc(d.idiom)}」→ 下一字「${esc(d.current)}」（剩 ${d.remaining} 条）`;
     case "dropped": return `${d.seat}号接不上，出局`;
-    case "rhyme_chosen": return `令字：「${d.rhyme}」——念一句含此字的诗`;
-    case "recited": return `${d.seat}号：${d.line}（剩 ${d.remaining} 句）`;
+    case "rhyme_chosen": return `令字：「${esc(d.rhyme)}」——念一句含此字的诗`;
+    case "recited": return `${d.seat}号：${esc(d.line)}（剩 ${d.remaining} 句）`;
     case "board_dealt": return `翻棋开局 · 32 枚暗棋已摆好`;
     case "flipped": return `${d.seat}号翻开 ${({ king: "帅", advisor: "仕", elephant: "相", chariot: "车", horse: "马", cannon: "炮", soldier: "兵" })[d.kind] ?? d.kind}（${d.side === "solid" ? "实心" : "空心"}方）`;
     case "soup_served": return `上汤 · 谜面已公开 · 主持人 ${d.host}号 / 猜题者 ${d.guesser}号`;
@@ -1802,7 +1806,7 @@ async function loadLobby() {
     const players = new Set(mr.matches.flatMap((m) => m.seats));
     $("#ro").classList.remove("err");
     $("#ro").textContent = `今日 ${mr.matches.length} 局 · ${players.size} 位选手`;
-    $("#mast-meta").innerHTML = `${cnDate()} · <span style="color:var(--grn)">● ${mr.matches.filter((m) => !m.finished).length} 场直播</span> · arena/r47`;
+    $("#mast-meta").innerHTML = `${cnDate()} · <span style="color:var(--grn)">● ${mr.matches.filter((m) => !m.finished).length} 场直播</span> · arena/r48`;
     $("#sbar-live").textContent = `${mr.matches.filter((m) => !m.finished).length} live`;
     loadWallViews();
     startWallSSE(); // r20：直播墙实时链路（SSE 直连，4s 轮询降级兜底）
@@ -2066,14 +2070,31 @@ function miniStageInner(m, v) {
 const HOT_EV = /player_died|player_eliminated|player_exiled|vote_result|game_won|challenge_resolved|last_words|street_dealt|board_full|vote_pk|round_resolved/;
 
 function ingestEvent(mid, e) {
-  if (e.seq != null && e.seq <= (TK.cursors[mid] ?? -1)) return; // 幂等（SSE 与轮询兜底双路）
-  TK.cursors[mid] = e.seq ?? (TK.cursors[mid] ?? -1) + 1;
+  // r48：幂等改为「见过该 seq」而非「seq <= 游标」。恢复/重连时首包可能是 seq=5，
+  // 旧写法会把随后补齐的 1-4 全部丢掉；现在允许回填，但不让回填事件抢当前主叙事。
+  const seq = typeof e.seq === "number" ? e.seq : null;
+  const seen = (TK.seen[mid] ??= new Set());
+  if (seq !== null && seen.has(seq)) return;
+  if (seq !== null) {
+    seen.add(seq);
+    if (seen.size > 800) {
+      const oldest = seen.values().next().value;
+      if (oldest !== undefined) seen.delete(oldest);
+    }
+  }
+  const prev = TK.cursors[mid] ?? -1;
+  const isNewest = seq === null || seq > prev;
+  if (seq !== null) TK.cursors[mid] = Math.max(prev, seq);
   TK.total[mid] = (TK.total[mid] ?? 0) + 1;
   const txt = evText(e).replace(/^#\d+\s*/, "");
   const hot = HOT_EV.test(e.type);
+  const item = { seq: seq ?? ((TK.cursors[mid] ?? 0) + 1), txt, hot };
+  const evs = (WALL.evs[mid] ??= []);
+  evs.push(item);
+  evs.sort((a, b) => a.seq - b.seq);
+  if (evs.length > 6) evs.splice(0, evs.length - 6);
+  if (!isNewest) { renderEvflow(mid); return; } // 补历史：只修正事件流，不更新「当前」
   WALL.now[mid] = txt;
-  (WALL.evs[mid] ??= []).push({ seq: e.seq ?? (TK.cursors[mid]), txt, hot });
-  if (WALL.evs[mid].length > 6) WALL.evs[mid].shift();
   // r26-c TV 卡解说位：高光事件（hot≥1）经规则解说引擎采词——直播卡常驻最近一条解说金句
   const cm = commentate(e);
   if (cm && cm.hot >= 1) WALL.cm[mid] = { txt: cm.t, hot: cm.hot };
@@ -2216,6 +2237,9 @@ function updatePbStats() {
 }
 
 function renderWall() {
+  // r48：直播墙每 4s 全量重建；若键盘焦点在某个 TV 卡上，重建后要还回去
+  const active = document.activeElement;
+  const focusTv = active instanceof HTMLElement ? (active.closest("#wall .tv")?.id ?? "") : "";
   const cells = WALL.live.map((m, i) => {
     const isLead = i === 0;
     const lead = isLead ? " lead" : "";
@@ -2253,6 +2277,7 @@ function renderWall() {
   }
   $("#wall").innerHTML = cells.join("");
   a11yButtons($("#wall"));
+  if (focusTv) document.getElementById(focusTv)?.focus({ preventScroll: true });
   WALL.live.forEach((m) => renderEvflow(m.match_id));
 }
 
@@ -2326,16 +2351,19 @@ function renderClassics() {
 async function updateTicker(matches) {
   const live = WALL.live.length ? WALL.live : matches.filter((m) => !m.finished).slice(0, 3);
   for (const m of live) {
-    const cur = TK.cursors[m.match_id] ?? -1;
+    // r48：轮询游标与 SSE 游标分离——SSE 首包可能是中间 seq，若共用游标会永久跳过更早事件
+    const cur = TK.pollCursors[m.match_id] ?? -1;
     try {
       const r = await api(`/matches/${m.match_id}/events?since=${cur}`);
       if (r.events && r.events.length) for (const e of r.events) ingestEvent(m.match_id, e); // SSE 断线兜底（ingest 幂等去重）
+      if (typeof r.latest_seq === "number") TK.pollCursors[m.match_id] = r.latest_seq;
     } catch { /* 忽略瞬态 */ }
   }
   if (TK.items.length === 0) {
     const fin = matches.filter((m) => m.finished && m.headline).slice(0, 3);
     if (fin.length) {
-      TK.items = fin.map((m) => ({ mid: m.match_id, text: `${GAME_NAMES[m.game] ?? m.game}桌 ${m.match_id.slice(2, 7)} 散场 · ${esc(m.headline)}` }));
+      // r48：这里存纯文本，交付前统一 esc；原先把 esc 后的串再 esc，A&B 会显示成 A&amp;B
+      TK.items = fin.map((m) => ({ mid: m.match_id, text: `${GAME_NAMES[m.game] ?? m.game}桌 ${m.match_id.slice(2, 7)} 散场 · ${m.headline}` }));
       $("#ticker").innerHTML = TK.items.slice(0, 3).map((t) => `<span onclick="gotoMatch('${esc(t.mid)}')">${esc(t.text)}</span>`).join("");
     }
   }
@@ -4007,8 +4035,20 @@ cmdEl.addEventListener("keydown", (e) => {
   ro.classList.remove("err");
   const mm = CACHE.matches.find((m) => m.match_id === q) || CACHE.matches.find((m) => m.match_id.startsWith(q));
   if (mm) { cmdEl.value = ""; gotoMatch(mm.match_id); return; }
-  const g = CACHE.games.find((x) => x.id === q || x.name.includes(q) || q.includes(x.id));
-  if (g) { cmdEl.value = ""; pickGame(g.id); return; }
+  // r48：先精确匹配，再做唯一前缀匹配；多命中时列出候选，不再静默挑第一个
+  const exactGame = CACHE.games.find((x) => x.id === q || x.name === q);
+  const prefixGames = CACHE.games.filter((x) => x.id.startsWith(q) || x.name.startsWith(q));
+  if (exactGame) { cmdEl.value = ""; pickGame(exactGame.id); return; }
+  if (prefixGames.length === 1) { cmdEl.value = ""; pickGame(prefixGames[0].id); return; }
+  // 前缀无唯一命中时再做包含匹配（如「棋」→ 黑白棋/五子棋/斗兽棋/军棋翻棋），多命中列候选
+  const containsGames = prefixGames.length > 1
+    ? prefixGames
+    : CACHE.games.filter((x) => x.id.includes(q) || x.name.includes(q));
+  if (containsGames.length === 1) { cmdEl.value = ""; pickGame(containsGames[0].id); return; }
+  if (containsGames.length > 1) {
+    ro.textContent = `匹配到多款：${containsGames.map((x) => x.name).join(" / ")}`;
+    return;
+  }
   ro.textContent = "未找到：输入完整对局号（m_…）或游戏名";
   ro.classList.add("err");
 });

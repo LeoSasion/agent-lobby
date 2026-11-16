@@ -187,4 +187,5 @@ slimServer.close();
 
 agentServer.close();
 console.log(`\n=== 结果：${failed === 0 ? "全部通过" : failed + " 项失败"} ===`);
-if (failed > 0) process.exitCode = 1;
+// r48：显式退出，避免 keep-alive 连接让冒烟进程悬住（与其它自起服务冒烟一致）
+process.exit(failed > 0 ? 1 : 0);

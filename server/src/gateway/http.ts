@@ -1480,7 +1480,15 @@ export class Gateway {
       if (r.ok) {
         if (replayKey) {
           this.nonceReplay.set(replayKey, true);
-          if (this.nonceReplay.size > 2000) this.nonceReplay.clear(); // 粗粒度防膨胀
+          // r48：按插入序淘汰最老的一半，而不是整体 clear()——后者会让仍在重试窗口内的
+          // 旧 nonce 突然失去幂等记忆，跨回合重试退化成 NONCE_EXPIRED。
+          if (this.nonceReplay.size > 2000) {
+            let drop = this.nonceReplay.size - 1000;
+            for (const k of this.nonceReplay.keys()) {
+              if (drop-- <= 0) break;
+              this.nonceReplay.delete(k);
+            }
+          }
         }
         // 提交成功 ≠ 已结算：等一拍让本回合 apply 跑完，回带结算后的视图。
         // 视图为 slim（无 history）——r6 六方反馈：actions 响应最重 41KB，历史应走 /events?since= 增量

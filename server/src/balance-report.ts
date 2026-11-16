@@ -102,11 +102,13 @@ for (const { events: evs } of wwEvents) {
   const nights = evs.filter((e) => e.type === "phase_started" && (e.data as { phase: string }).phase === "night").length;
   wwRounds += nights;
 }
+// r48：胜率分母用「已完成局」而非总局数——stall/未终局局计入分母会压低读数
+const wwDone = Math.max(0, WW_GAMES - wwStall);
 console.log(`  狼胜 ${wwWolfWin} · 好人胜 ${wwGoodWin} · 异常 ${wwStall}`);
-console.log(`  狼胜率: ${((wwWolfWin / WW_GAMES) * 100).toFixed(1)}%（理想 40-55%）`);
-console.log(`  平均天数: ${(wwRounds / WW_GAMES).toFixed(1)} 天`);
+console.log(`  狼胜率: ${(wwDone > 0 ? (wwWolfWin / wwDone) * 100 : 0).toFixed(1)}%（理想 40-55%）`);
+console.log(`  平均天数: ${(wwDone > 0 ? wwRounds / wwDone : 0).toFixed(1)} 天`);
 console.log(`  角色胜场: 狼=${wwRoleWins.werewolf} 预言家=${wwRoleWins.seer} 村民=${wwRoleWins.villager}`);
-const wolfRate = wwWolfWin / WW_GAMES;
+const wolfRate = wwDone > 0 ? wwWolfWin / wwDone : 0;
 if (wolfRate > 0.65) console.log("  ⚠️ 狼胜率过高（>65%）——好人协作不足");
 else if (wolfRate < 0.30) console.log("  ⚠️ 狼胜率过低（<30%）——狼伪装不足");
 else console.log("  ✓ 平衡在合理区间");
@@ -242,10 +244,11 @@ for (const { events: evs } of ucEvents) {
   else ucStall++;
   ucVoteRounds += evs.filter((e) => e.type === "vote_result").length;
 }
-const ucRate = ucUndercover / UC_GAMES;
+const ucDone = Math.max(0, UC_GAMES - ucStall);
+const ucRate = ucDone > 0 ? ucUndercover / ucDone : 0;
 console.log(`  卧底胜 ${ucUndercover} · 平民胜 ${ucCivilian} · 异常 ${ucStall}`);
 console.log(`  卧底胜率: ${(ucRate * 100).toFixed(1)}%（1 打 5，理想 20-40%）`);
-console.log(`  平均投票轮数: ${(ucVoteRounds / UC_GAMES).toFixed(1)}`);
+console.log(`  平均投票轮数: ${(ucDone > 0 ? ucVoteRounds / ucDone : 0).toFixed(1)}`);
 // 报警线定 45% 而非 55%：1 打 5 的局，随机投票的基线本就只有 20%，
 // 若卧底能赢到一半以上，说明平民 bot 完全没有利用「描述与词类别不符」这个唯一线索。
 if (ucRate < 0.15) console.log("  ⚠️ 卧底胜率过低（<15%）——描述区分度不足或投票过准");

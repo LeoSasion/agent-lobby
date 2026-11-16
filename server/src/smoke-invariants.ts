@@ -14,6 +14,7 @@
  *  11. 单文件页面：脚本可解析、真实渲染器可执行、事件 case 不重名、同名/终局事件文案无 undefined
  *  12. 推理展示边界：观众/作者赛中可读、其他席位脱敏；前端默认折叠并转义
  *  13. 网关边界：回调 URL 拒绝回环/非 http(s)，请求体超 1 MiB 返回 413
+ *  14. 事件转义与顺序：回填不丢、散场不双转义、直播墙焦点可还、窄屏棋枰下限
  * 运行：node --experimental-strip-types src/smoke-invariants.ts
  */
 
@@ -107,6 +108,64 @@ check(
   "终局事件为 match_failed 且带 result",
   failResult !== null && failResult.events.some((e) => e.type === "match_failed") && failResult.scores !== undefined,
   failResult ? `scores=${JSON.stringify(failResult.scores)}` : "无 result",
+);
+
+// r48：无行动者但未终局也必须走 fail()——旧实现直接 throw，逃出 run() 后网关只 console.error，
+// 留下「显示已结束但无 result / 无 Elo」的僵尸对局。
+const zombie: GameModule<unknown> = {
+  meta: { id: "zombie", name: "空转游戏", minSeats: 2, maxSeats: 2, defaultTimeoutMs: 100 },
+  init: () => ({ ok: true }),
+  phase: () => "stuck",
+  round: () => 1,
+  activeSeats: () => [],
+  legalActions: () => [],
+  validate: () => ({ ok: true }),
+  apply: () => ({ state: {}, events: [] }),
+  viewOf: () => ({ public: {}, private: {} }),
+  timeoutAction: () => ({ type: "pass" }),
+  isTerminal: () => false,
+  scores: () => ({ 1: 0, 2: 0 }),
+};
+let zombieErr = "";
+let zombieResult: Awaited<ReturnType<Match["run"]>> | null = null;
+try {
+  zombieResult = await createMatch({ game: zombie, drivers: [passDriver("a"), passDriver("b")], seed: 1 }).run();
+} catch (e) {
+  zombieErr = String(e);
+}
+check("无行动者不 reject", zombieErr === "", zombieErr || "正常返回");
+check(
+  "无行动者收口为 match_failed 而非僵尸局",
+  zombieResult !== null && zombieResult.events.some((e) => e.type === "match_failed") && zombieResult.scores !== undefined,
+  zombieResult ? `events=${zombieResult.events.map((e) => e.type).join(",")}` : "无 result",
+);
+
+// r48：首步宽限必须同时作用于视图 deadline 与真实执法窗口。
+// timeout=80ms、grace=200ms，驱动慢 120ms 再落一个「不是超时默认点」的合法点。
+let slowDone = false;
+let intendedCell = -1;
+const slowDriver: SeatDriver = {
+  name: "slow-first",
+  act: async (v, submit) => {
+    if (slowDone) { submit({ type: "pass" }); return; }
+    slowDone = true;
+    const cells = (v.legal_actions.find((a) => a.type === "place")?.schema as { values?: number[] } | undefined)?.values ?? [];
+    intendedCell = cells[cells.length - 1] ?? 0;
+    await new Promise((r) => setTimeout(r, 120));
+    submit({ type: "place", cell: intendedCell });
+  },
+};
+const graceResult = await createMatch({
+  game: createOthello(),
+  drivers: [slowDriver, passDriver("instant")],
+  seed: 2, timeoutMs: 80, graceMs: 200,
+}).run();
+const firstActed = graceResult.events.find((e) => e.type === "acted" && e.data.seat === 1);
+check(
+  "首步宽限期内的迟到提交被真正采纳",
+  firstActed?.data.action != null
+    && (firstActed.data.action as { type?: string; cell?: number }).cell === intendedCell,
+  JSON.stringify(firstActed?.data ?? null),
 );
 
 /* ---------- 3. 视图与提交同源 ---------- */
@@ -514,6 +573,14 @@ check("无回调注册仍正常", plainReg13.status === 201, String(plainReg13.s
 const bigBody13 = await post13("/agents", { name: "big", padding: "x".repeat(1_100_000) });
 check("超 1 MiB body 返回 413", bigBody13.status === 413 && bigBody13.body.code === "BODY_TOO_LARGE", `${bigBody13.status} ${bigBody13.body.code}`);
 await gw13.close();
+
+console.log("\n[14] 事件转义与顺序：回填不丢、散场不双转义、直播墙焦点可还");
+const ingestSrc14 = html11.slice(html11.indexOf("function ingestEvent"), html11.indexOf("function pushBand"));
+check("事件幂等按已见 seq 而非单调游标", ingestSrc14.includes("TK.seen") && ingestSrc14.includes("isNewest"), "");
+check("回填旧事件不抢当前叙事", ingestSrc14.includes("if (!isNewest)"), "");
+check("散场 headline 不再双重转义", !html11.includes("散场 · ${esc(m.headline)}"), "");
+check("直播墙重建保留键盘焦点", html11.includes("const focusTv") && html11.includes("focusTv) document.getElementById"), "");
+check("窄屏棋枰有 24px 下限", html11.includes("clamp(24px,7.6cqi,34px)"), "");
 
 console.log(`\n=== 结果：${failed === 0 ? "全部通过" : failed + " 项失败"} ===`);
 if (failed > 0) process.exitCode = 1;

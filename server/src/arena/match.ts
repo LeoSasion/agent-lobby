@@ -283,9 +283,10 @@ export class Match {
       this.announcePhase();
       const active = this.game.activeSeats(this.state);
       if (active.length === 0) {
-        throw new Error(
-          `阶段 ${this.game.phase(this.state)} 无行动者但未终局（游戏模块缺陷）`,
-        );
+        // r48：无行动者且未终局属于游戏模块缺陷，必须走 fail() 优雅收口；
+        // 直接 throw 会逃出 run()，网关只 console.error → 僵尸对局（无 result / 无 Elo）。
+        this.fail(`阶段 ${this.game.phase(this.state)} 无行动者但未终局（游戏模块缺陷）`);
+        break;
       }
       const stepStart = Date.now();
       await this.step(active);
@@ -403,11 +404,15 @@ export class Match {
   }
 
   private async stepBody(active: SeatId[]): Promise<void> {
-    this.turnDeadline = Date.now() + this.timeoutMs + (this.firstStep ? this.graceMs : 0);
+    // r48：首步宽限必须同时延长「视图 deadline」与「驱动实际执法窗口」。
+    // 旧实现只把 graceMs 加进 turnDeadline，drive 仍按 timeoutMs 竞速——视图承诺的
+    // 宽限时间根本不存在，quickstart 的第一回合尤其容易被误判超时。
+    const grace = this.firstStep ? this.graceMs : 0;
+    this.turnDeadline = Date.now() + this.timeoutMs + grace;
     this.firstStep = false;
     // 相位间隙已提前提交的座位直接入账，不再挂起等待
     const toDrive = active.filter((seat) => !this.received.has(seat));
-    await Promise.all(toDrive.map((seat) => this.drive(seat)));
+    await Promise.all(toDrive.map((seat) => this.drive(seat, grace)));
     // 超时兜底：未提交者执行游戏默认动作（并校验其合法性——这是游戏模块的契约）
     for (const seat of active) {
       if (!this.received.has(seat)) {
@@ -499,14 +504,14 @@ export class Match {
     };
   }
 
-  private async drive(seat: SeatId): Promise<void> {
+  private async drive(seat: SeatId, graceMs = 0): Promise<void> {
     const driver = this.drivers.get(seat);
     if (!driver) return;
     const view = this.viewFor(seat);
     try {
       await withTimeout(
         driver.act(view, (a, o) => this.trySubmit(seat, a, o)),
-        this.timeoutMs,
+        this.timeoutMs + graceMs,
       );
     } catch {
       // 驱动崩溃或超时：不外抛，交由超时默认动作兜底（容错优先）

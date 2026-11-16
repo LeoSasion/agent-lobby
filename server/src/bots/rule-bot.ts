@@ -51,10 +51,12 @@ export function createRuleBot(name: string, aggression = 0.5): SeatDriver {
 
       /** 评估叫价 (qty, face) 为真的概率：己方确定数量 + 对方二项分布 */
       const evalBid = (qty: number, face: number): number => {
-        const own = my.filter((d) => d === face).length;
+        // 百搭开启时，1 可当任意面：自己的 1 要计入命中，未知骰单骰命中率是 2/6。
+        const wild = pub.wildcard_ones === true;
+        const own = my.filter((d) => d === face || (wild && d === 1)).length;
         const unknown = totalDice - my.length;
         const deficit = qty - own;
-        return pAtLeast(unknown, deficit, 1 / 6);
+        return pAtLeast(unknown, deficit, wild ? 2 / 6 : 1 / 6);
       };
 
       if (!bid) {

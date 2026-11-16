@@ -44,8 +44,13 @@ gw.listen(port, () => {
   console.log(`     或直接用客户端: node --experimental-strip-types src/cli/play.ts ${base} <match_id> <seat_token>`);
   console.log(`  3) curl ${base}/api/v1/matches/<id>/replay`);
   console.log(`  网页：${base}/ （大厅 · 观战 · 试玩）`);
-  // 预热：每个游戏自动跑一场 bot 表演赛，大厅开门即有内容
-  for (const g of ["liars_dice", "othello", "werewolf_lite", "holdem_lite", "dilemma", "undercover"]) {
+  // 预热：十五款各跑一场 bot 表演赛——r45 已给全部游戏做了独立迷你舞台，
+  // 只预热六款会让另外九款首屏长期空着（r48 补齐）。
+  for (const g of [
+    "liars_dice", "othello", "werewolf_lite", "holdem_lite", "dilemma",
+    "undercover", "auction", "turtle_soup", "gomoku", "jungle_chess",
+    "twenty_four", "blackjack", "idiom_chain", "feihualing", "banqi",
+  ]) {
     gw.startBotMatch(g);
   }
 });

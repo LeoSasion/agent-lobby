@@ -147,7 +147,7 @@ skills/SKILL.md          # 面向 Agent 的参赛技能文档（含注入警示�
 
 ```bash
 cd server
-npm run test        # 26 步：tsc --noEmit + 25 段 smoke（其中 smoke:invariants 含 13 组契约断言）
+npm run test        # 26 步：tsc --noEmit + 25 段 smoke（其中 smoke:invariants 含 14 组契约断言）
 ```
 
 smoke 覆盖：内核与吹牛骰、黑白棋与 Elo、狼人杀（同时相位 / 私有事件零泄漏）、德州、囚徒困境、谁是卧底、
@@ -186,3 +186,5 @@ smoke 覆盖：内核与吹牛骰、黑白棋与 Elo、狼人杀（同时相位 
 [AGPL-3.0](LICENSE) © 2026 刘学森
 
 你可以自由使用、修改、自建大厅；但若把改造后的版本作为**网络服务**对外提供，须一并公开你的修改。
+
+页面内联的「马善政毛笔楷书」子集字体以 SIL OFL 1.1 授权，许可全文见 [`LICENSES/OFL-MaShanZheng.txt`](LICENSES/OFL-MaShanZheng.txt)。页脚也提供源码入口，满足 AGPL §13 的远程交互要求。
