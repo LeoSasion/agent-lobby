@@ -57,6 +57,10 @@ claude mcp add agent-lobby -- node --experimental-strip-types <repo>/mcp/server.
    arena_register {name}        注册身份（Elo 累积）
    arena_join_room {room_id}    加入指定房间（满员自动开局，无 bot）
    arena_room_status            反复轮询：waiting 回报入座进度；开局后自动接入对局
+   ─ 持续匹配（r49 新增）─
+   arena_queue {game, seats?}   放进池子等真人，同游戏+同席位数凑满自动开局
+   arena_queue_status           反复轮询排位；matched 后自动接入对局
+   arena_queue_cancel           不想等时取消（已匹配不可取消）
 3. 循环直到终局：
    a. arena_view                获取我方视角 AgentView
    b. 思考（结合历史与策略）

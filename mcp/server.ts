@@ -30,6 +30,8 @@ interface Persisted {
   seat_token?: string;
   room_id?: string;
   join_token?: string;
+  queue_id?: string;
+  queue_token?: string;
 }
 let state: Persisted = {};
 try {
@@ -61,12 +63,13 @@ async function saveState(): Promise<void> {
 
 type Json = Record<string, unknown>;
 
-async function api(path: string, opts: { method?: string; seat?: boolean; auth?: boolean; roomToken?: boolean; body?: unknown } = {}): Promise<Json> {
+async function api(path: string, opts: { method?: string; seat?: boolean; auth?: boolean; roomToken?: boolean; queueToken?: boolean; body?: unknown } = {}): Promise<Json> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   // r47：Bearer 只发给确实需要身份的端点，避免 ARENA_URL 误配时把 api_key 交给任意服务
   if (opts.auth && state.api_key) headers.authorization = "Bearer " + state.api_key;
   if (opts.seat && state.seat_token) headers["x-seat-token"] = state.seat_token;
   if (opts.roomToken && state.join_token) headers["x-room-token"] = state.join_token;
+  if (opts.queueToken && state.queue_token) headers["x-queue-token"] = state.queue_token;
   // r30c：网络层失败与非 JSON 响应曾裸抛到 tools/call 的 catch —— LLM 客户端只会看到
   // "fetch failed" / "Unexpected token < in JSON"，无从判断是网关没起还是对局被清理。
   // 与 sdk/client.ts 的 fetchGuarded 口径对齐：两种情况都转成可读的结构化中文错误。
@@ -196,6 +199,82 @@ const tools: Tool[] = [
       }
       const names = (r.names as string[] | undefined) ?? [];
       return `房间 ${state.room_id} 等待中：${r.players}/${r.seats} 人已入座（${names.join("、")}），还差 ${r.seats_remaining} 人开局。继续轮询。`;
+    },
+  },
+  {
+    name: "arena_queue",
+    description:
+      "加入持续匹配队列：同游戏、同席位数的真人按先后顺序凑满即自动开局；无需房主建房。" +
+      "入队后反复调用 arena_queue_status（建议 1–2s），匹配成功后自动接入对局。" +
+      "若不想等，可随时 arena_queue_cancel 取消。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        game: { type: "string", description: "游戏 id，见 arena_games" },
+        seats: { type: "number", description: "期望席位数（可选，缺省用该游戏最小席位数）" },
+        timeout_ms: { type: "number", description: "每回合时限（可选，5000–300000）" },
+      },
+      required: ["game"],
+    },
+    async run(args) {
+      const body: Json = { game: String(args.game) };
+      if (args.seats !== undefined) body.seats = args.seats;
+      if (args.timeout_ms !== undefined) body.timeout_ms = args.timeout_ms;
+      const r = await api("/lobby/queue", { method: "POST", auth: true, body });
+      if (r.error) throw new Error(`加入匹配失败：${JSON.stringify(r)}`);
+      state.queue_id = r.ticket_id as string;
+      state.queue_token = r.token as string;
+      if (r.api_key) state.api_key = r.api_key as string;
+      if (r.status === "matched") {
+        state.match_id = r.match_id as string;
+        state.seat_token = r.seat_token as string;
+        state.queue_id = undefined;
+        state.queue_token = undefined;
+        await saveState();
+        return `立即匹配成功！对局 ${state.match_id}（你是 ${r.seat_id} 号位）。下一步：arena_view 查看局面。`;
+      }
+      await saveState();
+      return `已进入匹配队列（${r.position}/${r.seats} 位，已等待 ${Math.floor(Number(r.waited_ms ?? 0) / 1000)}s）。下一步：反复调用 arena_queue_status。`;
+    },
+  },
+  {
+    name: "arena_queue_status",
+    description:
+      "轮询持续匹配状态：waiting 回报排位与等待人数；matched 时自动接入对局——之后用 arena_view / arena_act 参赛。",
+    inputSchema: { type: "object", properties: {} },
+    async run() {
+      if (!state.queue_id) throw new Error("尚未加入匹配队列，请先调用 arena_queue。");
+      const r = await api(`/lobby/queue/${state.queue_id}`, { queueToken: true });
+      if (r.error) throw new Error(`查询匹配失败：${JSON.stringify(r)}`);
+      if (r.status === "matched") {
+        state.match_id = r.match_id as string;
+        state.seat_token = r.seat_token as string;
+        state.queue_id = undefined;
+        state.queue_token = undefined;
+        await saveState();
+        return `匹配成功！对局 ${state.match_id}（你是 ${r.seat_id} 号位）。下一步：arena_view 查看局面。`;
+      }
+      if (r.status === "cancelled" || r.status === "expired") {
+        state.queue_id = undefined;
+        state.queue_token = undefined;
+        await saveState();
+        return r.status === "expired" ? "匹配已超时，请重新 arena_queue。" : "匹配已取消。";
+      }
+      return `匹配中：${r.position}/${r.seats} 位，已等待 ${Math.floor(Number(r.waited_ms ?? 0) / 1000)}s。继续轮询。`;
+    },
+  },
+  {
+    name: "arena_queue_cancel",
+    description: "取消持续匹配（已匹配到对局则不能取消，直接用 arena_view 参赛）。",
+    inputSchema: { type: "object", properties: {} },
+    async run() {
+      if (!state.queue_id) return "当前不在匹配队列中。";
+      const r = await api(`/lobby/queue/${state.queue_id}`, { method: "DELETE", queueToken: true });
+      state.queue_id = undefined;
+      state.queue_token = undefined;
+      await saveState();
+      if (r.error) throw new Error(`取消失败：${JSON.stringify(r)}`);
+      return "已取消匹配。";
     },
   },
   {

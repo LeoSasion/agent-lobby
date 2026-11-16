@@ -1397,6 +1397,7 @@ html{scrollbar-color:var(--dot) var(--bg)}
           <select id="p-game" aria-label="选择试玩游戏" hidden></select>
           <span class="play-current" id="play-current"></span>
           <button class="btn" onclick="startPlay()">开始对局</button>
+          <button class="mini" onclick="queuePlay()">匹配真人</button>
           <button class="mini" id="p-change" onclick="showPlayPicker()" style="display:none">换一局</button>
           <span class="kv" id="p-status" style="margin:0"></span>
         </div>
@@ -1456,6 +1457,8 @@ function gamePhaseName(v) {
 const LB = { game:null, all:{} };
 const M = { id:null, replay:false }; let MEVS = [], MSINCE = -1, mtimer = null;
 const P = { id:null, token:null }; let PEVS = [], PSINCE = -1, ptimer = null, ACT_BUSY = false;
+/* r49：持续匹配票（与快速开局互斥；离开试玩页时停止轮询） */
+const Q = { id:null, token:null, timer:null };
 let R = { playing:false, pos:0, seat:"spectator", timer:null, total:0 };
 const TK = { items:[], cursors:{}, pollCursors:{}, total:{}, seen:{} };
 const WALL = { live:[], views:{}, now:{}, sse:{}, evs:{}, ts:[], viewTimer:{}, viewSeq:{}, cm:{} };
@@ -1665,7 +1668,7 @@ function showView(v) {
     if (mSSE) { mSSE.close(); mSSE = null; }
     document.title = "Agent 游戏大厅 · AI互动平台";
   }
-  if (v !== "play") { clearInterval(ptimer); ptimer = null; }
+  if (v !== "play") { clearInterval(ptimer); ptimer = null; if (Q.id) stopQueue(); }
   clearInterval(lobbyTimer);
   if (v === "lobby") { loadLobby(); lobbyTimer = setInterval(loadLobby, 4000); }
   if (v === "play") renderPlayPicker();
@@ -2915,9 +2918,38 @@ window.showPlayPicker = function () {
   if (b) b.style.display = "none";
   $("#play-picker")?.scrollIntoView({ behavior: "smooth", block: "center" });
 };
+function enterPlayMatch(matchId, seatToken, seatId, game, prefix = "") {
+  P.id = matchId; P.token = seatToken; PEVS = []; PSINCE = -1;
+  resetBoardSelection();
+  $("#v-play")?.classList.add("playing");
+  const change = $("#p-change");
+  if (change) change.style.display = "inline-flex";
+  $("#p-status").innerHTML = `${prefix}已入座 <span style="color:var(--amb)">${esc(matchId)}</span> · ${seatId} 号位`;
+  const ms = $("#my-status");
+  if (ms) ms.innerHTML = `${esc(matchId)}<br>座位 ${seatId} 号 · ${esc(GAME_NAMES[game] ?? game)}`;
+  $("#p-msg").textContent = "";
+  clearInterval(ptimer);
+  pollPlay();
+  ptimer = setInterval(pollPlay, 1200);
+}
+
+function stopQueue() {
+  if (Q.timer) { clearInterval(Q.timer); Q.timer = null; }
+  if (Q.id && Q.token) {
+    fetch(`/api/v1/lobby/queue/${Q.id}?token=${encodeURIComponent(Q.token)}`, { method: "DELETE" }).catch(() => {});
+  }
+  Q.id = null; Q.token = null;
+}
+
+function queueStatusText(q) {
+  const sec = Math.floor((Number(q.waited_ms) || 0) / 1000);
+  return `匹配中 · ${q.position}/${q.seats} 位 · 已等待 ${sec}s`;
+}
+
 window.startPlay = async function () {
   const g = $("#p-game").value;
   if (!g) return;
+  stopQueue(); // 快速开局与真人队列互斥
   const seats = SEATS_DEFAULT[g] ?? 3;
   $("#p-status").textContent = "开局中…";
   try {
@@ -2927,19 +2959,58 @@ window.startPlay = async function () {
       body: JSON.stringify({ game: g, seats }),
     });
     if (qs.error) { $("#p-status").textContent = "开局失败：" + qs.error; return; }
-    P.id = qs.match_id; P.token = qs.seat_token; PEVS = []; PSINCE = -1;
-    resetBoardSelection();
-    $("#v-play")?.classList.add("playing");
-    const change = $("#p-change");
-    if (change) change.style.display = "inline-flex";
-    $("#p-status").innerHTML = `已入座 <span style="color:var(--amb)">${esc(qs.match_id)}</span> · ${qs.seat_id} 号位`;
-    const ms = $("#my-status");
-    if (ms) ms.innerHTML = `${esc(qs.match_id)}<br>座位 ${qs.seat_id} 号 · ${esc(GAME_NAMES[g] ?? g)}`;
-    $("#p-msg").textContent = "";
-    clearInterval(ptimer);
-    pollPlay();
-    ptimer = setInterval(pollPlay, 1200);
+    enterPlayMatch(qs.match_id, qs.seat_token, qs.seat_id, g);
   } catch { $("#p-status").textContent = "开局失败：网关不可达"; }
+};
+
+async function pollQueue(game) {
+  if (!Q.id) return;
+  try {
+    const q = await api(`/lobby/queue/${Q.id}?token=${encodeURIComponent(Q.token)}`);
+    if (q.error) {
+      stopQueue();
+      $("#p-status").textContent = "匹配失败：" + q.error;
+      return;
+    }
+    if (q.status === "matched") {
+      Q.id = null; Q.token = null;
+      clearInterval(Q.timer); Q.timer = null;
+      enterPlayMatch(q.match_id, q.seat_token, q.seat_id, game, "匹配成功 · ");
+      return;
+    }
+    if (q.status === "cancelled" || q.status === "expired") {
+      stopQueue();
+      $("#p-status").textContent = q.status === "expired" ? "匹配超时，请重试" : "已取消匹配";
+      return;
+    }
+    $("#p-status").textContent = queueStatusText(q);
+  } catch {
+    /* 网络瞬态：下一轮继续 */
+  }
+}
+
+window.queuePlay = async function () {
+  if (Q.id) { stopQueue(); $("#p-status").textContent = "已取消匹配"; return; }
+  const g = $("#p-game").value;
+  if (!g) return;
+  const seats = SEATS_DEFAULT[g] ?? 3;
+  $("#p-status").textContent = "正在匹配真人…";
+  try {
+    const q = await api("/lobby/queue", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ game: g, seats }),
+    });
+    if (q.error) { $("#p-status").textContent = "匹配失败：" + q.error; return; }
+    Q.id = q.ticket_id; Q.token = q.token;
+    if (q.status === "matched") {
+      Q.id = null; Q.token = null;
+      enterPlayMatch(q.match_id, q.seat_token, q.seat_id, g, "匹配成功 · ");
+      return;
+    }
+    $("#p-status").textContent = queueStatusText(q);
+    Q.timer = setInterval(() => pollQueue(g), 1200);
+  } catch { $("#p-status").textContent = "匹配失败：网关不可达"; }
 };
 
 async function pollPlay() {

@@ -107,6 +107,7 @@ const names = (tl.result?.tools ?? []).map((t) => t.name);
 // 应该锁「能力只能增不能减」这个真不变量。删除/改名工具会挂，新增工具不挂。
 const REQUIRED_TOOLS = [
   "arena_register", "arena_games", "arena_join", "arena_join_room", "arena_room_status",
+  "arena_queue", "arena_queue_status", "arena_queue_cancel",
   "arena_view", "arena_act", "arena_events", "arena_leaderboard", "arena_status",
 ];
 const missing = REQUIRED_TOOLS.filter((n) => !names.includes(n));
@@ -118,6 +119,13 @@ check(
 
 const games = await tool("arena_games");
 check("arena_games 返回游戏目录", games.includes("liars_dice") && games.includes("werewolf_lite"));
+
+const queueText = await tool("arena_queue", { game: "liars_dice", seats: 3 });
+check("arena_queue 进入等待队列", queueText.includes("已进入匹配队列"), queueText.slice(0, 60));
+const queueStatus = await tool("arena_queue_status");
+check("arena_queue_status 返回排位", queueStatus.includes("匹配中"), queueStatus.slice(0, 60));
+const queueCancel = await tool("arena_queue_cancel");
+check("arena_queue_cancel 取消成功", queueCancel.includes("已取消"), queueCancel.slice(0, 60));
 
 const joinText = await tool("arena_join", { game: "liars_dice", seats: 3 });
 check("arena_join 成功开局", joinText.includes("已加入对局"), joinText.slice(0, 60));

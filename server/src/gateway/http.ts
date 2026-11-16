@@ -204,11 +204,27 @@ interface Room {
   timeoutMs?: number;
 }
 
+/** r49：持续匹配票——同一 (game, seats) 的等待者凑满即自动转成一间房并开局 */
+interface QueueTicket {
+  id: string;
+  token: string;
+  game: string;
+  seats: number;
+  timeoutMs?: number;
+  player: RoomPlayer;
+  status: "waiting" | "matched" | "cancelled" | "expired";
+  roomId: string | null;
+  matchId: string | null;
+  createdAt: number;
+}
+
 export class Gateway {
   private games = new Map<string, GameModule<unknown>>();
   private agents = new Map<string, { agent_id: string; name: string; callback_url?: string; webhook_secret?: string; push_slim?: boolean }>();
   private matches = new Map<string, RunningMatch>();
   private rooms = new Map<string, Room>();
+  /** r49：持续匹配队列（按游戏+席位数分组，满员即自动开局） */
+  private queue = new Map<string, QueueTicket>();
   private ratings = new RatingStore();
   private agentNames = new Map<string, string>();
   /** nonce 重放缓存：key = matchId:seat:nonce —— 跨回合重试返回原成功，不消耗任何回合（真幂等） */
@@ -245,6 +261,7 @@ export class Gateway {
       // r30：长跑内存治理放在落盘之前——先释放，再写盘
       this.pruneStaleMatches();
       this.pruneStaleRooms();
+      this.pruneQueue();
       this.persistState().catch(() => {});
     }, 30_000);
     // 进程退出时保存
@@ -445,6 +462,10 @@ export class Gateway {
           "GET  /api/v1/agents/:id/matches?page= 战绩列表（已结束对局，倒序分页）",
           "GET  /api/v1/games",
           "POST /api/v1/lobby/quickstart",
+          "GET  /api/v1/lobby/queue               持续匹配队列概览（各游戏等待人数）",
+          "POST /api/v1/lobby/queue               加入持续匹配 {game, seats?, name?, timeout_ms?, channel?}——满员自动开局",
+          "GET  /api/v1/lobby/queue/:id?token=    匹配状态（waiting 排位 / matched 返回 seat_token）",
+          "DELETE /api/v1/lobby/queue/:id?token=  取消等待（已匹配不可取消）",
           "GET  /api/v1/lobby/rooms               多人房间列表",
           "POST /api/v1/lobby/rooms               创建房间 {game, seats?, name?, timeout_ms?, channel?}",
           "POST /api/v1/lobby/rooms/:id/join      加入房间 {name?, channel?}（channel=webhook 需 Bearer + 已注册 callback_url）",
@@ -631,6 +652,19 @@ export class Gateway {
     if (method === "POST" && path === "/api/v1/lobby/quickstart") {
       return this.quickstart(req, await readJson(req), res);
     }
+    if (method === "POST" && path === "/api/v1/lobby/queue") {
+      return this.queueJoin(req, res);
+    }
+    if (method === "GET" && path === "/api/v1/lobby/queue") {
+      return this.queueList(res);
+    }
+    const queueGet = /^\/api\/v1\/lobby\/queue\/([^/]+)$/.exec(path);
+    if (queueGet && method === "GET") {
+      return this.queueStatus(queueGet[1], url, req, res);
+    }
+    if (queueGet && method === "DELETE") {
+      return this.queueCancel(queueGet[1], url, req, res);
+    }
     if (method === "GET" && path === "/api/v1/lobby/rooms") {
       return this.roomList(res);
     }
@@ -678,7 +712,7 @@ export class Gateway {
       return "排行榜需指定游戏：GET /api/v1/leaderboard/{game}（游戏 id 见 GET /api/v1/games）";
     }
     if (path.startsWith("/api/v1/lobby")) {
-      return "大厅端点：GET /lobby/rooms（列表）· POST /lobby/rooms（建房）· POST /lobby/rooms/:id/join|start · GET /lobby/rooms/:id?token= · POST /lobby/quickstart";
+      return "大厅端点：POST/GET /lobby/queue（持续匹配）· GET /lobby/rooms（列表）· POST /lobby/rooms（建房）· POST /lobby/rooms/:id/join|start · GET /lobby/rooms/:id?token= · POST /lobby/quickstart";
     }
     if (/^\/api\/v1\/matches\/[^/]+/.test(path)) {
       return "对局子路径仅支持 view|actions|events|replay|guess（另有 /stream 与 /replay/step）";
@@ -855,6 +889,190 @@ export class Gateway {
       };
     }
     return { ok: true, channel: "webhook", callback: { url: known.callback_url, secret: known.webhook_secret, slim: known.push_slim === true } };
+  }
+
+  /** r49：加入持续匹配队列（同游戏+同席位数凑满即自动开局） */
+  private queueJoin(req: IncomingMessage, res: ServerResponse): void {
+    void (async () => {
+      const body = await readJson(req);
+      const gameId = String(body.game ?? "");
+      const game = this.games.get(gameId);
+      if (!game) {
+        return this.err(res, 404, "GAME_NOT_FOUND", `游戏 ${gameId} 不存在（可用游戏见 GET /api/v1/games）`, {
+          game: gameId, path: "/api/v1/lobby/queue", hint: "游戏 id 见 GET /api/v1/games",
+        });
+      }
+      const seats = clamp(Number(body.seats ?? game.meta.minSeats), game.meta.minSeats, game.meta.maxSeats);
+      const timeoutMs = body.timeout_ms !== undefined && body.timeout_ms !== null
+        ? clamp(Number(body.timeout_ms), 5000, 300_000)
+        : undefined;
+      const ch = this.roomChannelOf(req, body);
+      if (!ch.ok) return this.err(res, ch.status, ch.code, ch.message);
+
+      // 与 quickstart 相同的身份语义：带 Bearer 沿用老选手，否则创建游客并回传 api_key
+      const auth = typeof req.headers.authorization === "string"
+        ? req.headers.authorization.replace(/^Bearer\s+/i, "")
+        : "";
+      const known = auth ? this.agents.get(auth) : undefined;
+      const apiKey = known ? auth : "sk_" + randomId("");
+      const agentName = String(body.name ?? known?.name ?? "guest-" + randomId(""));
+      if (!known) this.agents.set(apiKey, { agent_id: "a_" + randomId(""), name: agentName });
+      const agentId = this.agents.get(apiKey)!.agent_id;
+      this.agentNames.set(agentId, agentName);
+
+      // 同一身份重复入队：返回原票，避免等待池被同一脚本刷满
+      const dup = [...this.queue.values()].find((t) =>
+        t.status === "waiting" && t.game === gameId && t.seats === seats && t.player.agentId === agentId);
+      if (dup) {
+        return this.json(res, 200, {
+          ...this.queueView(dup),
+          token: dup.token,
+          replay: true,
+          ...(known ? {} : { api_key: apiKey }),
+        });
+      }
+
+      const ticket: QueueTicket = {
+        id: "q_" + randomId(""),
+        token: "qt_" + randomId(""),
+        game: gameId,
+        seats,
+        timeoutMs,
+        player: {
+          joinToken: "jt_" + randomId(""),
+          name: agentName,
+          agentId,
+          channel: ch.channel,
+          callback: ch.channel === "webhook" ? ch.callback : undefined,
+          seat: null,
+          seatToken: null,
+        },
+        status: "waiting",
+        roomId: null,
+        matchId: null,
+        createdAt: Date.now(),
+      };
+      this.queue.set(ticket.id, ticket);
+      this.tryMatchQueue(gameId, seats);
+      const current = this.queue.get(ticket.id)!;
+      return this.json(res, 201, {
+        ...this.queueView(current),
+        token: ticket.token,
+        ...(known ? {} : { api_key: apiKey }),
+      });
+    })().catch((e) => this.failErr(res, e));
+  }
+
+  /** 队列状态：waiting 返回排位；matched 返回 room/match/seat_token */
+  private queueStatus(ticketId: string, url: URL, req: IncomingMessage, res: ServerResponse): void {
+    const t = this.queue.get(ticketId);
+    if (!t) return this.err(res, 404, "QUEUE_NOT_FOUND", "匹配票不存在或已过期", { ticket_id: ticketId });
+    const token = url.searchParams.get("token")
+      ?? (typeof req.headers["x-queue-token"] === "string" ? req.headers["x-queue-token"] : null);
+    if (!token || token !== t.token) {
+      return this.err(res, 403, "QUEUE_FORBIDDEN", "匹配票 token 不正确", { ticket_id: ticketId });
+    }
+    if (t.status === "waiting" && Date.now() - t.createdAt > 15 * 60_000) t.status = "expired";
+    return this.json(res, 200, this.queueView(t));
+  }
+
+  /** 取消等待；已匹配的对局不能从这里取消 */
+  private queueCancel(ticketId: string, url: URL, req: IncomingMessage, res: ServerResponse): void {
+    const t = this.queue.get(ticketId);
+    if (!t) return this.err(res, 404, "QUEUE_NOT_FOUND", "匹配票不存在或已过期", { ticket_id: ticketId });
+    const token = url.searchParams.get("token")
+      ?? (typeof req.headers["x-queue-token"] === "string" ? req.headers["x-queue-token"] : null);
+    if (!token || token !== t.token) {
+      return this.err(res, 403, "QUEUE_FORBIDDEN", "匹配票 token 不正确", { ticket_id: ticketId });
+    }
+    if (t.status === "matched") {
+      return this.err(res, 409, "QUEUE_ALREADY_MATCHED", "已经匹配到对局，不能取消；可直接按 seat_token 参赛", {
+        ticket_id: t.id, match_id: t.matchId,
+      });
+    }
+    if (t.status === "expired") return this.err(res, 410, "QUEUE_EXPIRED", "匹配票已过期", { ticket_id: t.id });
+    t.status = "cancelled";
+    return this.json(res, 200, this.queueView(t));
+  }
+
+  /** 队列大厅：只公开各游戏/席位数的等待人数，不暴露身份 */
+  private queueList(res: ServerResponse): void {
+    this.pruneQueue();
+    const groups = new Map<string, { game: string; seats: number; waiting: number }>();
+    for (const t of this.queue.values()) {
+      if (t.status !== "waiting") continue;
+      const key = `${t.game}:${t.seats}`;
+      const g = groups.get(key) ?? { game: t.game, seats: t.seats, waiting: 0 };
+      g.waiting += 1;
+      groups.set(key, g);
+    }
+    return this.json(res, 200, { queue: [...groups.values()] });
+  }
+
+  /** 把同 (game, seats) 的等待者按 FIFO 凑满一桌；可连续凑多桌 */
+  private tryMatchQueue(gameId: string, seats: number): void {
+    const waiting = [...this.queue.values()]
+      .filter((t) => t.status === "waiting" && t.game === gameId && t.seats === seats)
+      .sort((a, b) => a.createdAt - b.createdAt);
+    if (waiting.length < seats) return;
+    const batch = waiting.slice(0, seats);
+    const room: Room = {
+      id: "r_" + randomId(""),
+      game: gameId,
+      seats,
+      status: "waiting",
+      players: batch.map((t) => t.player),
+      creatorToken: batch[0]!.player.joinToken,
+      matchId: null,
+      createdAt: Date.now(),
+      timeoutMs: batch[0]!.timeoutMs,
+    };
+    this.rooms.set(room.id, room);
+    const ok = this.tryStartRoom(room, false);
+    if (!ok) {
+      this.rooms.delete(room.id);
+      return;
+    }
+    for (const t of batch) {
+      t.status = "matched";
+      t.roomId = room.id;
+      t.matchId = room.matchId;
+    }
+    this.tryMatchQueue(gameId, seats); // 还有下一组满员时继续
+  }
+
+  private queueView(t: QueueTicket): Record<string, unknown> {
+    const waiting = [...this.queue.values()]
+      .filter((x) => x.status === "waiting" && x.game === t.game && x.seats === t.seats)
+      .sort((a, b) => a.createdAt - b.createdAt);
+    const base: Record<string, unknown> = {
+      ticket_id: t.id,
+      game: t.game,
+      seats: t.seats,
+      status: t.status,
+      position: t.status === "waiting" ? waiting.indexOf(t) + 1 : null,
+      waiting: t.status === "waiting" ? waiting.length : 0,
+      waited_ms: Math.max(0, Date.now() - t.createdAt),
+      poll_after_ms: 1200,
+    };
+    if (t.status === "matched" && t.matchId && t.player.seatToken) {
+      base.room_id = t.roomId;
+      base.match_id = t.matchId;
+      base.seat_id = t.player.seat;
+      base.seat_token = t.player.seatToken;
+      base.channel = t.player.channel;
+    }
+    return base;
+  }
+
+  private pruneQueue(): void {
+    const now = Date.now();
+    for (const [id, t] of this.queue) {
+      if (t.status === "waiting" && now - t.createdAt > 15 * 60_000) t.status = "expired";
+      if ((t.status === "expired" || t.status === "cancelled") && now - t.createdAt > 60 * 60_000) {
+        this.queue.delete(id);
+      }
+    }
   }
 
   /** 创建多人房间（创建者即 1 号候选人；满员自动开局） */

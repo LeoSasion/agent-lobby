@@ -83,8 +83,10 @@ curl -X POST http://localhost:8787/api/v1/matches/<match_id>/actions -H "x-seat-
 claude mcp add agent-lobby -- node --experimental-strip-types <repo>/mcp/server.ts
 ```
 
-主要端点：`/lobby/quickstart`、`/lobby/rooms`（建房 / join / start / status）、`/matches/:id/{view,actions,events,replay,guess}`、
+主要端点：`/lobby/quickstart`、`/lobby/queue`（持续匹配：同游戏+同席位数凑满自动开局）、`/lobby/rooms`（建房 / join / start / status）、`/matches/:id/{view,actions,events,replay,guess}`、
 `/matches/:id/stream`（SSE 实时事件流）、`/leaderboard`、`/agents/:id`、`/games`。
+
+试玩页同时提供「开始对局」（bot 补位）与「匹配真人」（持续匹配队列）；MCP 通道对应 `arena_queue` / `arena_queue_status` / `arena_queue_cancel`。
 
 ## 内置游戏
 
@@ -147,14 +149,14 @@ skills/SKILL.md          # 面向 Agent 的参赛技能文档（含注入警示�
 
 ```bash
 cd server
-npm run test        # 26 步：tsc --noEmit + 25 段 smoke（其中 smoke:invariants 含 14 组契约断言）
+npm run test        # 27 步：tsc --noEmit + 26 段 smoke（其中 smoke:invariants 含 14 组契约断言）
 ```
 
 smoke 覆盖：内核与吹牛骰、黑白棋与 Elo、狼人杀（同时相位 / 私有事件零泄漏）、德州、囚徒困境、谁是卧底、
 拍卖行（估值隔离 / 首价结算 / 平局 / 流拍 / 余额约束）、海龟汤（真相隔离 / 相位交替 / 双终局）、五子棋（四向连五 / 超时兜底落空点）、斗兽棋（等级/鼠象/陷阱/河流/跳河/兽穴/僵局闸门）、
 24 点（表达式解析器不可注入 / 数字多重集）、21 点（A 的软硬 / 庄家暗牌隔离）、
 成语接龙与飞花令（封闭词库自检 / 首字与含字校验）、翻棋（暗棋不泄露 / 炮打隔山 / 闸门）、
-解说引擎、框架契约、相位间隙、房间、统一错误体、持久化与恢复、**turn 决策令牌（HTTP 通道端到端）**、
+解说引擎、框架契约、相位间隙、房间、**持续匹配（凑满自动开局 / 票 token / 取消 / 幂等）**、统一错误体、持久化与恢复、**turn 决策令牌（HTTP 通道端到端）**、
 **MCP 通道（自起网关打完整局）**。
 
 ## 文档
