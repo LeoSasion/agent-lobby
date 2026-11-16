@@ -9,6 +9,9 @@ import { createServer } from "node:http";
 import { createHmac } from "node:crypto";
 import { Gateway } from "./gateway/http.ts";
 
+// r47：本冒烟用 127.0.0.1 自建 webhook 接收端；生产默认拒绝私网回调
+process.env.ALLOW_PRIVATE_WEBHOOKS = "1";
+
 const PORT = 18798;
 const BASE = `http://127.0.0.1:${PORT}/api/v1`;
 

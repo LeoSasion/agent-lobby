@@ -13,7 +13,7 @@
  */
 
 import { createInterface } from "node:readline";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, rename, chmod } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
@@ -49,7 +49,11 @@ function rememberTurn(v: unknown): void {
 
 async function saveState(): Promise<void> {
   try {
-    await writeFile(STATE_FILE, JSON.stringify(state, null, 2), "utf8");
+    // r47：身份状态含 api_key / seat_token / join_token —— 0600 + 原子替换，避免半截文件与默认 0644
+    const tmp = `${STATE_FILE}.tmp-${process.pid}`;
+    await writeFile(tmp, JSON.stringify(state, null, 2), { encoding: "utf8", mode: 0o600 });
+    await chmod(tmp, 0o600);
+    await rename(tmp, STATE_FILE);
   } catch {
     /* 状态保存失败不致命 */
   }
@@ -57,10 +61,12 @@ async function saveState(): Promise<void> {
 
 type Json = Record<string, unknown>;
 
-async function api(path: string, opts: { method?: string; seat?: boolean; body?: unknown } = {}): Promise<Json> {
+async function api(path: string, opts: { method?: string; seat?: boolean; auth?: boolean; roomToken?: boolean; body?: unknown } = {}): Promise<Json> {
   const headers: Record<string, string> = { "content-type": "application/json" };
-  if (state.api_key) headers.authorization = "Bearer " + state.api_key;
+  // r47：Bearer 只发给确实需要身份的端点，避免 ARENA_URL 误配时把 api_key 交给任意服务
+  if (opts.auth && state.api_key) headers.authorization = "Bearer " + state.api_key;
   if (opts.seat && state.seat_token) headers["x-seat-token"] = state.seat_token;
+  if (opts.roomToken && state.join_token) headers["x-room-token"] = state.join_token;
   // r30c：网络层失败与非 JSON 响应曾裸抛到 tools/call 的 catch —— LLM 客户端只会看到
   // "fetch failed" / "Unexpected token < in JSON"，无从判断是网关没起还是对局被清理。
   // 与 sdk/client.ts 的 fetchGuarded 口径对齐：两种情况都转成可读的结构化中文错误。
@@ -105,7 +111,7 @@ const tools: Tool[] = [
     },
     async run(args) {
       const name = String(args.name ?? "mcp-agent");
-      const r = await api("/agents", { method: "POST", body: { name } });
+      const r = await api("/agents", { method: "POST", auth: true, body: { name } });
       state.api_key = r.api_key as string;
       if (r.agent_id) state.agent_id = r.agent_id as string;
       state.name = name;
@@ -141,7 +147,7 @@ const tools: Tool[] = [
     async run(args) {
       const body: Json = { game: String(args.game) };
       if (args.seats !== undefined) body.seats = args.seats;
-      const r = await api("/lobby/quickstart", { method: "POST", body });
+      const r = await api("/lobby/quickstart", { method: "POST", auth: true, body });
       if (r.error) throw new Error(`加入失败：${JSON.stringify(r)}`);
       state.match_id = r.match_id as string;
       state.seat_token = r.seat_token as string;
@@ -165,7 +171,7 @@ const tools: Tool[] = [
     },
     async run(args) {
       const roomId = String(args.room_id);
-      const r = await api(`/lobby/rooms/${roomId}/join`, { method: "POST", body: {} });
+      const r = await api(`/lobby/rooms/${roomId}/join`, { method: "POST", auth: true, body: {} });
       if (r.error) throw new Error(`加入房间失败：${JSON.stringify(r)}`);
       state.room_id = roomId;
       state.join_token = r.join_token as string;
@@ -180,7 +186,7 @@ const tools: Tool[] = [
     inputSchema: { type: "object", properties: {} },
     async run() {
       if (!state.room_id || !state.join_token) throw new Error("尚未加入房间，请先调用 arena_join_room。");
-      const r = await api(`/lobby/rooms/${state.room_id}?token=${encodeURIComponent(state.join_token)}`);
+      const r = await api(`/lobby/rooms/${state.room_id}`, { roomToken: true });
       if (r.error) throw new Error(`查询失败：${JSON.stringify(r)}`);
       if (r.status === "started" && r.match_id && r.seat_token) {
         state.match_id = r.match_id as string;

@@ -71,15 +71,12 @@ export function createGomokuBot(name: string, aggression = 0.9): SeatDriver {
       const board = pub.board;
       const me = (view.you as { seat?: number } | undefined)?.seat;
       if (!Array.isArray(board) || typeof me !== "number") {
-        submit({ type: "place", r: 0, c: 0 });
+        // r47：没有可靠盘面时别硬编码 (0,0)——交给引擎的合法超时兜底
         return;
       }
       const empties: number[] = [];
       for (let i = 0; i < board.length; i++) if (board[i] === null) empties.push(i);
-      if (empties.length === 0) {
-        submit({ type: "place", r: 0, c: 0 });
-        return;
-      }
+      if (empties.length === 0) return; // 棋盘已满：无合法落点，交给引擎终局判定
 
       const opps = new Set<number>();
       for (const v of board) if (typeof v === "number") opps.add(v);

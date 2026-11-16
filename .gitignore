@@ -5,6 +5,8 @@ data/
 mcp/.mcp-state.json
 mcp/.smoke-state.json
 .DS_Store
+.env
+.env.*
 # 逐轮开发工作产物（含编排脚本/凭据/日志，不入公开仓）
 tmp-*
 

@@ -190,6 +190,28 @@ export function winnersOf(scores: Record<SeatId, number>): SeatId[] {
     .map(([k]) => Number(k));
 }
 
+/**
+ * 对外事件出口：所有实时/回放端点共用的可见性 + 推理脱敏规则。
+ * r47 定标：reasoning 属于观众可读内容，但赛中只对「观众」与「推理作者本人」开放；
+ * 其他席位看不到（防竞技泄露）。前端负责默认折叠、点击展开，数据层只负责权限边界。
+ * 返回 null 表示该事件对此 viewer 完全不可见。
+ */
+export function publicEventFor(
+  viewer: SeatId | "spectator",
+  ev: MatchEvent,
+  finished: boolean,
+): MatchEvent | null {
+  if (ev.visibility !== "all") {
+    if (viewer === "spectator") return null;
+    if (!ev.visibility.seats.includes(viewer)) return null;
+  }
+  if (finished || ev.type !== "acted" || ev.data.reasoning === undefined) return ev;
+  const actor = ev.data.seat;
+  if (viewer === "spectator" || viewer === actor) return ev;
+  const { reasoning: _stripped, ...rest } = ev.data;
+  return { ...ev, data: rest };
+}
+
 export class Match {
   readonly id: string;
   readonly seats: SeatId[];
@@ -344,18 +366,16 @@ export class Match {
   }
 
   /**
-   * 可见事件（含赛中脱敏）：acted.reasoning 是选手私有推理，
-   * 赛中对其他席位/观战隐藏（防竞技泄露）；终局后随事件流公开，供复盘解说。
+   * 可见事件（含赛中脱敏）：acted.reasoning 是选手推理文本。
+   * r47 产品定标：观众与推理作者本人可见（前端默认折叠、自愿展开），
+   * 赛中仍不对其他席位公开（防竞技泄露）；终局后对所有视角公开，供复盘解说。
    */
   private visibleEvents(viewer: SeatId | "spectator"): MatchEvent[] {
     const evs = this.store.visibleTo(viewer);
     if (this.finished) return evs;
-    return evs.map((e) => {
-      if (e.type === "acted" && e.data.reasoning !== undefined) {
-        const { reasoning: _stripped, ...rest } = e.data;
-        return { ...e, data: rest };
-      }
-      return e;
+    return evs.flatMap((e) => {
+      const visible = publicEventFor(viewer, e, this.finished);
+      return visible ? [visible] : [];
     });
   }
 

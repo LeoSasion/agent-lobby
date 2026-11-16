@@ -70,10 +70,14 @@ export function createOthelloBot(name: string, style: 0 | 1 | 2 = 0): SeatDriver
       }
       const board = view.public.board as number[];
       const seat = view.you.seat;
+      // r47：颜色由 public.colors 决定，不再假设「座位号 = 棋子颜色」——
+      // 席位编号若不再从 1 起，旧写法会把自己的翻子数全算成 0（静默降智）。
+      const colors = view.public.colors as { black?: number; white?: number } | undefined;
+      const player = colors?.black === seat ? 1 : colors?.white === seat ? 2 : seat;
       let best = cells[0];
       let bestScore = -Infinity;
       for (const cell of cells) {
-        const flips = countFlips(board, cell, seat);
+        const flips = countFlips(board, cell, player);
         const score = WEIGHTS[cell] + (style === 1 ? flips * 4 : style === 2 ? -flips * 2 : 0);
         if (score > bestScore) {
           bestScore = score;

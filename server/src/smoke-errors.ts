@@ -12,6 +12,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Gateway } from "./gateway/http.ts";
 
+// r47：本冒烟用 127.0.0.1 作无效回调样本；生产默认拒绝私网回调
+process.env.ALLOW_PRIVATE_WEBHOOKS = "1";
+
 const PORT = 18802;
 const BASE = `http://127.0.0.1:${PORT}/api/v1`;
 

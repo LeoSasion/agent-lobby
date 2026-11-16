@@ -12,14 +12,16 @@
  *   9. 决策令牌：view.turn 可回传，陈旧提交拒为 STALE_VIEW 且不入账
  *  10. 决策方式记分：acted 的 reasoning 正确累计；持久化导入兼容无该字段的旧数据
  *  11. 单文件页面：脚本可解析、真实渲染器可执行、事件 case 不重名、同名/终局事件文案无 undefined
+ *  12. 推理展示边界：观众/作者赛中可读、其他席位脱敏；前端默认折叠并转义
+ *  13. 网关边界：回调 URL 拒绝回环/非 http(s)，请求体超 1 MiB 返回 413
  * 运行：node --experimental-strip-types src/smoke-invariants.ts
  */
 
 import { createMatch } from "./arena/lobby.ts";
-import { composeAgentView, placementsFromScores, winnersOf } from "./arena/match.ts";
+import { composeAgentView, placementsFromScores, publicEventFor, winnersOf } from "./arena/match.ts";
 import type { Match, SeatDriver } from "./arena/match.ts";
 import type { GameModule } from "./games/types.ts";
-import type { Action, AgentView, SeatId, SubmitResult } from "./protocol.ts";
+import type { Action, AgentView, MatchEvent, SeatId, SubmitResult } from "./protocol.ts";
 import { createHoldemLite } from "./games/holdem-lite.ts";
 import { createLiarsDice } from "./games/liars-dice.ts";
 import { createOthello } from "./games/othello.ts";
@@ -397,6 +399,15 @@ const legacy = rs10b.record("dilemma", "legacy");
 check("持久化导入兼容旧数据（actions/reasoned 兜底 0）", legacy.actions === 0 && legacy.reasoned === 0, `legacy actions=${legacy.actions} reasoned=${legacy.reasoned}`);
 check("从未行动 rate 为 null（不显示成 0%）", reasoningRate({ rating: 1200, games: 0, wins: 0, draws: 0, losses: 0 }) === null, "");
 check("rate 计算正确", reasoningRate(ra10) === 1, String(reasoningRate(ra10)));
+// r47：K 不对称时零和化会重新分配幅度——显式锁住这个取舍，避免有人误以为"2 席局恒不变"
+const rs10k = new RatingStore();
+rs10k.import({ dilemma: {
+  vet: { rating: 1200, games: 10, wins: 10, draws: 0, losses: 0 },
+  rookie: { rating: 1200, games: 0, wins: 0, draws: 0, losses: 0 },
+} });
+const kDelta10 = rs10k.applyMatch("dilemma", new Map<SeatId, string>([[1, "vet"], [2, "rookie"]]), { 1: 0, 2: 1 });
+check("K 不对称的两人局仍严格零和", kDelta10.reduce((a, d) => a + d.delta, 0) === 0, JSON.stringify(kDelta10.map((d) => d.delta)));
+check("K 不对称时零和优先于定级期幅度", kDelta10[0]?.delta === -15 && kDelta10[1]?.delta === 15, JSON.stringify(kDelta10.map((d) => d.delta)));
 
 console.log("\n[11] 单文件页面：内联脚本整体可解析");
 const html11 = readFileSync(join(import.meta.dirname, "..", "..", "web", "index.html"), "utf8");
@@ -463,6 +474,46 @@ try {
   evTextError11 = e instanceof Error ? e.message : String(e);
 }
 check("同名事件、棋类终局与拍卖文案各自正确", evTextError11 === "", evTextError11 || "7 个事件样本通过");
+
+console.log("\n[12] 推理展示边界：观众/作者可读，其他席位赛中脱敏；前端默认折叠");
+const actedEv12 = {
+  seq: 7, ts: 1, type: "acted", visibility: "all",
+  data: { seat: 1, action: { type: "move", choice: "cooperate" }, reasoning: "R47_PRIVATE_NOTE" },
+} as MatchEvent;
+const spec12 = publicEventFor("spectator", actedEv12, false);
+const actor12 = publicEventFor(1, actedEv12, false);
+const rival12 = publicEventFor(2, actedEv12, false);
+const finalRival12 = publicEventFor(2, actedEv12, true);
+const privateEv12 = { ...actedEv12, visibility: { seats: [1] } } as MatchEvent;
+check("赛中观众可读推理（前端折叠由 UI 负责）", spec12?.data.reasoning === "R47_PRIVATE_NOTE", String(spec12?.data.reasoning));
+check("赛中推理作者本人可读", actor12?.data.reasoning === "R47_PRIVATE_NOTE", String(actor12?.data.reasoning));
+check("赛中其他席位推理脱敏", rival12 !== null && rival12.data.reasoning === undefined, JSON.stringify(rival12?.data));
+check("终局后所有视角公开推理", finalRival12?.data.reasoning === "R47_PRIVATE_NOTE", String(finalRival12?.data.reasoning));
+check("可见性过滤先于推理判断", publicEventFor("spectator", privateEv12, false) === null, "");
+const foldSrc12 = html11.slice(html11.indexOf("function reasonHTML"), html11.indexOf("function renderLog"));
+check("前端推理默认折叠且转义", foldSrc12.includes("<details class=\"rsn\"") && foldSrc12.includes("esc(r)"), foldSrc12.slice(0, 50));
+check("onclick 元素统一补键盘可达", html11.includes("function a11yButtons") && html11.includes('[onclick][role="button"]'), "");
+
+console.log("\n[13] 网关边界：Webhook 回调 URL 校验 + 请求体上限");
+const PORT13 = 18821;
+const gw13 = new Gateway(join(tmpdir(), `arena-boundary-${process.pid}.json`));
+gw13.registerGame(createDilemma());
+await new Promise<void>((r) => gw13.listen(PORT13, () => r()));
+const post13 = async (path: string, body: unknown) => {
+  const res = await fetch(`http://127.0.0.1:${PORT13}/api/v1${path}`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+  });
+  return { status: res.status, body: await res.json() as { code?: string } };
+};
+const loopCb13 = await post13("/agents", { name: "loop", callback_url: "http://127.0.0.1:9/cb" });
+check("回环回调地址被拒", loopCb13.status === 400 && loopCb13.body.code === "INVALID_CALLBACK_URL", `${loopCb13.status} ${loopCb13.body.code}`);
+const fileCb13 = await post13("/agents", { name: "file", callback_url: "file:///etc/passwd" });
+check("非 http(s) 回调地址被拒", fileCb13.status === 400 && fileCb13.body.code === "INVALID_CALLBACK_URL", `${fileCb13.status} ${fileCb13.body.code}`);
+const plainReg13 = await post13("/agents", { name: "plain" });
+check("无回调注册仍正常", plainReg13.status === 201, String(plainReg13.status));
+const bigBody13 = await post13("/agents", { name: "big", padding: "x".repeat(1_100_000) });
+check("超 1 MiB body 返回 413", bigBody13.status === 413 && bigBody13.body.code === "BODY_TOO_LARGE", `${bigBody13.status} ${bigBody13.body.code}`);
+await gw13.close();
 
 console.log(`\n=== 结果：${failed === 0 ? "全部通过" : failed + " 项失败"} ===`);
 if (failed > 0) process.exitCode = 1;

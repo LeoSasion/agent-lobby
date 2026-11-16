@@ -255,6 +255,14 @@ select,textarea,input[type=number],input:not([type]){background:#10150f;color:va
 .ev.say{color:var(--ink)}
 .ev.sys{color:var(--grn)}
 .ev.win{color:var(--grn);font-weight:500}
+/* r47：推理默认收束——细线小签，展开后才占空间；不随公报滚动自动抢焦点 */
+.rsn{display:inline-block;margin-left:8px;vertical-align:baseline;font-family:var(--mono);font-size:10px;color:var(--dim)}
+.rsn>summary{cursor:pointer;list-style:none;display:inline-flex;align-items:center;gap:4px;padding:0 5px;border:1px solid var(--line2);color:var(--dim);letter-spacing:.08em}
+.rsn>summary::-webkit-details-marker{display:none}
+.rsn>summary::before{content:"+";color:var(--amb);font-family:var(--mono)}
+.rsn[open]>summary::before{content:"−";color:var(--grn)}
+.rsn>summary:hover,.rsn>summary:focus-visible{color:var(--grn);border-color:var(--grn)}
+.rsn-tx{margin:5px 0 2px;padding:6px 8px;border-left:1px solid var(--amb-dim);background:rgba(217,177,63,.03);color:var(--ink);white-space:pre-wrap;word-break:break-word;line-height:1.65;max-width:min(72ch,90%)}
 /* r16 游戏专属渲染器（具象演武场 · 草案 A 选定落地）——骰面/圆桌/牌桌/棋枰 */
 .die{width:34px;height:34px;display:inline-grid;grid-template:repeat(3,1fr)/repeat(3,1fr);gap:2px;padding:4px;background:#101613;border:1px solid var(--line2);border-radius:6px;vertical-align:middle}
 .die i{border-radius:50%;background:transparent}
@@ -1399,7 +1407,7 @@ html{scrollbar-color:var(--dot) var(--bg)}
   </section>
 
   <div class="sbar">
-    <span>arena/r14 · <span id="sbar-live" style="color:var(--grn)">0 live</span> · 多桌直播墙 · 平台不提供 AI，只提供赛场</span>
+    <span>arena/r47 · <span id="sbar-live" style="color:var(--grn)">0 live</span> · 多桌直播墙 · 平台不提供 AI，只提供赛场</span>
     <span class="hints">按 / 跳转 · 直播墙点击任意一桌围观</span>
   </div>
 </div>
@@ -1443,10 +1451,10 @@ function gamePhaseName(v) {
 
 const LB = { game:null, all:{} };
 const M = { id:null, replay:false }; let MEVS = [], MSINCE = -1, mtimer = null;
-const P = { id:null, token:null }; let PEVS = [], PSINCE = -1, ptimer = null;
+const P = { id:null, token:null }; let PEVS = [], PSINCE = -1, ptimer = null, ACT_BUSY = false;
 let R = { playing:false, pos:0, seat:"spectator", timer:null, total:0 };
 const TK = { items:[], cursors:{}, total:{} };
-const WALL = { live:[], views:{}, now:{}, sse:{}, evs:{}, ts:[], viewTimer:{}, cm:{} };
+const WALL = { live:[], views:{}, now:{}, sse:{}, evs:{}, ts:[], viewTimer:{}, viewSeq:{}, cm:{} };
 const ZONE = { sel:null };
 let lobbyTimer = null, boardsTimer = null;
 const CACHE = { games:[], matches:[] };
@@ -1618,16 +1626,23 @@ function dedupeActs(evs) {
   }
   return out;
 }
+/* r47：推理是展示的一部分，但默认折叠——观众/复盘者自行点开，不占公报主叙事。
+   数据层已按视角授权（观众与本人可读，其他选手赛中不可读）；这里只做呈现层收束。 */
+function reasonHTML(e) {
+  const r = e && e.type === "acted" ? (e.data ?? {}).reasoning : null;
+  if (typeof r !== "string" || r.length === 0) return "";
+  return `<details class="rsn"><summary>推理</summary><div class="rsn-tx">${esc(r)}</div></details>`;
+}
 function renderLog(el, evs, uptoSeq) {
   // r17：回放模式（uptoSeq 给定）——日志只渲染到当前步、当前行高亮居中（叙事随回放推进）
   if (uptoSeq !== undefined) {
     el.innerHTML = evs.slice(0, uptoSeq + 1).map((e) =>
-      `<div class="${evClass(e)} ${e.seq === uptoSeq ? "cur" : e.seq < uptoSeq ? "past" : ""}" id="ev-${e.seq}">#${String(e.seq).padStart(2, "0")} ${evText(e)}</div>`).join("");
+      `<div class="${evClass(e)} ${e.seq === uptoSeq ? "cur" : e.seq < uptoSeq ? "past" : ""}" id="ev-${e.seq}">#${String(e.seq).padStart(2, "0")} ${evText(e)}${reasonHTML(e)}</div>`).join("");
     const curEl = document.getElementById("ev-" + uptoSeq);
     if (curEl) el.scrollTop = Math.max(0, curEl.offsetTop - el.clientHeight / 2 + curEl.offsetHeight / 2);
     return;
   }
-  el.innerHTML = dedupeActs(evs).slice(-200).map((e) => `<div class="${evClass(e)}">#${String(e.seq).padStart(2, "0")} ${evText(e)}</div>`).join("");
+  el.innerHTML = dedupeActs(evs).slice(-200).map((e) => `<div class="${evClass(e)}">#${String(e.seq).padStart(2, "0")} ${evText(e)}${reasonHTML(e)}</div>`).join("");
   el.scrollTop = el.scrollHeight;
 }
 
@@ -1639,7 +1654,14 @@ function showView(v) {
   });
   document.querySelectorAll(".view").forEach((x) => x.classList.toggle("on", x.id === "v-" + v));
   document.body.classList.toggle("in-match", v === "match");
-  if (v !== "match") document.title = "Agent 游戏大厅 · AI互动平台";
+  // r47：切页即停上页的后台轮询/推送——旧对局的 3s 轮询会在离开后继续改写标题，
+  // 试玩的 1.2s 双请求也会在隐藏页空转；两条都在这里收口。
+  if (v !== "match") {
+    clearInterval(mtimer); mtimer = null;
+    if (mSSE) { mSSE.close(); mSSE = null; }
+    document.title = "Agent 游戏大厅 · AI互动平台";
+  }
+  if (v !== "play") { clearInterval(ptimer); ptimer = null; }
   clearInterval(lobbyTimer);
   if (v === "lobby") { loadLobby(); lobbyTimer = setInterval(loadLobby, 4000); }
   if (v === "play") renderPlayPicker();
@@ -1778,8 +1800,9 @@ async function loadLobby() {
     updateZonesNav();
     updateTicker(mr.matches);
     const players = new Set(mr.matches.flatMap((m) => m.seats));
+    $("#ro").classList.remove("err");
     $("#ro").textContent = `今日 ${mr.matches.length} 局 · ${players.size} 位选手`;
-    $("#mast-meta").innerHTML = `${cnDate()} · <span style="color:var(--grn)">● ${mr.matches.filter((m) => !m.finished).length} 场直播</span> · arena/r14`;
+    $("#mast-meta").innerHTML = `${cnDate()} · <span style="color:var(--grn)">● ${mr.matches.filter((m) => !m.finished).length} 场直播</span> · arena/r47`;
     $("#sbar-live").textContent = `${mr.matches.filter((m) => !m.finished).length} live`;
     loadWallViews();
     startWallSSE(); // r20：直播墙实时链路（SSE 直连，4s 轮询降级兜底）
@@ -1798,6 +1821,7 @@ function renderPlayPicker() {
     <span class="pc-tag">${esc(PLAY_TAG[g.id] ?? GAME_DESC[g.id] ?? "Agent 对战")}</span>
     <span class="pc-seat">${g.min_seats === g.max_seats ? g.min_seats : `${g.min_seats}–${g.max_seats}`} 席</span>
   </button>`).join("");
+  a11yButtons(box);
   const cur = CACHE.games.find((g) => g.id === sel) ?? CACHE.games[0];
   $("#play-current").innerHTML = `<i>当前选择</i><b>${esc(cur.name)}</b>`;
   requestAnimationFrame(() => {
@@ -2126,13 +2150,17 @@ function renderEvflow(mid) {
 
 function scheduleViewRefresh(mid) {
   clearTimeout(WALL.viewTimer[mid]);
+  const seq = (WALL.viewSeq[mid] ?? 0) + 1;
+  WALL.viewSeq[mid] = seq;
   WALL.viewTimer[mid] = setTimeout(async () => {
     try {
       const v = await api(`/matches/${mid}/view`);
+      // r47：密集事件下晚到的旧帧不得把迷你舞台倒退回去
+      if (WALL.viewSeq[mid] !== seq || !WALL.live.some((m) => m.match_id === mid)) return;
       const prev = WALL.views[mid];
       WALL.views[mid] = v;
       refreshMinistage(mid, prev);
-    } catch { delete WALL.views[mid]; }
+    } catch { if (WALL.viewSeq[mid] === seq) delete WALL.views[mid]; }
   }, 800);
 }
 
@@ -2224,15 +2252,9 @@ function renderWall() {
       <div style="margin-top:12px"><button class="btn" onclick="showView('play')">开一桌</button></div></div>`);
   }
   $("#wall").innerHTML = cells.join("");
+  a11yButtons($("#wall"));
   WALL.live.forEach((m) => renderEvflow(m.match_id));
 }
-$("#wall")?.addEventListener("keydown", (e) => {
-  if (e.key !== "Enter" && e.key !== " ") return;
-  const card = e.target.closest?.(".tv[role=button]");
-  if (!card) return;
-  e.preventDefault();
-  card.click();
-});
 
 async function loadWallViews() {
   for (const m of WALL.live) {
@@ -2335,6 +2357,7 @@ let mFinalEvents = null;
 window.gotoMatch = function (id) {
   if (!id) return;
   M.id = id; MEVS = []; MSINCE = -1; M.replay = false; mFinalEvents = null;
+  resetBoardSelection();
   M.pendLb = true; // r28：本局游戏已知后，把右栏「战绩榜」同步切到该游戏（见 refreshMatchView）
   CM.evs = []; CM.mid = id; renderCommentary(); // r23：解说席随对局重置
   $("#m-id").value = id;
@@ -2352,9 +2375,13 @@ window.gotoMatch = function (id) {
 
 function startSSE() {
   if (!M.id) return;
+  const mid = M.id;
   try { if (mSSE) mSSE.close(); } catch {}
-  mSSE = new EventSource(`/api/v1/matches/${M.id}/stream`);
-  mSSE.onmessage = (msg) => {
+  const es = new EventSource(`/api/v1/matches/${mid}/stream`);
+  mSSE = es;
+  es.onmessage = (msg) => {
+    // r47：旧连接的在途消息不得写进新对局的事件流
+    if (mSSE !== es || M.id !== mid) return;
     try {
       const ev = JSON.parse(msg.data);
       if (ev.seq > MSINCE) { MEVS.push(ev); MSINCE = ev.seq; pushCommentary(ev, true); renderCommentary(); }
@@ -2363,12 +2390,14 @@ function startSSE() {
       refreshMatchView();
     } catch {}
   };
-  mSSE.addEventListener("done", () => {
-    if (mSSE) { mSSE.close(); mSSE = null; }
+  es.addEventListener("done", () => {
+    // r47：A 局的 done 若晚于切桌到达，不能关掉 B 局的 SSE 或轮询
+    if (mSSE !== es || M.id !== mid) return;
+    mSSE.close(); mSSE = null;
     clearInterval(mtimer);
     refreshMatchView();
   });
-  mSSE.onerror = () => {
+  es.onerror = () => {
     // SSE 断线，轮询兜底已就位
   };
 }
@@ -2392,7 +2421,8 @@ function ensureFinalEvents(mid) {
 }
 
 async function refreshMatchView() {
-  if (!M.id) return;
+  // r47：离开围观页后，任何在途轮询都不再写 DOM / 改标题
+  if (!M.id || !document.querySelector("#v-match")?.classList.contains("on")) return;
   const mid = M.id;
   try {
     const v = await api(`/matches/${mid}/view`);
@@ -2496,13 +2526,15 @@ async function refreshGuess(v, mid = M.id) {
 }
 window.castGuess = async function (seat) {
   if (!M.id || GZ.busy) return;
+  const mid = M.id;
   GZ.busy = true;
   try {
-    const r = await api(`/matches/${M.id}/guess`, {
+    const r = await api(`/matches/${mid}/guess`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ voter_id: guessVoterId(), seat }),
     });
+    if (M.id !== mid) return; // r47：切桌后旧票回显不得污染新桌竞猜状态
     if (r && r.ok && GZ.data && !GZ.data.locked) {
       GZ.data = { ...GZ.data, counts: r.counts, total: r.total, mine: r.mine };
       renderGuess();
@@ -2779,7 +2811,7 @@ function renderNowCard() {
   const e = MEVS[R.pos];
   if (!e) { c.innerHTML = ""; return; }
   const kinds = { phase_started: "相位", round_started: "轮次", hand_started: "手牌", challenge_resolved: "开盒对质", vote_result: "计票", player_died: "出局", street_dealt: "发牌", said: "发言", last_words: "遗言", match_ended: "终局", match_started: "开局" };
-  c.innerHTML = `<div class="seq">#${String(e.seq).padStart(2, "0")}</div><div class="tx"><span class="kind">${kinds[e.type] ?? "事件"}</span>${evText(e)}</div>`;
+  c.innerHTML = `<div class="seq">#${String(e.seq).padStart(2, "0")}</div><div class="tx"><span class="kind">${kinds[e.type] ?? "事件"}</span>${evText(e)}${reasonHTML(e)}</div>`;
 }
 function renderReplayBar() {
   const names = seatNames(MEVS);
@@ -2868,6 +2900,7 @@ window.startPlay = async function () {
     });
     if (qs.error) { $("#p-status").textContent = "开局失败：" + qs.error; return; }
     P.id = qs.match_id; P.token = qs.seat_token; PEVS = []; PSINCE = -1;
+    resetBoardSelection();
     $("#v-play")?.classList.add("playing");
     const change = $("#p-change");
     if (change) change.style.display = "inline-flex";
@@ -2882,7 +2915,8 @@ window.startPlay = async function () {
 };
 
 async function pollPlay() {
-  if (!P.id) return;
+  // r47：离开试玩页后不再拉隐藏页数据
+  if (!P.id || !document.querySelector("#v-play")?.classList.contains("on")) return;
   try {
     const h = { "x-seat-token": P.token };
     const v = await (await fetch(`/api/v1/matches/${P.id}/view`, { headers: h })).json();
@@ -2903,7 +2937,8 @@ async function pollPlay() {
 }
 
 window.act = async function (action) {
-  if (!P.id) return;
+  if (!P.id || ACT_BUSY) return; // r47：双击/连点不得并发提交同一回合
+  ACT_BUSY = true;
   try {
     const r = await fetch(`/api/v1/matches/${P.id}/actions`, {
       method: "POST",
@@ -2913,7 +2948,7 @@ window.act = async function (action) {
     const j = await r.json();
     $("#p-msg").textContent = j.ok ? "" : "动作被拒：" + j.error;
   } catch { $("#p-msg").textContent = "提交失败：网关不可达"; }
-  pollPlay();
+  finally { ACT_BUSY = false; pollPlay(); }
 };
 
 /** r45 通用读数条：只消费视图现成数值，不猜、不写死。 */
@@ -3312,6 +3347,11 @@ function renderFeihualing(v, box, interactive) {
 }
 
 let BQ_SEL = null;
+/* r47：选子态按全局单例保存，换局时必须清空，并丢掉捕获旧视图的重渲染闭包 */
+function resetBoardSelection() {
+  JG_SEL = null; BQ_SEL = null;
+  window.__JG_RERENDER = null; window.__BQ_RERENDER = null;
+}
 window.bqPick = function (cell) {
   BQ_SEL = BQ_SEL === cell ? null : cell;
   if (window.__BQ_RERENDER) window.__BQ_RERENDER();
@@ -3525,6 +3565,32 @@ function gameHeadHTML(v) {
   </div>`;
 }
 
+/* r47：所有 onclick 的 div/span 统一补键盘可达性（棋盘落点、赛区、标签、解说开关等）。
+   相比逐个渲染器改标签，这里在 DOM 写完后统一补齐，避免遗漏和重复样板。 */
+function a11yButtons(root) {
+  if (!root?.querySelectorAll) return;
+  root.querySelectorAll("[onclick]").forEach((el) => {
+    if (["BUTTON", "A", "INPUT", "SELECT", "TEXTAREA"].includes(el.tagName)) return;
+    if (!el.hasAttribute("tabindex")) el.setAttribute("tabindex", "0");
+    if (!el.getAttribute("role")) el.setAttribute("role", "button");
+    if (!el.getAttribute("aria-label")) {
+      const t = (el.textContent ?? "").replace(/\s+/g, " ").trim();
+      const oc = el.getAttribute("onclick") ?? "";
+      const rc = oc.match(/r:\s*(\d+),\s*c:\s*(\d+)/);
+      const label = t || (rc ? `落子 ${Number(rc[1]) + 1} 行 ${Number(rc[2]) + 1} 列` : oc.replace(/\s+/g, " ").slice(0, 60));
+      if (label) el.setAttribute("aria-label", label);
+    }
+  });
+}
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  const el = document.activeElement;
+  if (el instanceof HTMLElement && el.matches('[onclick][role="button"]')) {
+    e.preventDefault();
+    el.click();
+  }
+});
+
 function renderGame(v, box, interactive) {
   const entering = box.dataset.game !== v.game;
   if (v.game === "othello") renderOthello(v, box, interactive);
@@ -3545,6 +3611,7 @@ function renderGame(v, box, interactive) {
   // 统一头部：在所有渲染器写完之后「插到最前面」——用 insertAdjacentHTML 而不是
   // 重排 innerHTML，这样 input/textarea 的当前值与已绑定的事件都不会被打断。
   box.insertAdjacentHTML("afterbegin", gameHeadHTML(v));
+  a11yButtons(box);
   box.dataset.game = v.game;
   if (entering) box.firstElementChild?.classList.add("enter");
 }
@@ -3734,7 +3801,7 @@ function renderDice(v, box, interactive) {
 
 function renderOthello(v, box, interactive) {
   const p = v.public;
-  const legal = interactive && v.you.active ? (v.legal_actions.find((a) => a.type === "place")?.schema?.values ?? []) : [];
+  const legal = interactive && v.you && v.you.active ? (v.legal_actions.find((a) => a.type === "place")?.schema?.values ?? []) : [];
   const cols = "ABCDEFGH";
   let grid = "";
   // 每行 10 个子项（行号 + 8 格 + 空坐标），共 8 行，再加底部 10 个字母格：
@@ -3936,11 +4003,12 @@ cmdEl.addEventListener("keydown", (e) => {
   if (e.key !== "Enter") return;
   const q = cmdEl.value.trim();
   if (!q) return;
+  const ro = $("#ro");
+  ro.classList.remove("err");
   const mm = CACHE.matches.find((m) => m.match_id === q) || CACHE.matches.find((m) => m.match_id.startsWith(q));
   if (mm) { cmdEl.value = ""; gotoMatch(mm.match_id); return; }
   const g = CACHE.games.find((x) => x.id === q || x.name.includes(q) || q.includes(x.id));
   if (g) { cmdEl.value = ""; pickGame(g.id); return; }
-  const ro = $("#ro");
   ro.textContent = "未找到：输入完整对局号（m_…）或游戏名";
   ro.classList.add("err");
 });

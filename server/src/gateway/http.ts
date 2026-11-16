@@ -10,16 +10,17 @@
  *   GET  /api/v1/matches/:id/replay         事件日志 + 终局分数
  */
 
-import { createServer } from "node:http";
+import { createServer, type Server } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, rename, copyFile, chmod } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { isIP } from "node:net";
 import { fileURLToPath } from "node:url";
 import { createHmac } from "node:crypto";
 import type { Action, AgentView, MatchEvent, SeatId, SubmitOptions, SubmitResult } from "../protocol.ts";
 import type { GameModule } from "../games/types.ts";
 import { callLLMCommentary } from "../commentary/llm.ts";
-import { Match, composeAgentView, placementsFromScores, placementsOf, winnersOf } from "../arena/match.ts";
+import { Match, composeAgentView, placementsFromScores, placementsOf, publicEventFor, winnersOf } from "../arena/match.ts";
 import type { MatchResult, SeatDriver } from "../arena/match.ts";
 import { createMatch } from "../arena/lobby.ts";
 import { replayToState } from "../arena/replay.ts";
@@ -28,6 +29,42 @@ import type { RatingDelta, RatingRecord } from "../arena/rating.ts";
 import { houseBotsFor } from "../bots/registry.ts";
 import { WebhookSeatDriver } from "./webhook.ts";
 import { randomId, withTimeout } from "../util.ts";
+
+/**
+ * Webhook 回调地址校验（r47）：只接受 http(s)，默认拒绝回环/私网/链路本地/保留地址，
+ * 防止注册任意 URL 后平台代为请求内网。本地开发与冒烟可用 ALLOW_PRIVATE_WEBHOOKS=1 放开。
+ * 注意：URL 层校验挡不住 DNS rebinding；公网部署仍应放在有出网策略的环境里。
+ */
+function safeCallbackUrl(raw: unknown): { ok: true; url: string } | { ok: false; message: string } {
+  if (typeof raw !== "string" || raw.length === 0) return { ok: false, message: "callback_url 必须是非空字符串" };
+  if (raw.length > 2048) return { ok: false, message: "callback_url 过长（上限 2048 字符）" };
+  let u: URL;
+  try { u = new URL(raw); } catch { return { ok: false, message: "callback_url 不是合法 URL" }; }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return { ok: false, message: "callback_url 仅支持 http/https" };
+  if (u.username || u.password) return { ok: false, message: "callback_url 不得包含用户名或密码" };
+  if (process.env.ALLOW_PRIVATE_WEBHOOKS === "1") return { ok: true, url: u.toString() };
+  const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (host === "localhost" || host.endsWith(".localhost") || host === "0.0.0.0") {
+    return { ok: false, message: "callback_url 不得指向本机" };
+  }
+  const v = isIP(host);
+  if (v === 4) {
+    const a = host.split(".").map(Number);
+    if (a[0] === 0 || a[0] === 10 || a[0] === 127 || a[0] >= 224
+      || (a[0] === 169 && a[1] === 254) || (a[0] === 172 && a[1] >= 16 && a[1] <= 31)
+      || (a[0] === 192 && a[1] === 168) || (a[0] === 100 && a[1] >= 64 && a[1] <= 127)
+      || (a[0] === 192 && a[1] === 0 && a[2] === 0) || (a[0] === 198 && (a[1] === 18 || a[1] === 19))) {
+      return { ok: false, message: "callback_url 不得指向私网或保留地址" };
+    }
+  } else if (v === 6) {
+    const h = host.toLowerCase();
+    if (h === "::1" || h === "::" || h.startsWith("::ffff:") || h.startsWith("fc") || h.startsWith("fd")
+      || /^fe[89ab]/.test(h)) {
+      return { ok: false, message: "callback_url 不得指向私网或保留地址" };
+    }
+  }
+  return { ok: true, url: u.toString() };
+}
 
 /** HTTP Pull 座位驱动：act() 挂起等待，直到 Agent 经 POST /actions 提交（或超时兜底）。
  *  相位切换间隙（上一回合已结算、新回合 step 尚未开启）收到的提交先落地缓冲，
@@ -185,6 +222,7 @@ export class Gateway {
   private indexHtml: string | null = null;
   private dataFile: string;
   private persistTimer: ReturnType<typeof setInterval> | null = null;
+  private server: Server | null = null;
 
   constructor(dataFile?: string) {
     const here = dirname(fileURLToPath(import.meta.url));
@@ -198,13 +236,9 @@ export class Gateway {
 
   listen(port: number, onReady?: () => void): void {
     const server = createServer((req, res) => {
-      this.handle(req, res).catch((e) => {
-        // r10 w10-s1：INVALID_JSON 统一 400 且带 code 字段（原裸 json 无 code）
-        const badJson = String((e as Error)?.message ?? "").includes("INVALID_JSON");
-        this.err(res, badJson ? 400 : 500, badJson ? "INVALID_JSON" : "INTERNAL",
-          badJson ? "请求 body 不是合法 JSON" : `服务端内部错误：${String(e)}`);
-      });
+      this.handle(req, res).catch((e) => this.failErr(res, e));
     });
+    this.server = server;
     server.listen(port, onReady);
     // 定期持久化（30s）
     this.persistTimer = setInterval(() => {
@@ -224,6 +258,13 @@ export class Gateway {
         .catch(() => {})
         .finally(() => process.exit(0));
     });
+  }
+
+  /** r47：测试/嵌入式调用方可显式关停，避免监听句柄让进程悬住 */
+  close(): Promise<void> {
+    if (this.persistTimer) { clearInterval(this.persistTimer); this.persistTimer = null; }
+    if (!this.server) return Promise.resolve();
+    return new Promise((resolve) => this.server!.close(() => resolve()));
   }
 
   /** 持久化到 JSON 文件（ratings + agents + 对局记录——r9：恢复后 replay 可用，历史不再随重启清零）
@@ -270,7 +311,17 @@ export class Gateway {
     };
     const dir = dirname(this.dataFile);
     await mkdir(dir, { recursive: true });
-    await writeFile(this.dataFile, JSON.stringify(data), "utf8");
+    // r47：原子落盘——先写临时文件（0600），成功后留一份 .bak，再整体替换主文件。
+    // 崩溃在任何一步都不会让主文件停在半截 JSON；凭据文件也不再以默认 0644 落盘。
+    const tmp = `${this.dataFile}.tmp-${randomId("")}`;
+    await writeFile(tmp, JSON.stringify(data), { encoding: "utf8", mode: 0o600 });
+    await chmod(tmp, 0o600);
+    try {
+      await copyFile(this.dataFile, `${this.dataFile}.bak`);
+      await chmod(`${this.dataFile}.bak`, 0o600);
+    } catch { /* 首次运行没有旧文件可备份 */ }
+    await rename(tmp, this.dataFile);
+    await chmod(this.dataFile, 0o600).catch(() => {});
   }
 
   /**
@@ -445,7 +496,12 @@ export class Gateway {
       const body = await readJson(req);
       const name = String(body.name ?? "agent-" + randomId(""));
       const apiKey = "sk_" + randomId("");
-      const callbackUrl = typeof body.callback_url === "string" ? body.callback_url : undefined;
+      let callbackUrl: string | undefined;
+      if (typeof body.callback_url === "string" && body.callback_url.length > 0) {
+        const checked = safeCallbackUrl(body.callback_url);
+        if (!checked.ok) return this.err(res, 400, "INVALID_CALLBACK_URL", checked.message);
+        callbackUrl = checked.url;
+      }
       // r10 w10-h2 P1：webhook_secret 入参曾被忽略（恒自生成）——协议 §3.1 "可选自供"语义恢复：
       // 入参为非空 string 时采用（Agent 可预置 secret，免"注册→读响应→再配验签"往返），否则平台生成
       const providedSecret = typeof body.webhook_secret === "string" && body.webhook_secret.length > 0
@@ -591,7 +647,7 @@ export class Gateway {
     }
     const roomGet = /^\/api\/v1\/lobby\/rooms\/([^/]+)$/.exec(path);
     if (method === "GET" && roomGet) {
-      return this.roomStatus(roomGet[1], url, res);
+      return this.roomStatus(roomGet[1], url, req, res);
     }
     const lb = /^\/api\/v1\/leaderboard\/([^/]+)$/.exec(path);
     if (method === "GET" && lb) {
@@ -1019,7 +1075,7 @@ export class Gateway {
   }
 
   /** 房间状态：waiting 公开人数；started 凭 join_token 换座位分配 */
-  private roomStatus(roomId: string, url: URL, res: ServerResponse): void {
+  private roomStatus(roomId: string, url: URL, req: IncomingMessage, res: ServerResponse): void {
     const room = this.rooms.get(roomId);
     if (!room) return this.err(res, 404, "ROOM_NOT_FOUND", "房间不存在或已过期", { room_id: roomId, path: `/api/v1/lobby/rooms/${roomId}`, hint: "room_id 有误或已过期；房间列表见 GET /api/v1/lobby/rooms" });
     if (room.status === "waiting") {
@@ -1035,7 +1091,9 @@ export class Gateway {
         channels: room.players.map((p) => p.channel),
       });
     }
-    const token = url.searchParams.get("token");
+    // r47：房间令牌也可走 x-room-token 头——URL query 会被代理/访问日志留存
+    const token = url.searchParams.get("token")
+      ?? (typeof req.headers["x-room-token"] === "string" ? req.headers["x-room-token"] : null);
     const me = token ? room.players.find((p) => p.joinToken === token) : undefined;
     if (!me) {
       return this.json(res, 200, {
@@ -1226,12 +1284,10 @@ export class Gateway {
     }
 
     // 订阅新事件
-    const unsub = rm.match.subscribe((ev) => {
-      // 按可见性过滤
-      if (ev.visibility !== "all") {
-        if (viewer === "spectator" || !ev.visibility.seats.includes(viewer)) return;
-      }
-      if (ev.seq <= lastSeq) return;
+    const unsub = rm.match.subscribe((raw) => {
+      // r47：与 /events、/view、/replay 共用同一出口——观众可读 reasoning，对手席位不可读
+      const ev = publicEventFor(viewer, raw, rm.match.isFinished());
+      if (!ev || ev.seq <= lastSeq) return;
       lastSeq = ev.seq;
       try {
         res.write(`id: ${ev.seq}\ndata: ${JSON.stringify(ev)}\n\n`);
@@ -1292,12 +1348,12 @@ export class Gateway {
       viewer = seatParam;
     }
     const { state, terminal } = replayToState(game, all, upto);
-    const visible = all.filter(
-      (e) =>
-        e.seq <= upto &&
-        (e.visibility === "all" ||
-          (typeof e.visibility === "object" && e.visibility.seats.includes(viewer as number))),
-    );
+    const visible = all.flatMap((e) => {
+      if (e.seq > upto) return [];
+      // r47：中途回放与实时流同源——观众/作者本人保留 reasoning，其他席位脱敏
+      const v = publicEventFor(viewer, e, rm.match.isFinished());
+      return v ? [v] : [];
+    });
     // 相位提交进度重建（r7）：自最近一次 phase_started / vote_pk 锚点起，
     // 已 acted/timed_out 的座位即该窗口的提交进度——回放视图与实况 votes_cast 语义一致
     let anchor = -1;
@@ -1722,9 +1778,14 @@ export class Gateway {
     this.json(res, status, { error: code, code, message: message ?? code, ...extra });
   }
 
-  /** r10 w10-s1：端点局部 catch 统一分流——readJson 的 INVALID_JSON 转为 400（原被吞成 500 INTERNAL） */
+  /** r10 w10-s1 / r47：端点 catch 统一分流——INVALID_JSON 400、BODY_TOO_LARGE 413、其余 500 */
   private failErr(res: ServerResponse, e: unknown): void {
-    const badJson = String((e as Error)?.message ?? "").includes("INVALID_JSON");
+    const msg = String((e as Error)?.message ?? "");
+    if (msg.includes("BODY_TOO_LARGE")) {
+      this.err(res, 413, "BODY_TOO_LARGE", "请求 body 超过 1 MiB 上限");
+      return;
+    }
+    const badJson = msg.includes("INVALID_JSON");
     this.err(res, badJson ? 400 : 500, badJson ? "INVALID_JSON" : "INTERNAL",
       badJson ? "请求 body 不是合法 JSON" : `服务端内部错误：${String(e)}`);
   }
@@ -1742,8 +1803,18 @@ export function reasoningRate(r: RatingRecord): number | null {
 function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on("data", (c: Buffer) => chunks.push(c));
+    let size = 0;
+    let tooLarge = false;
+    req.on("data", (c: Buffer) => {
+      if (tooLarge) return;
+      size += c.length;
+      // r47：无上限 body 是低成本内存耗尽面（LLM 解说端点尤其）；超限后停止收包，
+      // end 时统一回 413，避免先 destroy socket 导致客户端只看到连接重置。
+      if (size > 1_048_576) { tooLarge = true; chunks.length = 0; return; }
+      chunks.push(c);
+    });
     req.on("end", () => {
+      if (tooLarge) return reject(new Error("BODY_TOO_LARGE"));
       const raw = Buffer.concat(chunks).toString("utf8");
       if (!raw) return resolve({});
       try {

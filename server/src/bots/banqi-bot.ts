@@ -25,7 +25,7 @@ export function createBanqiBot(name: string): SeatDriver {
       const me = (view.you as { seat?: number } | undefined)?.seat;
       const mySide = (view.private as { my_side?: string } | undefined)?.my_side;
       if (!Array.isArray(board) || typeof me !== "number" || !mySide) {
-        submit({ type: "flip", cell: 0 });
+        // r47：视图不完整时不硬编码 cell 0——交给引擎合法兜底
         return;
       }
 
@@ -73,7 +73,7 @@ export function createBanqiBot(name: string): SeatDriver {
         submit({ type: "flip", cell: flips[0]! });
         return;
       }
-      submit({ type: "flip", cell: 0 });
+      // r47：走到这里说明既无合法移动也无暗棋可翻（终局/异常视图）——不提交非法动作
     },
   };
 }

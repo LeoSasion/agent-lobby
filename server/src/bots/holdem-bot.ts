@@ -15,6 +15,7 @@ interface HPublic {
   street: "preflop" | "flop" | "turn" | "river";
   community: string[];
   pot: number;
+  total_pot?: number; // r13 起游戏侧提供「已收池 + 本街在途投入」——赔率分母必须用它
   current_bet: number;
   min_raise: number;
   to_act: number | null;
@@ -90,7 +91,10 @@ export function createHoldemBot(name: string, aggression = 0.5): SeatDriver {
       }
 
       // 面对下注：pot odds
-      const potOdds = toCall / (pub.pot + pub.current_bet + toCall);
+      // r47：游戏侧早已提供 total_pot（已收池 + 本街在途投入）——旧口径 pot + current_bet
+      // 会把多人底池系统性算小，bot 因此过度弃牌（游戏源码注释实测 -32% 净值）。
+      const totalPot = typeof pub.total_pot === "number" ? pub.total_pot : pub.pot + pub.current_bet;
+      const potOdds = toCall / (totalPot + toCall);
       if (strong) {
         // 强牌加注（或跟注）
         const target = pub.current_bet + pub.min_raise * 2;

@@ -39,7 +39,7 @@ export function createJungleBot(name: string, caution = 1.0): SeatDriver {
       const me = (view.you as { seat?: number } | undefined)?.seat;
       const mySide = (view.private as { my_side?: string } | undefined)?.my_side;
       if (!Array.isArray(board) || typeof me !== "number" || !mySide) {
-        submit({ type: "move", from: 0, to: 0 });
+        // r47：视图不完整时不要伪造 0→0（多半会被 validate 拒绝）——交给引擎合法兜底
         return;
       }
       const enemySide = mySide === "solid" ? "hollow" : "solid";
@@ -51,10 +51,7 @@ export function createJungleBot(name: string, caution = 1.0): SeatDriver {
         | { values?: unknown }
         | undefined;
       const vals = Array.isArray(schema?.values) ? (schema!.values as number[]) : [];
-      if (vals.length === 0) {
-        submit({ type: "move", from: 0, to: 0 });
-        return;
-      }
+      if (vals.length === 0) return; // 无法表=无合法走子；让内核按超时规则收口
 
       const at = (i: number): PieceView => board[i] ?? null;
       const dist = (i: number): number => {
