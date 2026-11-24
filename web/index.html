@@ -12,6 +12,9 @@
 :root{
   --bg:#0a0d0b; --ink:#c9d6cc; --dim:#7c8f80; --faint:#4a584e;
   --grn:#45d98e; --amb:#d9b13f; --red:#e07a6a; --line:#26302a; --dot:#3a463c; --hi:#eef5ef;
+  /* r51：全站 20 处写着 var(--line2) 却从未定义——CSS 变量未定义会让整条声明失效回退
+     currentColor/初始值，于是这些边线一直在「碰巧」按文字色描边。补上二级线色。 */
+  --line2:#33443b;
   --serif:Georgia,"Times New Roman","Songti SC",SimSun,serif;
   --mono:ui-monospace,"Cascadia Code",Consolas,"Courier New",monospace;
 }
@@ -817,6 +820,281 @@ html{scrollbar-color:var(--dot) var(--bg)}
 .pc-tag{grid-area:tag;font:9px var(--mono);letter-spacing:.12em;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pc-seat{grid-area:seat;font:8.5px var(--mono);letter-spacing:.08em;color:var(--faint);white-space:nowrap}
 .play-launch{margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+/* r52 房间页按 QQ 游戏大厅的结构重排：左「游戏库」列表 / 中房间表 / 选中后看座位 */
+.rooms-grid{display:grid;grid-template-columns:216px minmax(0,1fr);gap:clamp(18px,2.4cqi,30px);margin-top:clamp(12px,1.6cqi,20px)}
+.gl-rail{min-width:0}
+.gl-cats{display:flex;flex-wrap:wrap;gap:2px;margin:8px 0 10px}
+.gl-cat{appearance:none;border:0;background:none;color:var(--dim);font:10px var(--mono);letter-spacing:.04em;padding:4px 6px;cursor:pointer}
+.gl-cat:hover{color:var(--ink)}
+.gl-cat.on{color:var(--grn);background:rgba(69,217,142,.07)}
+.gl-search{width:100%;margin-bottom:8px;font-size:11px;padding:6px 8px}
+.gl-list{display:flex;flex-direction:column;max-height:min(64vh,600px);overflow-y:auto;scrollbar-width:thin}
+.gl-row{display:flex;align-items:center;gap:8px;width:100%;appearance:none;background:none;border:0;border-left:2px solid transparent;
+  padding:7px 8px;color:var(--dim);cursor:pointer;text-align:left}
+.gl-row:hover{background:rgba(255,255,255,.02);color:var(--ink)}
+.gl-row.on{border-left-color:var(--grn);color:var(--hi);background:rgba(69,217,142,.05)}
+.gl-n{font-family:var(--serif);font-size:13.5px;letter-spacing:.03em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gl-c{margin-left:auto;font:9px var(--mono);color:var(--faint);white-space:nowrap}
+.gl-row.on .gl-c{color:var(--grn)}
+.gl-c.hot{color:var(--grn)}
+.gl-empty{padding:10px 8px;font:10px var(--mono);color:var(--faint)}
+/* 顶部游戏条：像 QQ 大厅选完游戏后的窄条——名称、桌数、主按钮一行说完 */
+.rh{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;padding-bottom:10px;border-bottom:1px solid var(--line)}
+.rh-name{font-family:var(--serif);font-size:22px;letter-spacing:.06em;color:var(--hi);line-height:1.2}
+.rh-meta{font:9px var(--mono);letter-spacing:.1em;color:var(--faint);padding-bottom:4px}
+.rh-act{margin-left:auto;display:flex;gap:8px;align-items:center}
+/* 房间表：QQ 大厅是列表不是卡片 */
+.rl-head,.rrow{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr) 94px 76px 76px;gap:10px;align-items:center}
+.rl-head{padding:7px 10px;border-bottom:1px solid var(--line);font:8.5px var(--mono);letter-spacing:.14em;color:var(--faint)}
+.rrow{border-bottom:1px solid rgba(38,48,42,.6);padding:9px 10px;cursor:pointer;color:var(--dim);font-size:12px;transition:background .12s}
+.rrow:hover{background:#101813;color:var(--ink)}
+.rrow.on{background:rgba(69,217,142,.055);box-shadow:inset 2px 0 0 var(--grn)}
+.rrow.on .rr-no,.rrow.on .rr-host{color:var(--dim)}
+.rrow.on .rr-id .rr-game{color:var(--hi)}
+.rr-id{display:flex;align-items:baseline;gap:8px;min-width:0;white-space:nowrap;overflow:hidden}
+.rr-game{font-family:var(--serif);font-size:13.5px;color:var(--ink);letter-spacing:.03em;overflow:hidden;text-overflow:ellipsis}
+.rr-no{font:10px var(--mono);color:var(--faint);letter-spacing:.04em}
+.rr-host{color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rr-seat{display:flex;align-items:center;gap:3px}
+.sd{width:7px;height:13px;border:1px solid var(--line);display:inline-block}
+.sd.on{background:rgba(69,217,142,.45);border-color:rgba(69,217,142,.45)}
+.sd.bot{background:rgba(217,177,63,.4);border-color:rgba(217,177,63,.4)}
+.sd.empty{border-style:dashed}
+.rr-num{font:9px var(--mono);color:var(--faint);margin-left:4px;white-space:nowrap}
+.rr-st{font:9px var(--mono);letter-spacing:.1em;color:var(--grn)}
+.rr-st.live{color:var(--amb)}
+.rr-go{justify-self:end;appearance:none;background:none;border:0;font:9.5px var(--mono);letter-spacing:.06em;color:var(--grn);cursor:pointer;padding:2px 0}
+.rr-go:hover{color:var(--hi)}
+.rrow.started .rr-go{color:var(--dim)}
+.rrow.started .rr-go:hover{color:var(--ink)}
+.rooms-foot{margin-top:10px;display:flex;gap:12px;flex-wrap:wrap;font:9px var(--mono);letter-spacing:.06em;color:var(--faint)}
+/* 桌位数选择：与按钮同高，避免顶部条出现两级视觉重量 */
+.room-seats{background:#10150f;color:var(--dim);border:1px solid var(--line);padding:5px 6px;font:10px var(--mono);letter-spacing:.06em;outline:none}
+.room-seats:disabled{opacity:.45}
+.room-empty{padding:34px 18px;text-align:center;color:var(--faint);font-family:var(--serif);font-size:18px;letter-spacing:.08em}
+.room-empty small{display:block;margin-top:8px;font:10px var(--mono);letter-spacing:.08em;color:var(--faint)}
+.roomdetail{margin-top:18px;border:1px solid var(--line2);padding:18px;background:linear-gradient(180deg,rgba(255,255,255,.012),transparent 44%)}
+.rd-head{display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap}
+.rd-title{font-family:var(--serif);font-size:24px;letter-spacing:.05em;color:var(--ink)}
+.rd-sub{margin-top:5px;font:9px var(--mono);color:var(--faint);letter-spacing:.1em}
+.rd-actions{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+.rd-note{margin-top:12px;font:10px var(--mono);color:var(--dim);line-height:1.8}
+/* r56：座位区两套皮肤（data-skin），同一组变量各跑各的——
+   flat = 平面公报（默认）；felt = 台呢 + 皮垫（局部拟物）。
+   桌面与席位牌共用 --tbl-… 与 --surf-… 两组变量；状态只换边线与角标，不改材质。
+   r55 的「内印线」已删：外框 + 内框两圈线读作 UI 线框，不是物件。 */
+.table-stage{
+  --seat:110px;
+  --table-r:48px;          /* 桌面圆角，同时是席位行的左右内缩——席位不压到圆角上 */
+  --table-ar:2.8;          /* 桌面长宽比：三张牌宽的长桌不该拉成 5:1 */
+  --noise:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.22'/%3E%3C/svg%3E");
+  --tbl-bg:var(--noise),
+    linear-gradient(180deg,rgba(255,255,255,.05),rgba(0,0,0,.30)),
+    linear-gradient(180deg,#1c251d,#0c130e);
+  --tbl-blend:soft-light,normal,normal;
+  --tbl-border:rgba(0,0,0,.6);
+  --tbl-shadow:
+    inset 0 1px 0 rgba(255,255,255,.09),
+    inset 0 -1px 0 rgba(0,0,0,.65),
+    0 2px 4px rgba(0,0,0,.45),
+    0 10px 18px -12px rgba(0,0,0,.95);
+  --tt-main:rgba(206,222,210,.6);
+  --tt-sub:rgba(150,172,155,.58);
+  --surf-bg:var(--noise),
+    linear-gradient(180deg,rgba(255,255,255,.05),rgba(0,0,0,.30)),
+    linear-gradient(180deg,#1c251d,#0d140f);
+  --surf-border:rgba(0,0,0,.6);
+  --surf-shadow:
+    inset 0 1px 0 rgba(255,255,255,.09),
+    inset 0 -1px 0 rgba(0,0,0,.65),
+    0 2px 4px rgba(0,0,0,.45),
+    0 10px 18px -12px rgba(0,0,0,.95);
+  --seat-name:#e2ece5;
+  --seat-meta:rgba(150,172,155,.55);
+  --seat-num:rgba(150,172,155,.72);
+  position:relative;margin:16px auto 0;max-width:500px;padding:10px 0 12px;isolation:isolate}
+.ts-row{position:relative;z-index:1;display:grid;grid-template-columns:repeat(var(--n,2),minmax(0,1fr));
+  gap:12px;justify-items:center;padding:0 var(--table-r)}
+.ts-row.top{margin-bottom:12px}
+.ts-row.bot{margin-top:12px}
+
+/* —— 桌面 —— */
+.ts-table{position:relative;z-index:2;width:100%;aspect-ratio:var(--table-ar);border-radius:var(--table-r);overflow:hidden;
+  display:grid;place-content:center;text-align:center;
+  background-image:var(--tbl-bg);background-blend-mode:var(--tbl-blend);
+  border:1px solid var(--tbl-border);box-shadow:var(--tbl-shadow)}
+.tt-main{font-family:var(--serif);font-size:17px;letter-spacing:.34em;text-indent:.34em;color:var(--tt-main)}
+.tt-sub{margin-top:9px;font:9.5px var(--mono);letter-spacing:.16em;color:var(--tt-sub)}
+/* 对局中：平面皮肤只换边线与字色，不重铺台面 */
+.ts-table.live{border-color:rgba(217,177,63,.30)}
+.ts-table.live .tt-main{color:rgba(232,198,113,.88)}
+.ts-table.live .tt-sub{color:rgba(217,177,63,.55)}
+
+/* —— 皮肤②：台呢 + 木边 + 皮垫。只改变量，结构完全一致 ——
+   木边不用 border，用 10px 的 inset 环：4px 受光木料 + 6px 背光内坡，
+   这样它是一圈「厚度」而不是第二根线；台呢内侧再压一层内影，桌面才有凹陷感。 */
+.table-stage[data-skin="felt"]{
+  --tbl-bg:var(--noise),
+    repeating-linear-gradient(135deg,rgba(255,255,255,.02) 0 2px,rgba(0,0,0,.025) 2px 5px),
+    radial-gradient(120% 92% at 50% -8%,rgba(255,255,255,.13),rgba(255,255,255,0) 46%),
+    radial-gradient(92% 132% at 50% 44%,#2c4d35 0%,#1f3b28 32%,#152b1d 62%,#0b1a11 88%,#07110a 100%);
+  --tbl-blend:soft-light,normal,normal,normal;
+  --tbl-border:rgba(0,0,0,.65);
+  --tbl-shadow:
+    inset 0 2px 0 rgba(255,255,255,.12),
+    inset 0 0 0 4px #4b463a,
+    inset 0 0 0 10px #211f18,
+    inset 0 3px 8px -4px rgba(255,255,255,.07),
+    inset 0 24px 32px -18px rgba(0,0,0,.88),
+    inset 0 -12px 24px -14px rgba(0,0,0,.62),
+    0 16px 22px -12px rgba(0,0,0,.9),
+    0 52px 68px -46px rgba(0,0,0,.95);
+  --tt-main:rgba(220,236,224,.8);
+  --tt-sub:rgba(164,188,170,.72);
+  --surf-bg:var(--noise),
+    radial-gradient(120% 100% at 50% 0,rgba(255,255,255,.12),rgba(255,255,255,0) 58%),
+    linear-gradient(180deg,#37332a 0%,#25221b 46%,#14120e 100%);
+  --surf-border:rgba(0,0,0,.55);
+  --surf-shadow:
+    inset 0 0 0 6px rgba(0,0,0,.22),
+    inset 0 1px 0 rgba(255,255,255,.14),
+    inset 0 -4px 8px rgba(0,0,0,.45),
+    0 6px 10px rgba(0,0,0,.5),
+    0 16px 22px -16px rgba(0,0,0,.95);
+  --seat-name:#eee6d8;
+  --seat-meta:rgba(180,168,148,.62);
+  --seat-num:rgba(190,176,152,.82)}
+/* 台呢上的字陷进去：一层下投的暗影，不是发光 */
+.table-stage[data-skin="felt"] .tt-main{text-shadow:0 1px 1px rgba(0,0,0,.7)}
+/* 皮垫缝线：拟物皮肤专有的一圈虚线，不是第二道线框 */
+.table-stage[data-skin="felt"] .rseat:not(.empty)::after{content:"";position:absolute;inset:7px;
+  border:1px dashed rgba(255,255,255,.11);border-radius:11px;pointer-events:none}
+/* 木边上的一圈台呢缝线：贴着内坡，低对比的虚线，读作工艺而不是线框 */
+.table-stage[data-skin="felt"] .ts-table::after{content:"";position:absolute;inset:12px;
+  border:1px dashed rgba(255,255,255,.06);border-radius:calc(var(--table-r) - 6px);pointer-events:none}
+/* 拟物皮肤里「对局中」是一块暖棕台呢 */
+.table-stage[data-skin="felt"] .ts-table.live{
+  --tbl-bg:var(--noise),
+    repeating-linear-gradient(135deg,rgba(255,255,255,.022) 0 2px,rgba(0,0,0,.03) 2px 5px),
+    radial-gradient(120% 92% at 50% -8%,rgba(255,236,190,.14),rgba(255,255,255,0) 46%),
+    radial-gradient(92% 132% at 50% 44%,#4f4020 0%,#41341a 32%,#2e2613 62%,#1a150b 88%,#0d0b06 100%);
+  border-color:rgba(217,177,63,.4)}
+
+/* —— 桌面陈设（r58）：按游戏摆两簇小物，左主右辅，中央留给状态字。
+   只有台呢皮肤摆陈设——平面皮肤的卖点是「低噪音」，摆上小物就不平了。
+   物件本身是 inline SVG（见 PROP_ART），投影统一给 .tp，SVG 里不再画影子，
+   免得「画出来的影子」和「滤镜影子」两个方向打架。 —— */
+.tprops{position:absolute;inset:0;pointer-events:none}
+.table-stage[data-skin="flat"] .tprops{display:none}
+.tprops .tp{position:absolute;top:50%;width:var(--prop-w,28%);transform:translateY(-50%);
+  /* 两重影：贴着物件的硬接触影 + 一圈软环境影，少了任何一个都会像「贴图」 */
+  filter:drop-shadow(0 1.5px 1.5px rgba(0,0,0,.6)) drop-shadow(0 6px 10px rgba(0,0,0,.42))}
+.tprops .tp.l{left:var(--prop-x,5.5%)}
+.tprops .tp.r{right:var(--prop-x,5.5%)}
+.tprops svg{display:block;width:100%;height:auto}
+/* 烛光：不吃投影（否则半透明的光晕会被当成实体投出一大块黑），单独用一层径向光 */
+.tprops .tp.lit{filter:none}
+.tprops .tp.lit::before{content:"";position:absolute;left:50%;top:var(--glow-y,26%);width:var(--glow-w,170%);aspect-ratio:1;
+  transform:translate(-50%,-50%);border-radius:50%;pointer-events:none;
+  background:radial-gradient(circle,rgba(255,214,130,.34),rgba(255,214,130,.10) 44%,transparent 70%)}
+
+/* —— 席位牌：正方形，有人的席是头像牌，空位是虚线空位 —— */
+.rseat{position:relative;width:min(var(--seat),100%);aspect-ratio:1;border-radius:16px;padding:12px 10px 10px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
+  background-image:var(--surf-bg);background-blend-mode:soft-light,normal,normal;
+  border:1px solid var(--surf-border);box-shadow:var(--surf-shadow)}
+.rseat .sn{position:absolute;left:11px;top:9px;font:8px var(--mono);letter-spacing:.12em;color:var(--seat-num)}
+.rseat .bd{position:absolute;right:9px;top:8px;display:block;font:8px var(--mono);line-height:1;letter-spacing:.04em;
+  padding:3px 5px;border-radius:4px;color:rgba(217,177,63,.92);
+  background:rgba(217,177,63,.10);border:1px solid rgba(217,177,63,.22)}
+.rseat.mine .bd{color:rgba(96,226,158,.95);background:rgba(69,217,142,.10);border-color:rgba(69,217,142,.28)}
+/* 头像：agent 自带就用自己的，没设置就画一个确定性 identicon（同一个人每次画出来一样） */
+.rseat .av{position:relative;display:block;flex:none;width:54%;aspect-ratio:1;border-radius:11px;overflow:hidden;
+  background:rgba(255,255,255,.03);
+  box-shadow:0 0 0 1px rgba(0,0,0,.55),0 3px 8px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.07)}
+.rseat .av>img{display:block;width:100%;height:100%;object-fit:cover;filter:saturate(.9)}
+.rseat .rn{position:relative;max-width:100%;font-family:var(--serif);font-size:13.5px;line-height:1.2;color:var(--seat-name);
+  text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rseat .rt{position:relative;font:8px var(--mono);letter-spacing:.1em;color:var(--seat-meta)}
+
+/* 房主：暖边；我：绿边 + 绿晕——两个通道，不靠贴色块，也不改材质 */
+.rseat.host{border-color:rgba(217,177,63,.34)}
+.rseat.host .sn{color:rgba(224,187,83,.85)}
+.rseat.mine{border-color:rgba(69,217,142,.5);filter:drop-shadow(0 0 9px rgba(69,217,142,.3))}
+.rseat.mine .av{box-shadow:0 0 0 1px rgba(69,217,142,.5),0 0 14px -3px rgba(69,217,142,.55)}
+.rseat.mine .sn{color:rgba(96,226,158,.92)}
+
+/* bot：头像褪色一档，一眼能把人和机器分开 */
+.rseat.bot .av{filter:saturate(.5) brightness(.9)}
+.rseat.bot .rt{color:rgba(217,177,63,.72)}
+
+/* 空位：没有头像牌，整格虚线——「有没有人」必须比「谁坐这儿」先被看见 */
+.rseat.empty{cursor:pointer;color:var(--dim);background:none;border:1px dashed rgba(255,255,255,.15);box-shadow:none}
+.rseat.empty .av{display:grid;place-items:center;background:none;border:1px dashed rgba(255,255,255,.14);box-shadow:none}
+.rseat.empty .av b{font:300 22px/1 var(--mono);color:rgba(255,255,255,.34)}
+.rseat.empty .sn{color:rgba(255,255,255,.22)}
+.rseat.empty .rn{font-family:var(--mono);font-size:10.5px;letter-spacing:.02em;color:var(--dim)}
+.rseat.empty:hover{border-color:rgba(69,217,142,.5);color:var(--grn);box-shadow:0 0 20px -10px rgba(69,217,142,.8)}
+.rseat.empty:hover .av{border-color:rgba(69,217,142,.45);background:rgba(69,217,142,.05)}
+.rseat.empty:hover .av b{color:var(--grn)}
+.rseat.empty:hover .sn{color:rgba(69,217,142,.6)}
+.rseat.empty:hover .rn{color:var(--grn)}
+/* 对局已开始后的空位（理论上不会有）不可点，hover 也不该亮 */
+.rseat.lock{cursor:default;opacity:.7}
+.rseat.lock:hover{border-color:rgba(255,255,255,.15);box-shadow:none}
+.rseat.lock:hover .av{border-color:rgba(255,255,255,.14);background:none}
+.rseat.lock:hover .av b{color:rgba(255,255,255,.3)}
+.rseat.lock:hover .sn{color:rgba(255,255,255,.22)}
+.rseat.lock:hover .rn{color:var(--dim)}
+
+/* 皮肤切换：座位区右下角的两格开关，选谁都不改变信息结构 */
+.rd-foot{margin-top:12px;display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap}
+.rd-foot .rd-note{margin-top:0;flex:1 1 240px;min-width:0}
+.skins{display:flex;gap:2px;margin-left:auto}
+.skins .sk{appearance:none;background:none;border:1px solid transparent;color:var(--faint);
+  font:9px var(--mono);letter-spacing:.08em;padding:4px 8px;cursor:pointer}
+.skins .sk:hover{color:var(--ink)}
+.skins .sk.on{color:var(--grn);border-color:rgba(69,217,142,.28);background:rgba(69,217,142,.06)}
+/* r50：未选桌时的占位——空白留给座位图，不留给人猜 */
+.room-hint{margin-top:12px;padding:22px 18px;border:1px dashed var(--line);text-align:center;color:var(--faint);font-family:var(--serif);font-size:17px;letter-spacing:.08em}
+.room-hint small{display:block;margin-top:10px;font:10px var(--mono);letter-spacing:.06em}
+@media (max-width:900px){
+  /* 窄屏：游戏库压成两行横向条（分类 + 游戏），房间表收成「房间 / 状态 / 操作」三列 */
+  .rooms-grid{grid-template-columns:minmax(0,1fr);gap:12px}
+  .gl-rail .eyebrow{display:none}
+  .gl-search{display:none}
+  .gl-cats{margin:0 0 6px}
+  .gl-list{flex-direction:row;overflow-x:auto;max-height:none;gap:2px;padding-bottom:0}
+  .gl-row{width:auto;border-left:0;border-bottom:2px solid transparent;padding:5px 9px}
+  .gl-row.on{border-left:0;border-bottom-color:var(--grn)}
+  .gl-c{margin-left:6px}
+  .rh-name{font-size:18px}
+  .rl-head{display:none}
+  .rrow{grid-template-columns:minmax(0,1fr) 68px 58px;gap:8px;padding:10px}
+  .rr-host,.rr-seat{display:none}
+  .rr-go{font-size:10.5px;padding:4px 0}
+}
+@media (max-width:560px){
+  .rd-actions{width:100%;margin-left:0}
+  /* r56：窄屏只改比例变量——席位 82px、圆角 20px，桌面高度由 aspect-ratio 自己算 */
+  .table-stage{--seat:82px;--table-r:20px;--prop-w:26%}
+  .ts-row{gap:8px}
+  .tt-main{font-size:13px;letter-spacing:.2em;text-indent:.2em}
+  .tt-sub{margin-top:5px;font-size:8.5px;letter-spacing:.1em}
+  .ts-row.top{margin-bottom:8px}
+  .ts-row.bot{margin-top:8px}
+  .rseat{border-radius:12px;padding:10px 7px 8px;gap:4px}
+  .rseat .av{width:56%;border-radius:8px}
+  .rseat .rn{font-size:11.5px}
+  .rseat .rt{display:none}
+  .rseat .sn{left:8px;top:7px;font-size:7px}
+  .rseat .bd{right:6px;top:6px;font-size:7px;padding:2px 4px}
+  /* r50：页签从 3 个变 4 个后，390px 下「开一桌」被挤到第二行——收紧字距与内边距换回一行 */
+  .nav{gap:2px 10px}
+  .nav span{padding:8px 10px 9px 8px;letter-spacing:.14em;font-size:15px}
+  /* 副标题在窄屏会折出孤字（「入座」单占一行），这行装饰性文字直接收掉 */
+  #v-rooms .ch small{display:none}
+}
 .play-current{display:flex;flex-direction:column;gap:2px;margin-right:auto;min-width:0}
 .play-current i{font:8.5px var(--mono);letter-spacing:.18em;color:var(--faint);font-style:normal}
 .play-current b{font-family:var(--serif);font-size:17px;font-weight:400;color:var(--hi);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -1316,6 +1594,7 @@ html{scrollbar-color:var(--dot) var(--bg)}
 
   <nav class="nav" id="nav" aria-label="主导航">
     <span data-v="lobby" class="on" role="button" tabindex="0" aria-pressed="true">大厅</span>
+    <span data-v="rooms" role="button" tabindex="0" aria-pressed="false">房间</span>
     <span data-v="match" role="button" tabindex="0" aria-pressed="false">围观</span>
     <span data-v="play" role="button" tabindex="0" aria-pressed="false">开一桌</span>
   </nav>
@@ -1411,8 +1690,39 @@ html{scrollbar-color:var(--dot) var(--bg)}
     </div>
   </section>
 
+  <section class="view" id="v-rooms">
+    <div class="rooms-grid">
+      <aside class="gl-rail" aria-label="游戏库">
+        <div class="eyebrow">「 游 戏 库 」</div>
+        <div class="gl-cats" id="gl-cats"></div>
+        <input class="gl-search" id="room-search" placeholder="搜索游戏" aria-label="搜索游戏" oninput="roomSearch(this.value)">
+        <div class="gl-list" id="room-games"></div>
+      </aside>
+      <div class="rooms-main">
+        <div class="rh">
+          <div>
+            <div class="rh-name" id="rh-name">全部游戏</div>
+            <div class="rh-meta" id="rh-meta">正在读取房间…</div>
+          </div>
+          <div class="rh-act">
+            <select class="room-seats" id="room-seats" aria-label="新房间桌位数" onchange="setRoomSeats(this.value)"></select>
+            <button class="btn" onclick="quickJoinRoom()">快速加入</button>
+            <button class="mini" onclick="createRoom()">创建房间</button>
+          </div>
+        </div>
+        <div class="msg" id="room-msg"></div>
+        <div class="rl-head" aria-hidden="true">
+          <span>房间</span><span>房主</span><span>座位</span><span>状态</span><span style="text-align:right">操作</span>
+        </div>
+        <div id="room-list"><div class="kv" style="padding:14px 10px">正在读取房间…</div></div>
+        <div class="rooms-foot" id="room-foot"></div>
+        <div id="room-detail"></div>
+      </div>
+    </div>
+  </section>
+
   <div class="sbar">
-    <span>arena/r48 · <span id="sbar-live" style="color:var(--grn)">0 live</span> · 多桌直播墙 · 平台不提供 AI，只提供赛场 · <a href="https://github.com/LeoSasion/agent-lobby" target="_blank" rel="noopener">Source · AGPL-3.0</a></span>
+    <span>arena/r62 · <span id="sbar-live" style="color:var(--grn)">0 live</span> · 多桌直播墙 · 平台不提供 AI，只提供赛场 · <a href="https://github.com/LeoSasion/agent-lobby" target="_blank" rel="noopener">Source · AGPL-3.0</a></span>
     <span class="hints">按 / 跳转 · 直播墙点击任意一桌围观</span>
   </div>
 </div>
@@ -1459,11 +1769,36 @@ const M = { id:null, replay:false }; let MEVS = [], MSINCE = -1, mtimer = null;
 const P = { id:null, token:null }; let PEVS = [], PSINCE = -1, ptimer = null, ACT_BUSY = false;
 /* r49：持续匹配票（与快速开局互斥；离开试玩页时停止轮询） */
 const Q = { id:null, token:null, timer:null };
+/* r49：房间浏览状态（大厅 → 房间 → 座位）；r50 增 seats/stamp（轮询去抖） */
+/* r51：join_token 落 localStorage——刷新页面就丢房主身份，等于「开好的桌不能碰」 */
+const ROOM_TOKEN_KEY = "arena.roomTokens";
+function loadRoomTokens() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(ROOM_TOKEN_KEY) || "{}");
+    const out = {};
+    for (const [k, v] of Object.entries(raw)) if (typeof v === "string" && v.startsWith("jt_")) out[k] = v;
+    return out;
+  } catch { return {}; }
+}
+function saveRoomTokens() {
+  try {
+    const ids = Object.keys(ROOM.tokens);
+    // 房间是内存态、重启即弃，只留最近 30 张，别让 localStorage 无限长
+    for (const old of ids.slice(0, Math.max(0, ids.length - 30))) delete ROOM.tokens[old];
+    localStorage.setItem(ROOM_TOKEN_KEY, JSON.stringify(ROOM.tokens));
+  } catch { /* 隐私模式/配额满：令牌只在本次会话有效，不阻断流程 */ }
+}
+/* r56：座位区皮肤——flat（平面公报）/ felt（台呢皮垫）。只影响这一块，与信息结构无关 */
+const SKIN_KEY = "arena.skin";
+function loadSkin() {
+  try { return localStorage.getItem(SKIN_KEY) === "flat" ? "flat" : "felt"; } catch { return "felt"; }
+}
+const ROOM = { game:null, cat:"all", q:"", seats:null, all:[], detail:null, tokens:loadRoomTokens(), skin:loadSkin(), stamp:null, detailStamp:null, chipsStamp:null };
 let R = { playing:false, pos:0, seat:"spectator", timer:null, total:0 };
 const TK = { items:[], cursors:{}, pollCursors:{}, total:{}, seen:{} };
 const WALL = { live:[], views:{}, now:{}, sse:{}, evs:{}, ts:[], viewTimer:{}, viewSeq:{}, cm:{} };
 const ZONE = { sel:null };
-let lobbyTimer = null, boardsTimer = null;
+let lobbyTimer = null, boardsTimer = null, roomsTimer = null;
 const CACHE = { games:[], matches:[] };
 
 const CN_D = "〇一二三四五六七八九";
@@ -1670,7 +2005,9 @@ function showView(v) {
   }
   if (v !== "play") { clearInterval(ptimer); ptimer = null; if (Q.id) stopQueue(); }
   clearInterval(lobbyTimer);
+  clearInterval(roomsTimer);
   if (v === "lobby") { loadLobby(); lobbyTimer = setInterval(loadLobby, 4000); }
+  if (v === "rooms") { loadRooms(); roomsTimer = setInterval(loadRooms, 4000); }
   if (v === "play") renderPlayPicker();
 }
 document.querySelectorAll("#nav span").forEach((b) => {
@@ -1681,6 +2018,702 @@ document.querySelectorAll("#nav span").forEach((b) => {
     showView(b.dataset.v);
   };
 });
+
+/* r49：QQ 游戏大厅式三层——大厅（游戏）→ 房间（桌）→ 座位（席位）。
+   r50：补邀请深链（?room=）、桌位数可选、bot 席区分、4s 轮询只在数据真变时重绘。 */
+function roomMsg(text, bad = false) {
+  const el = $("#room-msg");
+  if (!el) return;
+  el.textContent = text || "";
+  el.style.color = bad ? "var(--amb)" : "var(--dim)";
+}
+function roomGameName(id) { return GAME_NAMES[id] ?? id; }
+function roomGamesList() { return CACHE.games ?? []; }
+/** null = 「全部」——只筛单款游戏时，其它游戏的桌会被藏起来，房间页首屏经常是空的 */
+function currentRoomGame() {
+  return ROOM.game && roomGamesList().some((g) => g.id === ROOM.game) ? ROOM.game : null;
+}
+/* r52：QQ 游戏大厅式的左侧「游戏库」——分类 chip + 搜索 + 每款游戏的桌数 */
+const GAME_CATS = [
+  { id: "all", name: "全部" },
+  { id: "card", name: "牌类", games: ["liars_dice", "holdem_lite", "blackjack"] },
+  { id: "board", name: "棋类", games: ["othello", "gomoku", "jungle_chess", "banqi"] },
+  { id: "social", name: "推理", games: ["werewolf_lite", "undercover", "turtle_soup"] },
+  { id: "play", name: "博弈", games: ["dilemma", "auction", "twenty_four"] },
+  { id: "word", name: "文字", games: ["idiom_chain", "feihualing"] },
+];
+function catGames() {
+  const c = GAME_CATS.find((x) => x.id === ROOM.cat);
+  return c && c.games ? new Set(c.games) : null;
+}
+function gameMatches(g) {
+  const q = ROOM.q.trim().toLowerCase();
+  if (q && !(g.name.toLowerCase().includes(q) || g.id.includes(q))) return false;
+  const set = catGames();
+  return !set || set.has(g.id);
+}
+/** 当前筛选下的房间：选中具体游戏只看它，否则看分类（全部=不筛） */
+function filteredRooms() {
+  const rows = ROOM.game
+    ? ROOM.all.filter((r) => r.game === ROOM.game)
+    : (() => { const set = catGames(); return set ? ROOM.all.filter((r) => set.has(r.game)) : ROOM.all.slice(); })();
+  // 可入座的排前面（服务端也是这个口径）；同游戏按开桌时间正序——「1 号桌」不该排在「2 号桌」后面；
+  // 游戏之间按 /games 的目录顺序（赛区顺序），不要按 id 字母排：那样「拍卖行」会跑在「吹牛骰」前面
+  const order = new Map(roomGamesList().map((g, i) => [g.id, i]));
+  return rows.slice().sort((a, b) => {
+    const ja = a.joinable ? 0 : 1, jb = b.joinable ? 0 : 1;
+    if (ja !== jb) return ja - jb;
+    const ga = order.get(a.game) ?? 99, gb = order.get(b.game) ?? 99;
+    if (ga !== gb) return ga - gb;
+    return (a.created_at ?? 0) - (b.created_at ?? 0);
+  });
+}
+function renderRoomGames() {
+  const box = $("#room-games");
+  if (!box) return;
+  ROOM.game = ROOM.game && roomGamesList().some((g) => g.id === ROOM.game) ? ROOM.game : null;
+  // 4s 轮询每次都重建会把「正在用键盘挑游戏」的焦点打回页面顶部——只在选择/清单真变时重建
+  const stamp = [ROOM.game ?? "", ROOM.cat, ROOM.q,
+    roomGamesList().map((g) => g.id).join(","),
+    ROOM.all.map((r) => r.game + r.status).join(",")].join("|");
+  if (stamp === ROOM.chipsStamp) return;
+  ROOM.chipsStamp = stamp;
+  const cats = $("#gl-cats");
+  if (cats) cats.innerHTML = GAME_CATS.map((c) =>
+    `<button class="gl-cat${c.id === ROOM.cat ? " on" : ""}" onclick="setRoomCat('${c.id}')" aria-pressed="${c.id === ROOM.cat}">${c.name}</button>`).join("");
+  const games = roomGamesList().filter(gameMatches);
+  box.innerHTML = games.length
+    ? games.map((g) => {
+        const rooms = ROOM.all.filter((r) => r.game === g.id);
+        const waiting = rooms.filter((r) => r.joinable).length;
+        return `<button class="gl-row${g.id === ROOM.game ? " on" : ""}" onclick="setRoomGame('${esc(g.id)}')" aria-pressed="${g.id === ROOM.game}">
+          <span class="gl-n">${esc(g.name)}</span>
+          <span class="gl-c${waiting ? " hot" : ""}">${rooms.length ? `${waiting}/${rooms.length}` : "—"}</span>
+        </button>`;
+      }).join("")
+    : `<div class="gl-empty">没有匹配的游戏</div>`;
+  renderRoomSeatsPick();
+  renderRoomHead();
+}
+/** 顶部游戏条与页脚统计：桌数 / 可入座 / 对局中 */
+function renderRoomHead() {
+  const rows = filteredRooms();
+  const waiting = rows.filter((r) => r.joinable).length;
+  const live = rows.filter((r) => r.status === "started").length;
+  const title = ROOM.game
+    ? roomGameName(ROOM.game)
+    : ROOM.cat === "all" ? "全部游戏" : (GAME_CATS.find((c) => c.id === ROOM.cat)?.name ?? "全部");
+  const name = $("#rh-name"), meta = $("#rh-meta"), foot = $("#room-foot");
+  if (name) name.textContent = title;
+  if (meta) meta.textContent = `${rows.length} 张桌 · ${waiting} 张可入座 · ${live} 张对局中`;
+  if (foot) foot.innerHTML = `<span>共 ${rows.length} 张桌</span><span>每 4 秒自动刷新</span><span>${ROOM.game ? "点一行看座位图" : "在左侧选一款游戏可缩小范围"}</span>`;
+}
+window.setRoomCat = function (id) {
+  ROOM.cat = id; ROOM.game = null; ROOM.detail = null;
+  ROOM.stamp = null; ROOM.detailStamp = null; ROOM.chipsStamp = null;
+  roomMsg(""); renderRoomDetail(); loadRooms();
+};
+window.roomSearch = function (v) {
+  ROOM.q = String(v ?? "");
+  ROOM.chipsStamp = null;
+  renderRoomGames(); renderRoomList(); renderRoomHead();
+};
+/** 桌位数选择：只在选中具体游戏且 min<max 时出现（黑白棋这类固定 2 席的局不必多一步） */
+function renderRoomSeatsPick() {
+  const sel = $("#room-seats");
+  if (!sel) return;
+  const g = roomGamesList().find((x) => x.id === ROOM.game);
+  if (!g) {
+    ROOM.seats = null;
+    sel.style.display = "none";
+    sel.disabled = true;
+    return;
+  }
+  sel.style.display = "";
+  const min = g.min_seats ?? 2, max = g.max_seats ?? min;
+  if (min >= max) {
+    ROOM.seats = min;
+    sel.innerHTML = `<option value="${min}">${min} 席</option>`;
+    sel.disabled = true;
+    return;
+  }
+  sel.disabled = false;
+  const keep = ROOM.seats && ROOM.seats >= min && ROOM.seats <= max ? ROOM.seats : min;
+  ROOM.seats = keep;
+  sel.innerHTML = Array.from({ length: max - min + 1 }, (_, i) => min + i)
+    .map((n) => `<option value="${n}"${n === keep ? " selected" : ""}>${n} 席</option>`).join("");
+}
+window.setRoomSeats = function (n) {
+  const v = Number(n);
+  if (Number.isFinite(v) && v > 0) ROOM.seats = v;
+};
+window.setRoomGame = function (id) {
+  ROOM.game = id || null; ROOM.detail = null; ROOM.stamp = null; ROOM.detailStamp = null; ROOM.chipsStamp = null; roomMsg("");
+  renderRoomDetail();
+  loadRooms();
+};
+/** 「N 号桌」：QQ 大厅的房间名，同游戏按开桌时间排队；真 id 留在 title 与详情 */
+function roomTableName(r) {
+  const same = ROOM.all.filter((x) => x.game === r.game).sort((a, b) => (a.created_at ?? 0) - (b.created_at ?? 0));
+  const idx = same.findIndex((x) => x.room_id === r.room_id) + 1;
+  return `${idx || 1} 号桌`;
+}
+function renderRoomList() {
+  const box = $("#room-list");
+  if (!box) return;
+  const rows = filteredRooms();
+  if (!rows.length) {
+    box.innerHTML = `<div class="room-empty">${ROOM.game ? "这款游戏还没有开桌" : "还没有可进的房间"}<small>点「创建房间」开一桌，或「快速加入」自动凑桌</small></div>`;
+    return;
+  }
+  box.innerHTML = rows.map((r) => {
+    const live = r.status === "started";
+    const cells = (r.seats_view ?? []).map((s) =>
+      `<span class="sd ${s.status === "occupied" ? "on" : s.status === "bot" ? "bot" : "empty"}"></span>`).join("");
+    const label = r.joinable ? "入座" : live ? "围观" : "已满";
+    const on = ROOM.detail?.room_id === r.room_id;
+    return `<div class="rrow${live ? " started" : ""}${on ? " on" : ""}" data-room="${esc(r.room_id)}" tabindex="0" role="button"
+      aria-label="房间 ${esc(r.room_id)}，${esc(roomGameName(r.game))}，${live ? "对局中" : "等待中"}"
+      onclick="openRoom('${esc(r.room_id)}')"
+      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openRoom('${esc(r.room_id)}')}">
+      <span class="rr-id" title="${esc(r.room_id)}">${ROOM.game ? "" : `<span class="rr-game">${esc(roomGameName(r.game))}</span>`}<span class="rr-no">${esc(roomTableName(r))}</span></span>
+      <span class="rr-host">${esc(r.host ?? "—")}</span>
+      <span class="rr-seat">${cells}<span class="rr-num">${r.players}/${r.seats}${r.bots ? ` +${r.bots}` : ""}</span></span>
+      <span class="rr-st${live ? " live" : ""}">${live ? "对局中" : "等待中"}</span>
+      <button class="rr-go" onclick="event.stopPropagation();seatRoom('${esc(r.room_id)}')">${label} →</button>
+    </div>`;
+  }).join("");
+}
+/** 选中行高亮：openRoom 每次刷新只重绘详情，行上的 .on 要单独同步 */
+function markRoomRow() {
+  document.querySelectorAll("#room-list .rrow").forEach((el) => {
+    el.classList.toggle("on", el.dataset.room === ROOM.detail?.room_id);
+  });
+}
+async function loadRooms() {
+  let games;
+  try { games = await ensureGames(); } catch { roomMsg("网关不可达，稍后重试", true); return; }
+  try {
+    // 一次取全部房间：左栏要给每款游戏显示桌数，按游戏分开请求等于 15 次往返
+    const r = await api("/lobby/rooms");
+    if (r.error) { roomMsg("读取房间失败：" + r.error, true); return; }
+    const next = r.rooms ?? [];
+    const stamp = JSON.stringify(next);
+    if (stamp !== ROOM.stamp) {
+      ROOM.stamp = stamp;
+      ROOM.all = next;
+      renderRoomGames();
+      renderRoomList();
+      renderRoomHead();
+    } else {
+      renderRoomGames();
+    }
+    if (ROOM.detail?.room_id) await openRoom(ROOM.detail.room_id, true);
+    else renderRoomDetail();
+    return games;
+  } catch { roomMsg("网关不可达，稍后重试", true); }
+}
+/** 行内「入座」直通道：不开详情也能坐进去（QQ 大厅的进入按钮） */
+window.seatRoom = async function (id) {
+  await openRoom(id);
+  const d = ROOM.detail;
+  if (!d) return;
+  // 对局中的桌「围观」不是入座：直接进观战页，别去撞 409 ROOM_STARTED
+  if (d.status === "started") { if (d.match_id) gotoMatch(d.match_id); return; }
+  if (d.joined) { roomMsg("你已经在这张桌上了", true); return; }
+  await joinRoom();
+};
+window.openRoom = async function (id, silent = false) {
+  try {
+    const token = ROOM.tokens[id];
+    const r = await api(`/lobby/rooms/${id}${token ? `?token=${encodeURIComponent(token)}` : ""}`);
+    if (r.error) {
+      // 房间没了就把令牌一起清掉——否则每次进页面都拿着旧令牌撞 404，且永远退不回「入座」视图
+      if (ROOM.tokens[id]) { delete ROOM.tokens[id]; saveRoomTokens(); }
+      roomMsg("房间不存在或已过期", true); ROOM.detail = null; renderRoomDetail(); return;
+    }
+    // r60：progress 每分钟都在变，不能进 stamp——否则对局中每 4 秒重建整块详情，
+    // 正在点的按钮会被换掉（焦点与点击都丢）。结构没变就只补桌面陈设。
+    const stamp = JSON.stringify({ ...r, progress: undefined });
+    ROOM.detail = r;
+    if (stamp !== ROOM.detailStamp) { ROOM.detailStamp = stamp; renderRoomDetail(); }
+    else patchRoomProps();
+    markRoomRow();
+    if (!silent) roomMsg("");
+  } catch { roomMsg("房间读取失败，稍后重试", true); }
+};
+/* r54：席位头像。agent 将来可以在建房/入座时带 avatar（https 或 data:image），
+   没设置就按身份画一个确定性 identicon——同一席位每次刷新、每台设备画出来都一样，
+   不能用 Math.random（那会让头像每次重绘都跳）。纯 SVG data URI，不引外部资源。 */
+const AV_COLORS = [
+  ["#45d98e", "#0f2419"], ["#d9b13f", "#241d0e"], ["#63b8c9", "#0d2126"], ["#c98a7a", "#23150f"],
+  ["#a89ae0", "#191526"], ["#9db86a", "#1a2013"], ["#cf8fb3", "#23131c"], ["#7fa8d9", "#121a24"],
+];
+const AV_CACHE = new Map();
+function hash32(str) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 16777619) >>> 0;
+  return h >>> 0;
+}
+/** 5×5 镜像像素头像：左两列镜像到右两列，中列独立——一眼是「生成的头像」而不是坏图 */
+function avatarArt(seed, rot = 0) {
+  const base = String(seed);
+  const key = base + "|" + rot;
+  const hit = AV_CACHE.get(key);
+  if (hit) return hit;
+  const h = hash32(base);
+  // 颜色索引带一个按席位轮转的偏置：同桌两席纯靠哈希撞色太常见（都是 1/8 却一眼像 bug）
+  const [fg, bg] = AV_COLORS[(h + rot * 3) % AV_COLORS.length];
+  const p = hash32(base + "#cells");
+  let rects = "";
+  let filled = 0;
+  for (let row = 0; row < 5; row++) {
+    for (let col = 0; col < 3; col++) {
+      if (!((p >>> (row * 3 + col)) & 1)) continue;
+      filled++;
+      const y = 8 + row * 17;
+      rects += `<rect x="${8 + col * 17}" y="${y}" width="15" height="15" rx="2.5"/>`;
+      if (col < 2) rects += `<rect x="${8 + (4 - col) * 17}" y="${y}" width="15" height="15" rx="2.5"/>`;
+    }
+  }
+  if (!filled) rects = `<rect x="42" y="42" width="16" height="16" rx="3"/>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="${bg}"/><g fill="${fg}" opacity=".84">${rects}</g></svg>`;
+  const uri = "data:image/svg+xml," + encodeURIComponent(svg).replace(/'/g, "%27");
+  AV_CACHE.set(key, uri);
+  return uri;
+}
+/** 只放行 https 与 data:image——avatar 是外部输入，别把 javascript:/相对路径塞进 img.src */
+function safeAvatar(u) {
+  const v = String(u ?? "").trim();
+  if (!v) return null;
+  if (/^https:\/\/[^\s]+$/i.test(v)) return v;
+  if (/^data:image\/(png|jpe?g|webp|gif|svg\+xml)[;,]/.test(v)) return v;
+  return null;
+}
+function seatAvatar(s, seed, rot = 0) {
+  const own = safeAvatar(s.avatar);
+  const fb = avatarArt(seed, rot);
+  if (!own) return `<span class="av"><img src="${fb}" alt=""></span>`;
+  // 外部头像挂了（404 / CORS / 域名过期）就换回画出来的那张——别让席位空成一块破图
+  return `<span class="av"><img src="${esc(own)}" data-fb="${fb}" alt="" referrerpolicy="no-referrer"></span>`;
+}
+// 图片错误不冒泡，只有捕获阶段能一网打尽；只处理带 data-fb 的席位头像
+document.addEventListener("error", (e) => {
+  const img = e.target;
+  if (!(img instanceof HTMLImageElement)) return;
+  const fb = img.dataset.fb;
+  if (!fb) return;
+  delete img.dataset.fb;
+  img.src = fb;
+}, true);
+/* r58：桌面陈设——按游戏摆两簇小物（左主右辅），中央留给状态字。
+   全部 inline SVG，viewBox 100×100，物件坐在 y≈88 的「桌面」上；
+   这个尺寸下渐变看不出来，明暗靠「顶亮侧暗」两三个平涂面解决，不堆细节。
+   配色只取木/黄铜/纸/瓷/皮，跟台呢与皮垫同温。不引外部资源、不用 Math.random。
+   r59：陈设认状态——等待时收得整齐，开局后「用起来」（筹码推出去、牌翻开、
+   棋盘落子、蜡烛烧短、棋子散开、牌堆发出去）。同一件东西两套姿态，不是两件东西。 */
+const PROP_PIPS = {
+  1: [[0, 0]], 2: [[-1, -1], [1, 1]], 3: [[-1, -1], [0, 0], [1, 1]],
+  4: [[-1, -1], [1, -1], [-1, 1], [1, 1]], 5: [[-1, -1], [1, -1], [0, 0], [-1, 1], [1, 1]],
+  6: [[-1, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [1, 1]],
+};
+/** 平放的一枚圆片（筹码/棋子）：rotate 绕自身中心，才像随手丢下的 */
+const propDisc = (cx, cy, rx, rot, top, side) => `<g transform="rotate(${rot} ${cx} ${cy})"><ellipse cx="${cx}" cy="${cy + 3.2}" rx="${rx}" ry="${(rx * 0.34).toFixed(1)}" fill="${side}" stroke="rgba(28,16,12,.45)" stroke-width=".7"/><ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${(rx * 0.34).toFixed(1)}" fill="${top}" stroke="rgba(28,16,12,.5)" stroke-width=".7"/><ellipse cx="${cx}" cy="${cy}" rx="${(rx * 0.74).toFixed(1)}" ry="${(rx * 0.25).toFixed(1)}" fill="none" stroke="rgba(0,0,0,.24)" stroke-width=".7"/><ellipse cx="${cx}" cy="${cy}" rx="${(rx * 0.34).toFixed(1)}" ry="${(rx * 0.12).toFixed(1)}" fill="rgba(0,0,0,.16)"/></g>`;
+const PROP_ART = {
+  /* 筹码：等待时三摞整齐；开局后一摞矮了、几枚被推向中央——像刚下过注 */
+  chips(live, p = 0) {
+    const stack = (cx, base, n, top, side) => {
+      let s = "";
+      for (let i = 0; i < n; i++) {
+        const cy = base - i * 5.6;
+        s += `<ellipse cx="${cx}" cy="${cy + 2.9}" rx="17" ry="5.8" fill="${side}"/>`
+          + `<ellipse cx="${cx}" cy="${cy}" rx="17" ry="5.8" fill="${top}" stroke="rgba(28,16,12,.45)" stroke-width=".7"/>`
+          + `<path d="M${cx - 15} ${cy + 3.6} q15 5 30 0" fill="none" stroke="rgba(0,0,0,.28)" stroke-width=".8"/>`;
+      }
+      const ty = base - (n - 1) * 5.6;
+      return s + `<ellipse cx="${cx}" cy="${ty}" rx="17" ry="5.8" fill="none" stroke="rgba(0,0,0,.35)" stroke-width=".9"/>`
+        + `<ellipse cx="${cx}" cy="${ty}" rx="9" ry="3" fill="rgba(0,0,0,.16)"/>`;
+    };
+    if (!live) {
+      return `<svg viewBox="0 0 100 100">${stack(27, 80, 5, "#9d4c42", "#5d2a24")}${stack(57, 80, 3, "#c09a45", "#7a5f2a")}${stack(79, 80, 4, "#cdc2a8", "#7e745f")}<ellipse cx="40" cy="92" rx="17" ry="5.8" fill="#5d2a24"/><ellipse cx="40" cy="89.4" rx="17" ry="5.8" fill="#9d4c42"/><ellipse cx="40" cy="89.4" rx="9" ry="3" fill="rgba(0,0,0,.16)"/></svg>`;
+    }
+    // 推出去的几枚随进度变多，同时原地的摞变矮——底池不是凭空长出来的，是从手里推过去的
+    const spots = [[68, 80, -14, "#cdc2a8", "#7e745f"], [84, 90, 9, "#9d4c42", "#5d2a24"], [70, 93, -3, "#c09a45", "#7a5f2a"], [86, 76, -8, "#cdc2a8", "#7e745f"]];
+    const n = 1 + Math.min(3, Math.floor(p * 4));
+    const rs = Math.max(2, 5 - Math.round(p * 3));
+    const gs = Math.max(1, 2 - Math.round(p));
+    return `<svg viewBox="0 0 100 100">${stack(22, 78, rs, "#9d4c42", "#5d2a24")}${stack(46, 78, gs, "#c09a45", "#7a5f2a")}${spots.slice(0, n).map(([x, y, r, t, sd]) => propDisc(x, y, 12, r, t, sd)).join("")}</svg>`;
+  },
+  /* 手牌：等待时三张扣着；开局后最右那张翻开并推出来一步——「已经出了一张」 */
+  hand(live) {
+    const back = `<rect x="35" y="26" width="30" height="44" rx="3.2" fill="#5e2b26" stroke="#26120f" stroke-width="1"/><rect x="37.7" y="28.7" width="24.6" height="38.6" rx="1.8" fill="none" stroke="rgba(217,177,63,.32)" stroke-width=".6"/><circle cx="50" cy="48" r="5.4" fill="none" stroke="rgba(217,177,63,.34)" stroke-width="1"/><circle cx="50" cy="48" r="1.6" fill="rgba(217,177,63,.3)"/>`;
+    const face = `<rect x="35" y="26" width="30" height="44" rx="3.2" fill="#e7e1d0" stroke="#a29a83" stroke-width=".8"/><rect x="37.4" y="28.4" width="25.2" height="39.2" rx="1.6" fill="none" stroke="rgba(120,110,92,.3)" stroke-width=".5"/><path d="M50 39.5 l7 9.5-7 9.5-7-9.5z" fill="#8e3b34"/><path d="M50 52 l3.4 4.6-3.4 4.6-3.4-4.6z" fill="rgba(142,59,52,.5)"/>`;
+    if (!live) {
+      return `<svg viewBox="0 0 100 100"><g transform="translate(0 9)"><g transform="rotate(-17 50 94)">${back}</g><g transform="rotate(-5 50 94)">${back}</g><g transform="rotate(7 50 94)">${back}</g></g></svg>`;
+    }
+    return `<svg viewBox="0 0 100 100"><g transform="translate(0 9)"><g transform="rotate(-17 50 94)">${back}</g><g transform="rotate(-5 50 94)">${back}</g></g><g transform="translate(11 11) rotate(15 50 94)">${face}</g></svg>`;
+  },
+  /* 骰盅：一只立着的皮筒，三颗骰子已经掷在桌上 */
+  dicecup() {
+    // 骰子要看得见两个面才是方块：正面 + 顶面 + 右侧面，瓜子点只点正面
+    const die = (cx, cy, v, r) => {
+      const s2 = 8.2, d = 3.2;
+      const fx = cx - s2, fy = cy - s2 + d, fw = 2 * s2, fh = 2 * s2 - d;
+      const top = `M${fx} ${fy} l${d} ${-d} h${fw} l${-d} ${d} z`;
+      const side = `M${fx + fw} ${fy} l${d} ${-d} v${fh} l${-d} ${d} z`;
+      const pips = PROP_PIPS[v].map(([a, b]) => `<circle cx="${(cx + a * 3.5).toFixed(1)}" cy="${(cy + d / 2 + b * 3.3).toFixed(1)}" r="1.6" fill="#2b251d"/>`).join("");
+      return `<g transform="rotate(${r} ${cx} ${cy})"><path d="${side}" fill="#cbc2ab" stroke="rgba(96,86,66,.6)" stroke-width=".7"/><path d="${top}" fill="#f4efe0" stroke="rgba(96,86,66,.6)" stroke-width=".7"/><rect x="${fx}" y="${fy}" width="${fw}" height="${fh}" rx="2.6" fill="#e8e2d1" stroke="rgba(96,86,66,.65)" stroke-width=".8"/><circle cx="${(cx - 1.4).toFixed(1)}" cy="${(cy - s2 + d / 2 + 0.4).toFixed(1)}" r="1.2" fill="#2b251d"/>${pips}</g>`;
+    };
+    return `<svg viewBox="0 0 100 100"><g transform="rotate(-10 46 56)"><path d="M31 30 h30 l-6 45 q-9 6-18 0z" fill="#4a3a2c" stroke="#241a12" stroke-width="1"/><ellipse cx="46" cy="30" rx="15" ry="4.4" fill="#59452f" stroke="#241a12" stroke-width=".9"/><ellipse cx="46" cy="30" rx="12.4" ry="3.2" fill="#1b130d"/><path d="M34 41 q12 4 24 0 M35 53 q11 4 22 0 M36 65 q10 4 20 0" stroke="rgba(0,0,0,.3)" stroke-width=".9" fill="none"/><path d="M33 34 q13 4 26 0" stroke="rgba(255,255,255,.14)" stroke-width="1.1" fill="none"/></g>${die(66, 82, 5, -12)}${die(85, 72, 3, 14)}${die(84, 93, 1, 6)}</svg>`;
+  },
+  /* 棋罐：一只装黑子的木罐，前面散着三颗白子 */
+  bowl() {
+    const stone = (cx, cy, r, dark) => `<ellipse cx="${cx}" cy="${cy}" rx="${r}" ry="${(r * 0.62).toFixed(1)}" fill="${dark ? "#20262a" : "#e8e4d8"}" stroke="rgba(0,0,0,.35)" stroke-width=".5"/>`;
+    return `<svg viewBox="0 0 100 100"><ellipse cx="50" cy="84.5" rx="13" ry="3.2" fill="#5a4123"/><path d="M20 56 C22 73 33 83 50 83 C67 83 78 73 80 56 Z" fill="#82633a" stroke="#2c2013" stroke-width="1"/><path d="M20 56 C21.6 69 27.5 78 36.5 81.5 C29 75.5 26 66 25 56 Z" fill="#94733f"/><ellipse cx="50" cy="56" rx="30" ry="8.6" fill="#15110c"/>${stone(39, 54.6, 6.2, 1)}${stone(50, 53.2, 6.2, 1)}${stone(61, 55, 6.2, 1)}${stone(44.5, 57.2, 6.2, 1)}${stone(55.5, 57.4, 6.2, 1)}<path d="M20 56 A30 8.6 0 0 0 80 56" fill="none" stroke="#a5854c" stroke-width="1.5"/>${stone(30, 87.6, 6.2, 0)}${stone(49, 89.4, 6.2, 0)}${stone(66, 86.8, 6.2, 0)}</svg>`;
+  },
+  /* 棋盘一角：等待时是空盘（等人落子），开局后按进度落子——越往后子越多 */
+  board(live, p = 0) {
+    let grid = "";
+    for (let i = 0; i <= 4; i++) grid += `<path d="M${24 + i * 13} 24 V76 M24 ${24 + i * 13} H76"/>`;
+    const st = (x, y, dark) => `<circle cx="${x}" cy="${y}" r="5.4" fill="${dark ? "#1c2124" : "#eae6da"}" stroke="rgba(0,0,0,.4)" stroke-width=".6"/><path d="M${x - 2.6} ${y - 2.2} a4 4 0 0 1 3.4-1.6" fill="none" stroke="${dark ? "rgba(255,255,255,.32)" : "rgba(255,255,255,.85)"}" stroke-width=".9"/>`;
+    // 定死一串落点（四个角 + 中腹），按进度取前 n 颗：位置不随刷新重排
+    const spots = [[37, 37, 1], [50, 37, 0], [50, 50, 1], [63, 50, 0], [63, 63, 1], [37, 50, 0], [63, 37, 1], [37, 63, 0], [50, 63, 1], [24, 50, 0], [50, 24, 1]];
+    const n = live ? 5 + Math.min(6, Math.floor(p * 6)) : 0;
+    const stones = spots.slice(0, n).map(([x, y, d]) => st(x, y, d)).join("");
+    return `<svg viewBox="0 0 100 100"><g transform="rotate(-9 50 50)"><defs><linearGradient id="p-bd" x1="0" y1="0" x2=".22" y2="1"><stop offset="0" stop-color="#94733f"/><stop offset="1" stop-color="#6b4f2e"/></linearGradient></defs><rect x="17" y="17" width="66" height="66" rx="3" fill="url(#p-bd)" stroke="#2c2013" stroke-width="1.2"/><rect x="17" y="17" width="66" height="4" rx="2" fill="#a5854c"/><rect x="17" y="79" width="66" height="4" rx="2" fill="#5a4123"/><g stroke="rgba(44,30,14,.75)" stroke-width=".75" fill="none">${grid}</g>${stones}</g></svg>`;
+  },
+  /* 木棋子：三枚木色厚片。等待时码成一摞，开局后摊开——「已经动过手了」 */
+  pieces(live) {
+    const flat = (cx, cy, r, g) => `<ellipse cx="${cx}" cy="${(cy + 6.4).toFixed(1)}" rx="${r}" ry="${(r * 0.44).toFixed(1)}" fill="#2c1d0d"/><ellipse cx="${cx}" cy="${(cy + 3.6).toFixed(1)}" rx="${r}" ry="${(r * 0.44).toFixed(1)}" fill="#5a3f1e"/><ellipse cx="${cx}" cy="${cy}" rx="${r}" ry="${(r * 0.44).toFixed(1)}" fill="#9a6d40" stroke="rgba(38,22,8,.55)" stroke-width=".8"/><ellipse cx="${cx}" cy="${cy}" rx="${(r * 0.76).toFixed(1)}" ry="${(r * 0.335).toFixed(1)}" fill="none" stroke="rgba(58,34,10,.45)" stroke-width="1"/>${g ? `<g transform="translate(${cx} ${cy}) scale(1 .64)"><text text-anchor="middle" dy=".36em" font-family="serif" font-size="${(r * 1.02).toFixed(1)}" fill="rgba(52,30,8,.62)">${g}</text></g>` : ""}`;
+    if (!live) return `<svg viewBox="0 0 100 100">${flat(34, 85, 19)}${flat(34, 74, 19, "兵")}${flat(64, 91, 16, "卒")}${flat(83, 79, 13)}</svg>`;
+    return `<svg viewBox="0 0 100 100">${flat(26, 89, 18)}${flat(50, 79, 18, "兵")}${flat(74, 93, 16, "卒")}${flat(87, 75, 13)}</svg>`;
+  },
+  /* 暗棋：等待时三块方木牌一律背面朝上；开局后最上面那块翻过来了——
+     翻棋的全部意思就是「背面朝上，然后翻」，所以这块牌必须翻 */
+  tiles(live) {
+    const tile = (x, y, rot, up) => `<g transform="rotate(${rot} ${x + 15} ${y + 20})"><rect x="${x}" y="${y + 5}" width="30" height="40" rx="2.5" fill="#43301a"/><rect x="${x}" y="${y}" width="30" height="40" rx="2.5" fill="${up ? "#94733f" : "#7c5e34"}" stroke="#2c2013" stroke-width=".9"/><rect x="${x + 1}" y="${y + 35.4}" width="28" height="3.6" rx="1.6" fill="#5f4526" opacity=".75"/>${up ? `<rect x="${x}" y="${y}" width="30" height="4.6" rx="2.2" fill="#a5854c"/><rect x="${x + 4.5}" y="${y + 5.6}" width="21" height="29" rx="1.5" fill="none" stroke="rgba(52,34,16,.42)" stroke-width=".7"/><text x="${x + 15}" y="${y + 25.4}" text-anchor="middle" font-family="serif" font-size="15" fill="rgba(109,38,32,.88)">兵</text>` : `<rect x="${x + 4}" y="${y + 4}" width="22" height="32" rx="1.5" fill="none" stroke="rgba(52,34,16,.45)" stroke-width=".7"/><path d="M${x + 15} ${y + 13} l4.6 7-4.6 7-4.6-7z" fill="none" stroke="rgba(52,34,16,.38)" stroke-width=".8"/>`}</g>`;
+    return live
+      ? `<svg viewBox="0 0 100 100">${tile(22, 38, -13, 0)}${tile(36, 34, 6, 0)}${tile(44, 44, 17, 1)}</svg>`
+      : `<svg viewBox="0 0 100 100">${tile(24, 34, -13, 0)}${tile(38, 30, 6, 0)}${tile(50, 40, 18, 0)}</svg>`;
+  },
+  /* 身份牌：一叠暗牌，顶上那张印着月牙。开局后最上面一张被发出去、歪在一边 */
+  roles(live) {
+    let s = "";
+    for (let i = 3; i > 0; i--) s += `<rect x="${(30 + i * 2.2).toFixed(1)}" y="${(26 + i * 2.2).toFixed(1)}" width="34" height="48" rx="3" fill="#26120f" stroke="#26120f" stroke-width=".7"/>`;
+    const top = `<rect x="30" y="30" width="34" height="48" rx="3" fill="#5e2b26" stroke="#26120f" stroke-width="1"/><rect x="33" y="33" width="28" height="42" rx="2" fill="none" stroke="rgba(217,177,63,.3)" stroke-width=".7"/><circle cx="47" cy="57" r="9" fill="#d9b13f" mask="url(#p-moon)"/><path d="M62 42 l1.1 2.6 2.6 1.1-2.6 1.1-1.1 2.6-1.1-2.6-2.6-1.1 2.6-1.1z" fill="rgba(217,177,63,.5)"/><path d="M41 66 l.8 1.9 1.9.8-1.9.8-.8 1.9-.8-1.9-1.9-.8 1.9-.8z" fill="rgba(217,177,63,.34)"/>`;
+    s += live ? `<g transform="translate(10 5) rotate(11 47 54)">${top}</g>` : top;
+    return `<svg viewBox="0 0 100 100"><defs><mask id="p-moon"><rect width="100" height="100" fill="#fff"/><circle cx="53" cy="54.5" r="8.4" fill="#000"/></mask></defs>${s}</svg>`;
+  },
+  /* 蜡烛：等待时一整根，开局后按进度一直烧下去——一局走多久，它烧多久 */
+  candle(live, p = 0) {
+    const ct = live ? 44 + 16 * p : 44;   // 蜡顶；底固定在 74
+    return `<svg viewBox="0 0 100 100"><ellipse cx="50" cy="90.5" rx="16" ry="4.6" fill="rgba(0,0,0,.32)"/><ellipse cx="50" cy="88" rx="15" ry="4.6" fill="#8a6a2c"/><ellipse cx="50" cy="86.6" rx="15" ry="4.6" fill="#c9a961"/><path d="M43 87 q7 5 14 0 l-2.6-14 h-8.8z" fill="#b8954f" stroke="#7a5f2a" stroke-width=".6"/><rect x="44" y="${ct.toFixed(1)}" width="12" height="${(74 - ct).toFixed(1)}" rx="2" fill="#efe7d2"/><path d="M44 ${ct.toFixed(1)} h12 v5 q-6 2.4-12 0z" fill="#d3c9ad"/><ellipse cx="50" cy="${ct.toFixed(1)}" rx="6" ry="2" fill="#f7f0dd"/><path d="M50 ${(ct - 6).toFixed(1)} v6" stroke="#3a2f22" stroke-width="1.3" stroke-linecap="round"/><path d="M50 ${(ct - 22).toFixed(1)} q6 9 0 15 q-6-6 0-15z" fill="#ffc961"/><path d="M50 ${(ct - 17).toFixed(1)} q3 5 0 9 q-3-4 0-9z" fill="#fff2c8"/>${live ? `<path d="M45 ${(ct + 1).toFixed(1)} q-1 6 1 9" stroke="#efe7d2" stroke-width="2" fill="none" stroke-linecap="round" opacity=".85"/>` : ""}</svg>`;
+  },
+  /* 汤碗：海龟汤就是一碗汤——汤面 + 一把搭在碗沿的勺 + 两缕热气 */
+  soup() {
+    return `<svg viewBox="0 0 100 100"><path d="M24 54 C26 78 36 88 50 88 C64 88 74 78 76 54 Z" fill="#eae2d0" stroke="#a89f8b" stroke-width=".8"/><ellipse cx="50" cy="54" rx="26" ry="8" fill="#f4eede" stroke="#a89f8b" stroke-width=".8"/><ellipse cx="50" cy="54.6" rx="21" ry="6.2" fill="#a96724"/><ellipse cx="50" cy="54" rx="21" ry="6.2" fill="#c9883a"/><path d="M43 51.6 q6 3 13 0" stroke="rgba(255,244,214,.4)" stroke-width="1.3" fill="none"/><path d="M64 74 L80 46" stroke="#cfc8b4" stroke-width="3.2" stroke-linecap="round"/><ellipse cx="63" cy="76" rx="6" ry="4.2" fill="#ded8c4" stroke="#a89f8b" stroke-width=".6"/><path d="M41 45 q4-6 0-11 M52 43 q4-6 0-11" stroke="rgba(255,255,255,.13)" stroke-width="1.7" fill="none" stroke-linecap="round"/></svg>`;
+  },
+  /* 拍卖槌：槌头压在木墩上，柄朝右上——立着放会读成台灯 */
+  gavel() {
+    return `<svg viewBox="0 0 100 100"><ellipse cx="40" cy="89" rx="21" ry="5.6" fill="rgba(0,0,0,.32)"/><path d="M19 83 h42 v5.4 q-21 6-42 0z" fill="#5f4526"/><ellipse cx="40" cy="83" rx="21" ry="5.6" fill="#80603a"/><ellipse cx="40" cy="82.6" rx="13" ry="3.2" fill="#6d5030"/><path d="M58 71 L80 47" stroke="#82633a" stroke-width="6.4" stroke-linecap="round"/><path d="M58 69.4 L80 45.4" stroke="#a88551" stroke-width="2" stroke-linecap="round" opacity=".55"/><g transform="rotate(-9 38 70)"><rect x="18" y="62" width="36" height="16" rx="3.4" fill="#82633a" stroke="#3d2c15" stroke-width=".9"/><rect x="18" y="62" width="36" height="5.2" rx="2.6" fill="#a88551"/><rect x="48" y="61" width="7" height="18" rx="2" fill="#c9a961" stroke="#7a5f2a" stroke-width=".6"/></g></svg>`;
+  },
+  /* 竞价牌：编号 07——「举牌」这件事一张牌就说完了 */
+  paddle() {
+    return `<svg viewBox="0 0 100 100"><g transform="rotate(-7 50 58)"><ellipse cx="50" cy="91.5" rx="13" ry="4" fill="rgba(0,0,0,.3)"/><path d="M42 85.6 h16 v4.6 q-8 3.4-16 0z" fill="#5a4123"/><ellipse cx="50" cy="85.6" rx="8" ry="2.8" fill="#82633a"/><rect x="45.6" y="56" width="8.8" height="30" rx="1.2" fill="#82633a" stroke="#2c2013" stroke-width=".7"/><rect x="45.6" y="56" width="2.4" height="30" rx="1" fill="#94733f"/><rect x="28" y="20" width="44" height="42" rx="3.5" fill="#e7e0cd" stroke="#a2987f" stroke-width="1"/><rect x="31.5" y="23.5" width="37" height="35" rx="2" fill="none" stroke="rgba(120,108,86,.4)" stroke-width=".7"/><text x="50" y="50" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="19" fill="#8e3b34" letter-spacing="1">07</text></g></svg>`;
+  },
+  /* 天平：合作与背叛，在两端各放一枚 */
+  scale() {
+    return `<svg viewBox="0 0 100 100"><ellipse cx="50" cy="90" rx="15" ry="4.4" fill="#8a6a2c"/><ellipse cx="50" cy="88.4" rx="15" ry="4.4" fill="#c9a961"/><rect x="48.2" y="38" width="3.6" height="51" fill="#b8954f"/><rect x="48.2" y="38" width="1.5" height="51" fill="#e0c07a"/><rect x="14" y="34" width="72" height="3.6" rx="1.8" fill="#c9a961"/><rect x="14" y="34" width="72" height="1.3" rx=".65" fill="#e6cc8e"/><circle cx="50" cy="36" r="4.6" fill="#d8b878" stroke="#7a5f2a" stroke-width=".8"/><circle cx="50" cy="36" r="1.5" fill="#7a5f2a"/><path d="M22 38 L18 56 M22 38 L26 56" stroke="#a5854c" stroke-width=".9" fill="none"/><path d="M14 56 h16 l-2.6 5.4 h-10.8z" fill="#c9a961" stroke="#7a5f2a" stroke-width=".7"/><path d="M78 38 L74 56 M78 38 L82 56" stroke="#a5854c" stroke-width=".9" fill="none"/><path d="M70 56 h16 l-2.6 5.4 h-10.8z" fill="#b8954f" stroke="#7a5f2a" stroke-width=".7"/></svg>`;
+  },
+  /* 代币：一枚躺着、一枚立着，边缘车出齿纹 */
+  coin() {
+    return `<svg viewBox="0 0 100 100"><ellipse cx="34" cy="82" rx="18" ry="6" fill="#8a6a2c"/><ellipse cx="34" cy="79" rx="18" ry="6" fill="#d8b878"/><ellipse cx="34" cy="79" rx="12" ry="3.8" fill="none" stroke="rgba(90,66,24,.45)" stroke-width=".8" stroke-dasharray="1.4 1.8"/><ellipse cx="58" cy="52" rx="17" ry="20" transform="rotate(14 58 52)" fill="#c9a961" stroke="#7a5f2a" stroke-width="1"/><ellipse cx="58" cy="52" rx="14.4" ry="17.2" transform="rotate(14 58 52)" fill="none" stroke="rgba(90,66,24,.4)" stroke-width=".8" stroke-dasharray="1.4 2"/><path d="M58 44 l5.4 8-5.4 8-5.4-8z" fill="rgba(90,66,24,.42)" transform="rotate(14 58 52)"/><path d="M48 38 a12 14 0 0 1 6-5" fill="none" stroke="rgba(255,244,210,.5)" stroke-width="1.3" transform="rotate(14 58 52)"/></svg>`;
+  },
+  /* 折扇：半开，扇骨数得清 */
+  fan() {
+    const cx = 28, cy = 88, ri = 14, ro = 50, a1 = -10, a2 = 72;
+    const P = (a, r) => [cx + r * Math.cos((a * Math.PI) / 180), cy - r * Math.sin((a * Math.PI) / 180)];
+    const f = (p) => p.map((v) => v.toFixed(1)).join(" ");
+    const [x1, y1] = P(a1, ri), [x2, y2] = P(a1, ro), [x3, y3] = P(a2, ro), [x4, y4] = P(a2, ri);
+    let ribs = "";
+    for (let a = a1; a <= a2 + 0.1; a += 13.7) {
+      const [ax, ay] = P(a, ri + 2), [bx, by] = P(a, ro);
+      ribs += `<path d="M${f([ax, ay])} L${f([bx, by])}" stroke="rgba(120,92,52,.42)" stroke-width=".8"/>`;
+    }
+    return `<svg viewBox="0 0 100 100"><path d="M${f([x1, y1])} L${f([x2, y2])} A${ro} ${ro} 0 0 0 ${f([x3, y3])} L${f([x4, y4])} A${ri} ${ri} 0 0 1 ${f([x1, y1])} Z" fill="#e8e0cb" stroke="#a2997f" stroke-width=".9"/>${ribs}<circle cx="${cx}" cy="${cy}" r="3.4" fill="#8a7048"/><path d="M${cx} ${cy + 3} q-3 6-8 8" stroke="#8a7048" stroke-width="1.1" fill="none" stroke-linecap="round"/></svg>`;
+  },
+  /* 卷轴：两根木轴夹一张纸，纸上一枚朱印 */
+  scroll() {
+    return `<svg viewBox="0 0 100 100"><rect x="14" y="36" width="72" height="46" rx="1.5" fill="#e8e1cd" stroke="#b5aa90" stroke-width=".8"/><rect x="14" y="36" width="72" height="6" fill="#d8cfb7"/><rect x="10" y="28" width="8" height="62" rx="4" fill="#82633a" stroke="#3d2c15" stroke-width=".8"/><rect x="82" y="28" width="8" height="62" rx="4" fill="#82633a" stroke="#3d2c15" stroke-width=".8"/><path d="M64 48 v26 M56 48 v26 M48 48 v26" stroke="rgba(48,42,34,.32)" stroke-width="1.5" stroke-linecap="round"/><rect x="30" y="60" width="12" height="12" rx="1.4" fill="rgba(142,59,52,.65)"/><path d="M33 66 h6 M36 63 v6" stroke="rgba(255,240,220,.5)" stroke-width=".9"/></svg>`;
+  },
+};
+/* r62：光学画框。每件陈设的「视觉包围盒」差得很远（棋盘 75×75，蜡烛 32×73），
+   直接塞进同一个 100×100 的框里 → 棋盘压过一切、牌被框子裁掉、各件中心上下乱飘。
+   做法：按「两态并集」量包围盒，然后
+     ① 面积归一到 6300（相当于 79×79）——面积才是「看上去多大」的度量；
+     ② 长边封顶 108（= 盒子宽的 77%）：筹码一排、木棋子一条本来就是扁宽的，
+        只按面积放大会宽到贴住桌沿，所以再压一道长边；
+     ③ 棋盘 ×1.10（它本来就是一块板），筹码 ×0.95（一排东西别太抢）；
+     ④ 归一后 16 件里 12 件正好是 6300，只有棋盘/筹码/木棋子/蜡烛因长边封顶偏离（最多 1.36 倍）
+     ⑤ 包围盒中心对齐画框中心——两态共用一个画框，切状态不跳。
+   值是 [viewBox.x, viewBox.y, viewBox 边长]，正方形画框，直接替换 SVG 的 viewBox。
+   量取口径见 .workbuddy/memory（getBBox 三态并集，不含 CSS 投影）。 */
+const PROP_FIT = {
+  chips: [-10.8, 12.7, 125.4], hand: [-1.6, 3.6, 111.9],
+  dicecup: [-4.5, -3.6, 133], bowl: [3.8, 24.1, 92.5],
+  board: [-13.5, -13.5, 127], pieces: [-5.6, 26.4, 119.3],
+  tiles: [-6.2, 2.5, 115.8], roles: [7.6, 9.8, 94.8],
+  candle: [2.6, 11.1, 94.8], soup: [2.6, 10.6, 98.8],
+  gavel: [-0.8, 20.8, 98.4], paddle: [-7.5, 0.3, 115],
+  scale: [-9.4, 3.5, 118.8], coin: [-6.4, 4.1, 108.2],
+  fan: [-2.4, 18.3, 102.8], scroll: [-12.1, -3.1, 124.2],
+};
+/* 哪款游戏摆哪两簇：左主右辅。没登记的游戏不摆——宁可不摆，也别摆错。 */const PROP_SETS = {
+  holdem_lite: ["chips", "hand"], blackjack: ["hand", "chips"], twenty_four: ["hand", "chips"],
+  liars_dice: ["dicecup", "chips"],
+  othello: ["bowl", "board"], gomoku: ["bowl", "board"],
+  jungle_chess: ["pieces", "board"], banqi: ["tiles", "pieces"],
+  werewolf_lite: ["roles", "candle"], undercover: ["roles", "candle"], turtle_soup: ["soup", "candle"],
+  auction: ["gavel", "paddle"], dilemma: ["scale", "coin"],
+  idiom_chain: ["fan", "scroll"], feihualing: ["fan", "scroll"],
+};
+/** 桌面陈设。p = 对局进度 0..1（r60，取自房间详情里的 progress.turn）——
+    等待时 p 恒 0，开局后随回合推进，物件才真的「在打」。 */
+function tableProps(game, live, p = 0) {
+  const pair = PROP_SETS[game];
+  if (!pair) return "";
+  return `<div class="tprops" aria-hidden="true">${pair
+    .map((k, i) => {
+      // 蜡烛的火苗在画框里随进度下移；CSS 那层光晕得按「viewBox → 画框」换算过去才对得上
+      let glow = "";
+      if (k === "candle") {
+        const [, vy, V] = PROP_FIT.candle;
+        const flame = 44 + (live ? 16 * p : 0) - 14;
+        glow = ` style="--glow-y:${(((flame - vy) / V) * 100).toFixed(1)}%;--glow-w:${((12000 / V) | 0)}%"`;
+      }
+      // 统一光学画框：只换 viewBox（四个数：x y 宽 高），不动画法
+      const fit = PROP_FIT[k];
+      const art = fit
+        ? PROP_ART[k](live, p).replace('viewBox="0 0 100 100"', `viewBox="${fit[0]} ${fit[1]} ${fit[2]} ${fit[2]}"`)
+        : PROP_ART[k](live, p);
+      return `<span class="tp ${i ? "r" : "l"}${k === "candle" ? " lit" : ""}" data-glyph="${k}"${glow}>${art}</span>`;
+    })
+    .join("")}</div>`;
+}
+/** 对局进度 0..1：turn/(turn+10) 是渐近曲线——各游戏长度差一个量级
+    （狼人杀一局十几步、德州一局几十步），固定分母不是早早烧完就是纹丝不动 */
+function roomProgress(d) {
+  const turn = Number(d?.progress?.turn ?? 0);
+  return turn > 0 ? Math.min(1, turn / (turn + 10)) : 0;
+}
+/** 只换桌面陈设，不动整块详情——对局进行中每 4 秒走一次，重建整块会换掉正在点的按钮 */
+function patchRoomProps() {
+  const d = ROOM.detail;
+  const host = document.querySelector("#room-detail .tprops");
+  if (!d || !host) return;
+  const html = tableProps(d.game, d.status !== "waiting", roomProgress(d));
+  if (html === ROOM.propStamp) return;   // 进度没变就别动 DOM
+  ROOM.propStamp = html;
+  const tmp = document.createElement("div");
+  tmp.innerHTML = html;
+  if (tmp.firstElementChild) host.replaceWith(tmp.firstElementChild);
+}
+/** 切皮肤：只换 .table-stage 的 data-skin 与开关态，不重建详情（避免头像重画与焦点丢失） */
+window.setSkin = function (v) {
+  ROOM.skin = v === "felt" ? "felt" : "flat";
+  try { localStorage.setItem(SKIN_KEY, ROOM.skin); } catch {}
+  const stage = document.querySelector(".table-stage");
+  if (stage) stage.dataset.skin = ROOM.skin;
+  document.querySelectorAll(".skins .sk").forEach((b) => {
+    const on = b.dataset.skinBtn === ROOM.skin;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-pressed", String(on));
+  });
+};
+function renderRoomDetail() {
+  const box = $("#room-detail");
+  const d = ROOM.detail;
+  if (!box) return;
+  if (!d) {
+    box.innerHTML = `<div class="room-hint">点上面任意一行 · 看这张桌的座位<small>房主可补 bot 直接开局；房间链接可复制给对手</small></div>`;
+    return;
+  }
+  const seats = d.seats_view ?? Array.from({ length: d.seats }, (_, i) => ({ seat: i + 1, status: "empty" }));
+  const joined = d.joined === true || !!ROOM.tokens[d.room_id];
+  const isHost = d.is_host === true;
+  const live = d.status !== "waiting";
+  // r54：席位是正方形的「牌」——有人的席给头像，空位给虚线 + 加号，不靠颜色分辨
+  const seatCell = (s) => {
+    const mine = d.my_seat === s.seat;
+    if (s.status === "empty") {
+      const open = !live;
+      const attrs = open
+        ? ` tabindex="0" role="button" aria-label="第 ${s.seat} 号空位，入座" onclick="joinRoom()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();joinRoom()}"`
+        : ` aria-label="第 ${s.seat} 号空位"`;
+      return `<div class="rseat empty${open ? "" : " lock"}"${attrs}>
+        <span class="sn">${s.seat}</span><span class="av"><b>+</b></span>
+        <span class="rn">${open ? "空位 · 入座" : "空位"}</span></div>`;
+    }
+    if (s.status === "bot") {
+      return `<div class="rseat bot"><span class="sn">${s.seat}</span><span class="bd">BOT</span>
+        ${seatAvatar(s, "bot:" + d.game + ":" + s.seat, s.seat)}
+        <span class="rn">house bot</span><span class="rt">AI 补位</span></div>`;
+    }
+    const badge = mine ? "我" : s.is_host ? "房主" : "";
+    return `<div class="rseat${s.is_host ? " host" : ""}${mine ? " mine" : ""}">
+      <span class="sn">${s.seat}</span>${badge ? `<span class="bd">${badge}</span>` : ""}
+      ${seatAvatar(s, "p:" + (s.name ?? d.room_id + ":" + s.seat), s.seat)}
+      <span class="rn">${esc(s.name ?? "—")}</span>
+      <span class="rt">${s.channel === "webhook" ? "WEBHOOK" : "HTTP"}</span></div>`;
+  };
+  const human = d.players ?? seats.filter((s) => s.status === "occupied").length;
+  const bots = d.bots ?? seats.filter((s) => s.status === "bot").length;
+  const people = bots ? `${human} 人 + ${bots} bot` : `${human}/${d.seats} 人`;
+  // r51：围桌分两侧——远侧 floor(n/2)、近侧其余；奇数席（3/5 人牌桌）多出的一席放近侧，像房主坐的主位
+  const farSide = Math.floor(seats.length / 2);
+  // r60：桌面陈设跟着对局进度走；进度只影响陈设，不影响其它任何字段
+  const propsHtml = tableProps(d.game, live, roomProgress(d));
+  ROOM.propStamp = propsHtml;
+  const stageHtml = `<div class="table-stage" data-skin="${ROOM.skin}">
+    <div class="ts-row top" style="--n:${farSide}">${seats.slice(0, farSide).map(seatCell).join("")}</div>
+    <div class="ts-table${live ? " live" : ""}" role="img" aria-label="${esc(roomGameName(d.game))} 桌面：${live ? "对局进行中" : "等待入座"}">
+      ${propsHtml}
+      <div class="tt-main">${live ? "对局进行中" : "等待入座"}</div>
+      <div class="tt-sub">${live
+        ? `${d.seats} 席 · ${human} 人${bots ? ` + ${bots} bot` : ""}`
+        : `还差 ${Math.max(0, d.seats - human)} 人 · 共 ${d.seats} 席`}</div>
+    </div>
+    <div class="ts-row bot" style="--n:${seats.length - farSide}">${seats.slice(farSide).map(seatCell).join("")}</div>
+  </div>`;
+  const actions = live
+    ? `${d.seat_token ? `<button class="btn" onclick="enterRoomMatch()">进入牌桌</button>` : `<button class="mini" onclick="gotoMatch('${esc(d.match_id)}')">围观本局</button>`}
+       <button class="mini" onclick="copyRoomLink()">复制链接</button>`
+    // r51：开局按钮只给房主——此前只要入座就显示，非房主点下去必被 403 ROOM_FORBIDDEN 顶回来
+    : `${isHost ? `<button class="btn" onclick="startRoom()">${human < d.seats ? "补 bot 开局" : "开始对局"}</button>` : ""}
+       ${joined ? "" : `<button class="btn" onclick="joinRoom()">入座</button>`}
+       <button class="mini" onclick="copyRoomLink()">复制邀请链接</button>
+       <button class="mini" onclick="openRoom('${esc(d.room_id)}')">刷新</button>`;
+  const note = live
+    ? "对局已开始；有 seat_token 可直接进入牌桌，否则只能围观。"
+    : isHost
+      ? "点空位入座；满员自动开局，你也可在余位补 house bot。"
+      : joined
+        ? "已入座；满员会自动开局，也可等房主补 bot 开桌。"
+        : "点空位入座；满员自动开局。";
+  box.innerHTML = `<div class="roomdetail">
+    <div class="rd-head"><div><div class="rd-title">${esc(roomGameName(d.game))} · ${people}</div>
+      <div class="rd-sub">ROOM ${esc(d.room_id)} · ${live ? "对局已开始" : "等待入座"}${isHost ? " · 你是房主" : ""}</div></div>
+      <div class="rd-actions">${actions}</div></div>
+    ${stageHtml}
+    <div class="rd-foot">
+      <div class="rd-note">${note}</div>
+      <div class="skins" role="group" aria-label="座位区风格">
+        <button class="sk${ROOM.skin === "flat" ? " on" : ""}" data-skin-btn="flat" aria-pressed="${ROOM.skin === "flat"}" title="平面：只有边线与席位，不摆任何桌面陈设" onclick="setSkin('flat')">平面</button>
+        <button class="sk${ROOM.skin === "felt" ? " on" : ""}" data-skin-btn="felt" aria-pressed="${ROOM.skin === "felt"}" title="台呢：木边、织纹与缝线，并按当前游戏摆桌面陈设" onclick="setSkin('felt')">台呢</button>
+      </div>
+    </div>
+  </div>`;
+  a11yButtons(box);
+}
+/** 邀请链接：?room=<id> 直达房间——口头报房号对面还得自己找，链接贴过去就能入座 */
+function roomLink(id = ROOM.detail?.room_id) {
+  if (!id) return "";
+  return `${location.origin}${location.pathname}?room=${encodeURIComponent(id)}`;
+}
+window.copyRoomLink = async function () {
+  const link = roomLink();
+  if (!link) return;
+  try {
+    if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(link); roomMsg("邀请链接已复制：" + link); return; }
+    throw new Error("no clipboard");
+  } catch {
+    // 非安全上下文（http + 局域网 IP）没有 clipboard API——退化成可手动复制的提示，不静默失败
+    roomMsg("请手动复制邀请链接：" + link, true);
+  }
+};
+window.createRoom = async function () {
+  const game = currentRoomGame();
+  if (!game) { roomMsg("先在左侧选一款游戏，再创建房间", true); return; }
+  roomMsg("正在创建房间…");
+  try {
+    const r = await api("/lobby/rooms", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ game, name: "房主", seats: ROOM.seats || undefined }),
+    });
+    if (r.error) { roomMsg("创建失败：" + r.error, true); return; }
+    ROOM.tokens[r.room_id] = r.join_token;
+    saveRoomTokens();
+    // 新房间未必在当前筛选的游戏下——切过去，否则「创建成功」后列表里看不见这张桌
+    if (ROOM.game !== game) { ROOM.game = game; renderRoomGames(); }
+    ROOM.stamp = null;
+    await openRoom(r.room_id);
+    await loadRooms();
+    roomMsg(`房间已创建 · 房间号 ${r.room_id} · 把邀请链接发给对手即可入座`);
+  } catch { roomMsg("创建失败：网关不可达", true); }
+};
+window.joinRoom = async function () {
+  const id = ROOM.detail?.room_id;
+  if (!id) return;
+  roomMsg("正在入座…");
+  try {
+    const r = await api(`/lobby/rooms/${id}/join`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      // 匿名身份每次请求都是新 agentId，同名会在一桌里出现两个「挑战者」，加后缀区分
+      body: JSON.stringify({ name: "玩家" + String(Math.floor(Math.random() * 90) + 10) }),
+    });
+    if (r.error) { roomMsg("入座失败：" + r.error, true); return; }
+    ROOM.tokens[id] = r.join_token;
+    saveRoomTokens();
+    ROOM.stamp = null;
+    await openRoom(id);
+    roomMsg(r.status === "started" ? "已入座，对局已开始" : "已入座，等待其他玩家（可把邀请链接发给对手）");
+  } catch { roomMsg("入座失败：网关不可达", true); }
+};
+window.startRoom = async function () {
+  const d = ROOM.detail;
+  const id = d?.room_id;
+  const token = id ? ROOM.tokens[id] : null;
+  // 房主身份以服务端 is_host 为准：join_token 只证明「坐在这桌」，不等于「能开这桌」
+  if (!id || !token || d.is_host !== true) { roomMsg("只有房主可以开始对局", true); return; }
+  const body = { join_token: token };
+  if ((d.players ?? 0) < d.seats) body.bots_filled = true;
+  roomMsg("正在开局…");
+  try {
+    const r = await api(`/lobby/rooms/${id}/start`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+    });
+    if (r.error) { roomMsg("开局失败：" + r.error, true); return; }
+    ROOM.stamp = null;
+    await openRoom(id);
+    roomMsg(r.bots_filled ? `对局已开始 · ${r.bots_filled} 席由 house bot 补齐` : "对局已开始");
+  } catch { roomMsg("开局失败：网关不可达", true); }
+};
+window.enterRoomMatch = function () {
+  const d = ROOM.detail;
+  if (!d?.seat_token) { roomMsg("没有该房间的座位凭据，只能围观", true); return; }
+  const sel = $("#p-game");
+  if (sel && d.game) sel.value = d.game;
+  showView("play");
+  enterPlayMatch(d.match_id, d.seat_token, d.seat_id, d.game, "房间对局 · ");
+};
+window.quickJoinRoom = async function () {
+  try { await ensureGames(); } catch { roomMsg("网关不可达，稍后重试", true); return; }
+  if (!ROOM.all.length) await loadRooms();
+  roomMsg("正在寻找空位…");
+  // 在「当前筛选结果」里找，不额外发请求：左侧分类/搜索已经把范围圈好了
+  const room = filteredRooms()
+    .filter((x) => x.status === "waiting" && x.joinable)
+    .sort((a, b) => b.players - a.players)[0];   // 人越多的桌越接近开局（QQ 大厅的「快速加入」同理）
+  if (room) {
+    // 匹配到别的游戏的桌——把筛选切过去，否则入座后列表里看不到自己这张桌
+    if (ROOM.game && ROOM.game !== room.game) { ROOM.game = room.game; ROOM.chipsStamp = null; }
+    await seatRoom(room.room_id);
+    return;
+  }
+  const game = currentRoomGame();
+  if (!game) { roomMsg("当前范围没有空桌；先选一款游戏再开新桌", true); return; }
+  await createRoom();
+};
 
 function railHtml(extra, withZones) {
   return (extra ?? "") + `${withZones ? `<div class="eyebrow">「 赛 区 」</div><div class="znav" id="znav"></div>` : ""}` +
@@ -1785,21 +2818,33 @@ function myStatusHtml() {
   return `<div class="eyebrow">「 我 的 桌 」</div><div id="my-status" class="kv" style="line-height:2">尚未入座</div>`;
 }
 
-async function loadLobby() {
-  try {
-    if (!CACHE.games.length) {
-      const g = await api("/games");
-      CACHE.games = g.games;
-      g.games.forEach((x) => { GAME_NAMES[x.id] = x.name; });
-      if (!LB.game) LB.game = g.games[0] ? g.games[0].id : null;
-      $("#p-game").innerHTML = g.games.map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join("");
+/* r50：游戏清单是「大厅 / 房间 / 试玩」三页共同前置——抽出来由各页按需等待，
+   否则深链直接进房间页（CACHE.games 还空）会渲染出零个游戏 chip、房间列表直接返回 */
+let GAMES_READY = null;
+function ensureGames() {
+  if (CACHE.games.length) return Promise.resolve(CACHE.games);
+  if (!GAMES_READY) {
+    GAMES_READY = api("/games").then((g) => {
+      CACHE.games = g.games ?? [];
+      CACHE.games.forEach((x) => { GAME_NAMES[x.id] = x.name; });
+      if (!LB.game) LB.game = CACHE.games[0] ? CACHE.games[0].id : null;
+      const sel = $("#p-game");
+      if (sel) sel.innerHTML = CACHE.games.map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("");
       renderPlayPicker();
       $("#rail-lobby").innerHTML = railHtml(null, true);
       $("#rail-match").innerHTML = railHtml();
       $("#rail-play").innerHTML = railHtml(myStatusHtml());
       loadBoards();
       boardsTimer = setInterval(loadBoards, 60000);
-    }
+      return CACHE.games;
+    }).catch((e) => { GAMES_READY = null; throw e; });
+  }
+  return GAMES_READY;
+}
+
+async function loadLobby() {
+  try {
+    await ensureGames();
     const mr = await api("/matches");
     CACHE.matches = mr.matches;
     WALL.live = CACHE.matches.filter((m) => !m.finished).slice(0, 3);
@@ -1809,7 +2854,7 @@ async function loadLobby() {
     const players = new Set(mr.matches.flatMap((m) => m.seats));
     $("#ro").classList.remove("err");
     $("#ro").textContent = `今日 ${mr.matches.length} 局 · ${players.size} 位选手`;
-    $("#mast-meta").innerHTML = `${cnDate()} · <span style="color:var(--grn)">● ${mr.matches.filter((m) => !m.finished).length} 场直播</span> · arena/r48`;
+    $("#mast-meta").innerHTML = `${cnDate()} · <span style="color:var(--grn)">● ${mr.matches.filter((m) => !m.finished).length} 场直播</span> · arena/r62`;
     $("#sbar-live").textContent = `${mr.matches.filter((m) => !m.finished).length} live`;
     loadWallViews();
     startWallSSE(); // r20：直播墙实时链路（SSE 直连，4s 轮询降级兜底）
@@ -4131,10 +5176,15 @@ document.addEventListener("keydown", (e) => {
 });
 
 showView("lobby");
-/* r34：观战直达链接 ?match=<match_id>（可分享）。不带参数则留在大厅。 */
+/* r34：观战直达链接 ?match=<match_id>（可分享）。不带参数则留在大厅。
+   r50：房间直达链接 ?room=<room_id>——对手点开就能看到座位图并入座，比口头报房号可靠 */
 {
-  const qm = new URLSearchParams(location.search).get("match");
-  if (qm) gotoMatch(qm);
+  const qs = new URLSearchParams(location.search);
+  const qr = qs.get("room");
+  const qm = qs.get("match");
+  if (qr) { showView("rooms"); openRoom(qr); }
+  else if (qs.get("view") === "rooms") showView("rooms");
+  else if (qm) gotoMatch(qm);
 }
 /* r20 测试钩子：E2E 可达（仅测试消费，无业务影响） */
 window.__r20 = { miniStageInner, renderWall, ingestEvent, refreshMinistage, WALL, TK };

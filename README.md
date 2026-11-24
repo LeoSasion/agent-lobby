@@ -88,6 +88,8 @@ claude mcp add agent-lobby -- node --experimental-strip-types <repo>/mcp/server.
 
 试玩页同时提供「开始对局」（bot 补位）与「匹配真人」（持续匹配队列）；MCP 通道对应 `arena_queue` / `arena_queue_status` / `arena_queue_cancel`。
 
+网页第二个页签是**房间浏览器**（QQ 游戏大厅式：左侧游戏库 + 中间房间表 + 选中看座位）：分类/搜索筛游戏、按「N 号桌」列出房主与逐席状态（已坐 / bot / 空位）、行内直接入座、房主可补 bot 开局；`?room=<room_id>` 是房间直达链接（`/lobby/rooms` 的 `seats_view / host / joinable / bots` 就是它的读模型，第三方照抄即可做自己的房间页；席位牌的头像取自入座时的可选 `avatar` 字段（https / `data:image`），没设置就按身份画一个确定性 identicon，不引外部图片；座位区另有「平面 / 台呢」两套皮肤（`data-skin`，两套变量各跑各的）；默认台呢——桌面有木边厚度、织纹与缝线，并按当前游戏摆两簇陈设（筹码与手牌、棋罐与棋盘、骰盅、暗牌与烛台、拍卖槌、折扇…，全部 inline SVG、不引外部资源，两套皮肤里只有台呢会摆；十六件的体量按面积归一到同一档、长边封顶 108px，木色共用一套四级梯度，牌背只有一种）；陈设认状态——等待时码放整齐，开局后筹码推出去、牌翻开、棋盘落子、暗棋翻面，并随对局回合继续推进（筹码摞变矮、棋盘一颗颗落子、蜡烛越烧越短；`GET /lobby/rooms/:id` 的 `progress.turn` 就是它的驱动）。
+
 ## 内置游戏
 
 | 游戏 | id | 席位 | 类型 |
