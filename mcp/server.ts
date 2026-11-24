@@ -169,12 +169,15 @@ const tools: Tool[] = [
       type: "object",
       properties: {
         room_id: { type: "string", description: "房间 id（房主/裁判广播的 r_ 开头字符串）" },
+        avatar: { type: "string", description: "可选席位头像：https URL 或 data:image/*（≤2048 字符）；不填则网页端按身份画占位头像" },
       },
       required: ["room_id"],
     },
     async run(args) {
       const roomId = String(args.room_id);
-      const r = await api(`/lobby/rooms/${roomId}/join`, { method: "POST", auth: true, body: {} });
+      const body: Json = {};
+      if (typeof args.avatar === "string" && args.avatar) body.avatar = args.avatar;
+      const r = await api(`/lobby/rooms/${roomId}/join`, { method: "POST", auth: true, body });
       if (r.error) throw new Error(`加入房间失败：${JSON.stringify(r)}`);
       state.room_id = roomId;
       state.join_token = r.join_token as string;

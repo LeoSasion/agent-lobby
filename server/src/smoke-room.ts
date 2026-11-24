@@ -144,6 +144,85 @@ async function main(): Promise<void> {
   const listed = (list.body.rooms as { room_id: string }[]) ?? [];
   check("房间列表含已开房间", listed.some((r) => r.room_id === roomId) && listed.some((r) => r.room_id === wRoom), `${listed.length} 间`);
 
+  // —— 场景 4b：房间浏览读模型（r50 前端「大厅 → 房间 → 座位」三层全靠这几个字段）——
+  interface SeatCell { seat: number; status: "occupied" | "bot" | "empty"; name: string | null; channel: string | null; is_host: boolean }
+  interface RoomCard { room_id: string; game: string; seats: number; players: number; bots: number; host: string | null; joinable: boolean; status: string; seats_view: SeatCell[]; created_at: number }
+  const roomsOf = (b: Record<string, unknown>) => (b.rooms as RoomCard[]) ?? [];
+
+  const byGame = roomsOf((await api("/lobby/rooms?game=othello")).body);
+  check(
+    "?game= 过滤只回本游戏",
+    byGame.length > 0 && byGame.every((r) => r.game === "othello"),
+    `${byGame.length} 间，全部 othello`,
+  );
+  const wolfOnly = roomsOf((await api("/lobby/rooms?game=werewolf_lite")).body);
+  check(
+    "过滤不夹带其他游戏",
+    wolfOnly.some((r) => r.room_id === wRoom) && wolfOnly.every((r) => r.game === "werewolf_lite"),
+    `${wolfOnly.length} 间`,
+  );
+
+  const card = byGame.find((r) => r.room_id === roomId);
+  check(
+    "卡片：席位图与人数同源",
+    !!card && card.seats_view.length === card.seats &&
+      card.seats_view.filter((s) => s.status === "occupied").length === card.players &&
+      card.host === "room-host" && card.joinable === false && typeof card.created_at === "number",
+    card ? `seats=${card.seats} players=${card.players} host=${String(card.host)}` : "未找到该房间",
+  );
+  check(
+    "卡片不泄露 agent_id",
+    !JSON.stringify(roomsOf((await api("/lobby/rooms")).body)).includes("agent_id"),
+    "列表 JSON 无 agent_id",
+  );
+
+  const fresh = await post("/lobby/rooms", { game: "liars_dice", name: "browser-host", seats: 3 });
+  const freshCard = roomsOf((await api("/lobby/rooms?game=liars_dice")).body).find((r) => r.room_id === String(fresh.body.room_id));
+  check(
+    "等待中的桌：joinable + 空位可见",
+    freshCard?.joinable === true && freshCard.seats_view.filter((s) => s.status === "empty").length === 2 &&
+      freshCard.host === "browser-host",
+    freshCard ? `empty=${freshCard.seats_view.filter((s) => s.status === "empty").length}` : "未找到新房间",
+  );
+
+  const byHeader = await api(`/lobby/rooms/${roomId}`, { headers: { "x-room-token": hostToken } });
+  check(
+    "x-room-token 头等价于 ?token=（房主视角）",
+    byHeader.body.is_host === true && byHeader.body.joined === true && byHeader.body.my_seat === 1,
+    `is_host=${String(byHeader.body.is_host)} my_seat=${String(byHeader.body.my_seat)}`,
+  );
+
+  const botView = await api(`/lobby/rooms/${wRoom}?token=${wToken}`);
+  const botCells = (botView.body.seats_view as SeatCell[]) ?? [];
+  check(
+    "强制开局的 bot 席标为 bot 而非空位",
+    botView.body.bots === 5 && botView.body.players === 1 && botView.body.joinable === false &&
+      botCells.filter((s) => s.status === "bot").length === 5 && botCells.filter((s) => s.status === "empty").length === 0,
+    `bots=${String(botView.body.bots)} botCells=${botCells.filter((s) => s.status === "bot").length}`,
+  );
+  const botSpectator = await api(`/lobby/rooms/${wRoom}`);
+  check(
+    "观战视角与入座视角同形（只差 seat_*）",
+    botSpectator.body.players === 1 && botSpectator.body.status === "started" &&
+      botSpectator.body.seat_token === undefined && Array.isArray(botSpectator.body.seats_view),
+    `players=${String(botSpectator.body.players)}`,
+  );
+
+  // —— 场景 4c：对局进度（r60，房间页的桌面陈设照着它推进）——
+  const doneDetail = await api(`/lobby/rooms/${roomId}`);
+  const prog = doneDetail.body.progress as { turn: number; finished: boolean } | undefined;
+  check(
+    "对局结束的房间仍给 progress（turn>0、finished=true）",
+    !!prog && Number.isInteger(prog.turn) && prog.turn > 0 && prog.finished === true,
+    prog ? `turn=${prog.turn} finished=${String(prog.finished)}` : "缺 progress",
+  );
+  const waitingDetail = await api(`/lobby/rooms/${String(fresh.body.room_id)}`);
+  check(
+    "等待中的房间没有 progress（陈设停在「摆好了没开打」）",
+    waitingDetail.body.progress === undefined || waitingDetail.body.progress === null,
+    JSON.stringify(waitingDetail.body.progress),
+  );
+
   // —— 场景 5：Webhook 通道进房（错误路径 + 混合通道完整对局）——
   console.log("\n[场景 5] Webhook 通道进房 · 混合通道对局");
   // 5a. 错误路径：无 Bearer / 未注册 callback
@@ -360,10 +439,45 @@ async function main(): Promise<void> {
     );
     // 救济链第二段：凭原 join_token 查房间 → 拿回 seat_token
     const st2 = await api(`/lobby/rooms/${rid7}?token=${jt1}`);
-    check("凭原 join_token 拿回 seat_token（救济链闭环）", typeof st2.body.seat_token === "string" && String(st2.body.seat_token).startsWith("st_"), `seat=${String(st2.body.seat)}`);
+    check("凭原 join_token 拿回 seat_token（救济链闭环）", typeof st2.body.seat_token === "string" && String(st2.body.seat_token).startsWith("st_"), `seat_id=${String(st2.body.seat_id)}`);
     // 游客（无 Bearer）不享受幂等：agentId 每次随机
     const g1 = await post(`/lobby/rooms/${rid7}/join`, { name: "guest-1" });
     check("满员后游客 join 仍被拒 ROOM_FULL（无幂等误伤）", g1.status === 409 && String(g1.body.error).startsWith("ROOM_FULL"), `code=${String(g1.body.error ?? "").slice(0, 16)}`);
+  }
+
+  // —— 场景 8：席位头像（r54）——
+  console.log("\n[场景 8] 席位头像：https / data URI 透传、非法值丢弃、幂等重连补头像");
+  {
+    const av = "https://example.com/agent-avatars/7f3a.png";
+    const r8 = await post("/lobby/rooms", { game: "liars_dice", seats: 3, name: "avatar-host", avatar: av });
+    const rid8 = String(r8.body.room_id ?? "");
+    const s8 = await api(`/lobby/rooms/${rid8}`);
+    const view8 = (s8.body.seats_view as { seat: number; avatar: string | null }[]) ?? [];
+    check("建房带 https 头像 → 座位图原样返回", r8.status === 201 && view8[0]?.avatar === av, `avatar=${String(view8[0]?.avatar ?? "")}`);
+    check("座位图仍不暴露 agent_id", view8.every((x) => !Object.keys(x).includes("agent_id")), `keys=${view8[0] ? Object.keys(view8[0]).join("/") : "-"}`);
+
+    // 幂等靠 agentId，而 agentId 只认注册过的 api_key（匿名 Bearer 每次都是新身份）
+    const regD = await post("/agents", { name: "avatar-guest" });
+    const keyD = String(regD.body.api_key);
+    await post(`/lobby/rooms/${rid8}/join`, { name: "avatar-guest" }, keyD);
+    const s8b = await api(`/lobby/rooms/${rid8}`);
+    const view8b = (s8b.body.seats_view as { avatar: string | null }[]) ?? [];
+    check("未设置头像 → avatar 为 null（前端据此画 identicon）", view8b[1]?.avatar === null, `avatars=${view8b.map((x) => String(x.avatar)).join(",")}`);
+
+    const dataAv = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E";
+    const jAgain = await post(`/lobby/rooms/${rid8}/join`, { name: "avatar-guest", avatar: dataAv }, keyD);
+    const s8c = await api(`/lobby/rooms/${rid8}`);
+    const view8c = (s8c.body.seats_view as { avatar: string | null }[]) ?? [];
+    check(
+      "幂等重连可补头像且不重复占座",
+      Number(jAgain.body.players) === 2 && view8c[1]?.avatar === dataAv,
+      `players=${String(jAgain.body.players)} · avatar=${String(view8c[1]?.avatar ?? "").slice(0, 24)}`,
+    );
+
+    const rBad = await post("/lobby/rooms", { game: "othello", name: "avatar-bad", avatar: "javascript:alert(1)" });
+    const sBad = await api(`/lobby/rooms/${String(rBad.body.room_id ?? "")}`);
+    const viewBad = (sBad.body.seats_view as { avatar: string | null }[]) ?? [];
+    check("非 https / data:image 的头像被丢弃（建房仍成功）", rBad.status === 201 && viewBad[0]?.avatar === null, `avatar=${String(viewBad[0]?.avatar ?? "")}`);
   }
 
   console.log(`\n=== 结果：${failed === 0 ? "全部通过" : failed + " 项失败"} ===`);

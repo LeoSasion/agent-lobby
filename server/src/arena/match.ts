@@ -362,6 +362,15 @@ export class Match {
     return this.finished;
   }
 
+  /**
+   * 粗粒度进度（r60）：只给「这局走到哪儿了」一个数，不含任何局面信息。
+   * 用途是房间页的桌面陈设（筹码堆、蜡烛、棋盘上的子数）随对局推进而变化；
+   * 不暴露局面——turn 本来就是公开视图里的决策令牌。
+   */
+  get progress(): { turn: number; finished: boolean } {
+    return { turn: this.turnSeq, finished: this.finished };
+  }
+
   eventsFor(viewer: SeatId | "spectator", since = -1): MatchEvent[] {
     return this.visibleEvents(viewer).filter((e) => e.seq > since);
   }

@@ -184,6 +184,8 @@ interface RoomPlayer {
   joinToken: string;
   name: string;
   agentId: string;
+  /** 座位头像（https URL 或 data:image/*）；不填则由前端按身份画确定性 identicon */
+  avatar?: string;
   channel: "http" | "webhook";
   /** webhook 通道的回调（加入时凭 Bearer api_key 解析；slim=推送省略 history） */
   callback?: { url: string; secret: string; slim?: boolean };
@@ -202,6 +204,8 @@ interface Room {
   createdAt: number;
   /** 每回合时限覆盖（ms，5s–300s）；缺省用游戏默认 */
   timeoutMs?: number;
+  /** r50：强制开局时补位的 house bot 数——房间浏览需把 bot 席与空席分开显示，否则满员开打的桌看起来还缺人 */
+  botFilled?: number;
 }
 
 /** r49：持续匹配票——同一 (game, seats) 的等待者凑满即自动转成一间房并开局 */
@@ -666,7 +670,7 @@ export class Gateway {
       return this.queueCancel(queueGet[1], url, req, res);
     }
     if (method === "GET" && path === "/api/v1/lobby/rooms") {
-      return this.roomList(res);
+      return this.roomList(url, res);
     }
     if (method === "POST" && path === "/api/v1/lobby/rooms") {
       return this.roomCreate(req, res);
@@ -1103,9 +1107,10 @@ export class Gateway {
           joinToken,
           name: me.name,
           agentId: me.agentId,
+          avatar: this.avatarOf(body),
           channel: ch.channel,
           callback: ch.channel === "webhook" ? ch.callback : undefined,
-          seat: null,
+          seat: 1,
           seatToken: null,
         }],
         creatorToken: joinToken,
@@ -1143,6 +1148,11 @@ export class Gateway {
       const me = this.identityOf(req, name);
       const existing = room.players.find((p) => p.agentId === me.agentId);
       if (existing) {
+        // 幂等重连顺带补头像：允许「先占座、后补头像」，但不覆盖已经设好的那张
+        if (!existing.avatar) {
+          const av = this.avatarOf(body);
+          if (av) existing.avatar = av;
+        }
         return this.json(res, 200, {
           room_id: room.id,
           join_token: existing.joinToken,
@@ -1165,9 +1175,10 @@ export class Gateway {
         joinToken,
         name: me.name,
         agentId: me.agentId,
+        avatar: this.avatarOf(body),
         channel: ch.channel,
         callback: ch.channel === "webhook" ? ch.callback : undefined,
-        seat: null,
+        seat: room.players.length + 1,
         seatToken: null,
       });
       const started = this.tryStartRoom(room, false);
@@ -1288,14 +1299,28 @@ export class Gateway {
     this.matches.set(match.id, rm);
     room.status = "started";
     room.matchId = match.id;
+    room.botFilled = bots;
     this.runMatchBookkeeping(rm);
     return true;
+  }
+
+  /**
+   * 对局进度（只有 started 有）：turn 本来就是公开视图里的决策令牌，不含局面。
+   * r60：房间页拿它推进桌面陈设（筹码/蜡烛/棋子随对局走），没有进度就返回 null。
+   */
+  private matchProgress(room: Room): { turn: number; finished: boolean } | null {
+    const rm = room.matchId ? this.matches.get(room.matchId) : undefined;
+    return rm ? rm.match.progress : null;
   }
 
   /** 房间状态：waiting 公开人数；started 凭 join_token 换座位分配 */
   private roomStatus(roomId: string, url: URL, req: IncomingMessage, res: ServerResponse): void {
     const room = this.rooms.get(roomId);
     if (!room) return this.err(res, 404, "ROOM_NOT_FOUND", "房间不存在或已过期", { room_id: roomId, path: `/api/v1/lobby/rooms/${roomId}`, hint: "room_id 有误或已过期；房间列表见 GET /api/v1/lobby/rooms" });
+    // r47：房间令牌也可走 x-room-token 头——URL query 会被代理/访问日志留存
+    const token = url.searchParams.get("token")
+      ?? (typeof req.headers["x-room-token"] === "string" ? req.headers["x-room-token"] : null);
+    const me = token ? room.players.find((p) => p.joinToken === token) : undefined;
     if (room.status === "waiting") {
       return this.json(res, 200, {
         room_id: room.id,
@@ -1303,53 +1328,100 @@ export class Gateway {
         game: room.game,
         seats: room.seats,
         players: room.players.length,
+        bots: 0,
         // r9 w9-s2：waiting 期没有剩余席位数，轮询者无法判断还差几人开局
         seats_remaining: room.seats - room.players.length,
+        host: room.players[0]?.name ?? null,
+        is_host: !!me && token === room.creatorToken,
+        joined: !!me,
+        my_seat: me?.seat ?? null,
+        joinable: room.players.length < room.seats,
+        seats_view: this.roomSeats(room),
         names: room.players.map((p) => p.name),
         channels: room.players.map((p) => p.channel),
       });
     }
-    // r47：房间令牌也可走 x-room-token 头——URL query 会被代理/访问日志留存
-    const token = url.searchParams.get("token")
-      ?? (typeof req.headers["x-room-token"] === "string" ? req.headers["x-room-token"] : null);
-    const me = token ? room.players.find((p) => p.joinToken === token) : undefined;
-    if (!me) {
-      return this.json(res, 200, {
-        room_id: room.id,
-        status: "started",
-        game: room.game,
-        match_id: room.matchId,
-        seats: room.seats,
-      });
-    }
-    return this.json(res, 200, {
+    // r50：started 的两种分支共用同一形状（观战/入座只差 seat_* 三个字段）——
+    // 此前观战分支缺 players/host，前端只能靠 seats_view 反推人数，两种口径必然漂移
+    const pub = {
       room_id: room.id,
-      status: "started",
+      status: "started" as const,
       game: room.game,
       match_id: room.matchId,
+      seats: room.seats,
+      players: room.players.length,
+      // r50：bots 与 players 分开给——「我坐进去的是 1/6 还是 6/6」是房主决策，不能混算
+      bots: room.botFilled ?? 0,
+      progress: this.matchProgress(room),
+      host: room.players[0]?.name ?? null,
+      joinable: false,
+      seats_view: this.roomSeats(room),
+    };
+    if (!me) return this.json(res, 200, pub);
+    return this.json(res, 200, {
+      ...pub,
       seat_id: me.seat,
       seat_token: me.seatToken,
       channel: me.channel,
-      seats: room.seats,
+      is_host: token === room.creatorToken,
+      my_seat: me.seat,
+      joined: true,
     });
   }
 
   /** 房间列表（waiting 在前，各取最新若干） */
-  private roomList(res: ServerResponse): void {
-    const all = [...this.rooms.values()].sort((a, b) => b.createdAt - a.createdAt);
+  private roomList(url: URL, res: ServerResponse): void {
+    const game = url.searchParams.get("game");
+    const all = [...this.rooms.values()]
+      .filter((r) => !game || r.game === game)
+      .sort((a, b) => b.createdAt - a.createdAt);
     const shape = (r: Room) => ({
       room_id: r.id,
       game: r.game,
       seats: r.seats,
       players: r.players.length,
+      bots: r.botFilled ?? 0,
       status: r.status,
       match_id: r.matchId,
+      host: r.players[0]?.name ?? null,
+      joinable: r.status === "waiting" && r.players.length < r.seats,
       names: r.players.map((p) => p.name),
       channels: r.players.map((p) => p.channel),
+      seats_view: this.roomSeats(r),
+      created_at: r.createdAt,
     });
     const waiting = all.filter((r) => r.status === "waiting").slice(0, 20);
     const started = all.filter((r) => r.status === "started").slice(0, 10);
     return this.json(res, 200, { rooms: [...waiting, ...started].map(shape) });
+  }
+
+  /** 座位头像：只收 https 与 data:image——avatar 是外部输入，别把 javascript:/相对路径写进 <img src> */
+  private avatarOf(body: Record<string, unknown>): string | undefined {
+    const raw = body.avatar;
+    if (typeof raw !== "string") return undefined;
+    const v = raw.trim();
+    if (!v || v.length > 2048) return undefined;
+    if (/^https:\/\/[^\s]+$/i.test(v)) return v;
+    if (/^data:image\/(png|jpe?g|webp|gif|svg\+xml)[;,]/.test(v)) return v;
+    return undefined;
+  }
+
+  /** 房间座位图：只公开昵称/通道/房主标记，不暴露 agent_id；bot 席单列一个 status */
+  private roomSeats(room: Room): { seat: number; status: "occupied" | "bot" | "empty"; name: string | null; avatar: string | null; channel: string | null; is_host: boolean }[] {
+    return Array.from({ length: room.seats }, (_, i) => {
+      const p = room.players[i];
+      // r50：强制开局补位的 house bot 占的席不是空位——started 后把 bot 席标出来，
+      // 否则「1 人 + 5 bot 的狼人桌」在房间浏览里显示成 1/6、五格虚线，等于谎报可入座
+      const isBot = !p && i < room.players.length + (room.botFilled ?? 0);
+      return {
+        seat: i + 1,
+        status: p ? "occupied" : isBot ? "bot" : "empty",
+        name: p?.name ?? null,
+        avatar: p?.avatar ?? null,
+        channel: p?.channel ?? null,
+        is_host: i === 0 && !!p,
+      };
+    });
   }
 
   private nameOf(agent: string): string {
